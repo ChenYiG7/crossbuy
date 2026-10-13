@@ -1,14 +1,19 @@
 // ============================================================================
 // Prisma schema —— 本文件是数据库结构的「正本」。
 //
-// 阶段 0（基建）纪律：先 `prisma db pull` 拉取旧系统 MySQL 的真实 schema，
-// 以 introspect 结果为准反推字段语义，再决定新系统的表设计。
-// 下面两个模型是「字段规约样板」，用于定死列命名/类型约定，不保证与旧库一致：
-//   - 金额一律 Decimal(12,4)，禁 float/double
-//   - 状态/枚举列 TINYINT + 注释写明含义（Prisma 用 /// 注释 + Int）
-//   - 每表带 created_at / updated_at；逻辑删除用 deleted
+// 纪律（docs/07-开发规范守则）：
+//   - 金额一律 Decimal，禁 float/double；且余额正本在 ledger，不在此表
+//   - 状态/枚举列用 Int/String + /// 注释写明含义（词表正本在 packages/contract）
 //   - 业务唯一键必须建（幂等的根本）
-//   - 禁外键与级联（引用完整性归应用层）
+//   - 禁外键与级联（引用完整性归应用层）→ relationMode = "prisma"
+//   - 列名一律 snake_case（Prisma 默认用字段名当列名 → 每个多词字段须 @map）
+//
+// 当前内容 = 【member 域新表正本（试水）】
+//   - 决策（Q7，2026-10-13）：**新表为唯一正本**，不继承旧表结构。
+//   - 过渡期旧表（dg_users 等）由「同库同事务双写」保持可用，见
+//     docs/plans/member-迁移与共存.md。
+//   - 本文件表名/列名均为新设计的干净命名（无 v2_ / dg_ 前缀）。
+//   - 字段级来源与转换规则见 docs/plans/01-v2表字段精读.md 与 member-迁移与共存.md。
 // ============================================================================
 
 generator client {
@@ -16,26 +21,481 @@ generator client {
 }
 
 datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma" // 禁 DB 级外键：关系由应用层维护
 }
 
-/// 会员（样板：字段规约示范；正本待 db pull 校准）
-model Member {
-  id        Int      @id @default(autoincrement())
-  /// 会员邮箱（登录名，唯一键）
-  email     String   @unique @db.VarChar(255)
-  /// 会员昵称
-  nickname  String?  @db.VarChar(64)
-  /// 是否代发用户（dfFlag）
-  isDf      Boolean  @default(false)
-  /// 创建时间
-  createdAt DateTime @default(now()) @map("created_at")
-  /// 更新时间
-  updatedAt DateTime @updatedAt @map("updated_at")
+// ============================================================================
+// member 域
+// ============================================================================
 
+/// 会员（正本；旧源 dg_users）
+model Member {
+  id           Int     @id @default(autoincrement())
+  /// 登录名（唯一）。⚠ 旧表 uname 允许重名 → 上线前须查重（Q4）
+  username     String  @unique @db.VarChar(50)
+  /// 密码哈希（目标 argon2id）
+  passwordHash String  @map("password_hash") @db.VarChar(255)
+  /// 哈希算法标识：argon2id / bcrypt / md5（过渡期回填的旧数据）
+  passwordAlgo String  @default("argon2id") @map("password_algo") @db.VarChar(16)
+  email        String? @db.VarChar(50)
+  /// 姓名（汉字）
+  name         String? @db.VarChar(50)
+  /// 客人英文名
+  enName       String? @map("en_name") @db.VarChar(60)
+  /// 外部会员号
+  memberId     String? @map("member_id") @db.VarChar(30)
+  /// 头像 URL
+  face         String? @db.VarChar(128)
+
+  // ---- 基本资料 ----
+  sex     Int?    @default(0) @db.SmallInt
+  tel     String? @db.VarChar(50)
+  zip     String? @db.VarChar(20)
+  country String? @db.VarChar(50)
+  city    String? @db.VarChar(50)
+  address String? @db.VarChar(255)
+  qq      String? @default("") @db.VarChar(20)
+  msn     String? @default("") @db.VarChar(50)
+  line    String? @db.VarChar(30)
+  wechat  String? @db.VarChar(30)
+  card    String? @db.VarChar(20)
+
+  // ---- 身份 / 状态（枚举值待确认，member-schema.md Q1）----
+  /// 用户类型（旧 utype，语义待确认）
+  utype         Int?    @default(0) @db.SmallInt
+  /// 账户用途：1 代理購入 / 2 転送 / 3 無在庫 / 4 OEM
+  useType       Int?    @map("use_type") @db.TinyInt
+  /// 状态（旧 state，默认 1）
+  state         Int?    @default(1) @db.SmallInt
+  /// 有效期（旧 validity，语义待确认）
+  validity      Int?
+  /// 注册类型：0 个人 / 1 公司
+  regType       Int?    @map("reg_type") @db.TinyInt
+  /// 业务身份：MZK 无在库 / PROXY_PURCHASE 代采
+  bizCode       String  @default("PROXY_PURCHASE") @map("biz_code") @db.VarChar(56)
+  /// 负责公司：hho / gouba
+  belongCompany String? @map("belong_company") @db.VarChar(32)
+  /// 用户标签
+  tag           String? @db.VarChar(255)
+
+  // ---- 资金（正本在 finance.ledger_entry；下列为冗余/快照）----
+  /// 账户余额（缓存列，唯一写入口 + 原子守卫维护）
+  balance              Decimal?  @default(0.00) @db.Decimal(12, 2)
+  /// 余额币种（JPY / CNY）—— 货币隔离，禁跨币种直接加减
+  balanceCurrency      String?   @default("JPY") @map("balance_currency") @db.VarChar(8)
+  /// 积分
+  scores               Int?      @default(0)
+  /// 对客浮动汇率：基准汇率上加该值
+  floatRate            Decimal?  @default(0.05) @map("float_rate") @db.Decimal(10, 2)
+  /// 余额最后变动时间
+  lastBalanceChangedAt DateTime? @map("last_balance_changed_at") @db.DateTime(0)
+  /// 是否可交易：0 不可 / 1 可（下单前必查）
+  orderEnable          Int?      @default(1) @map("order_enable") @db.TinyInt
+  /// 交易终止时间
+  stopTime             DateTime? @map("stop_time") @db.DateTime(0)
+
+  // ---- 代发（dfflag 家族）----
+  /// 代发优先：0 非代发 / 1 代发优先 / 2 普通代购优先
+  dfFlag        Int?     @default(0) @map("df_flag") @db.TinyInt
+  /// 一件代发费用
+  dfFee         Decimal? @default(10.00) @map("df_fee") @db.Decimal(10, 2)
+  dfSendName    String?  @map("df_send_name") @db.VarChar(50)
+  dfSendAddress String?  @map("df_send_address") @db.VarChar(200)
+  dfSendTel     String?  @map("df_send_tel") @db.VarChar(50)
+  /// CSV 上传功能开关
+  csvUpFlag     Int?     @default(0) @map("csv_up_flag") @db.TinyInt
+
+  // ---- 经营资料 / 偏好 ----
+  realtimeAccount     String?  @map("realtime_account") @db.VarChar(255)
+  shopName            String?  @map("shop_name") @db.VarChar(100)
+  shopUrl             String?  @map("shop_url") @db.VarChar(200)
+  preBuyFeq           String?  @map("pre_buy_feq") @db.VarChar(60)
+  preBuyAmt           String?  @map("pre_buy_amt") @db.VarChar(60)
+  /// 月额会员每月扣费（日元）
+  monPayAmt           Decimal? @default(30000) @map("mon_pay_amt") @db.Decimal(12, 2)
+  /// 是否保留原包装：0 废弃 / 1 保留
+  originPackageChoice Int?     @default(0) @map("origin_package_choice") @db.TinyInt
+  /// 拍货分派选中值
+  xz                  String?  @default("0") @db.VarChar(50)
+  /// 业务员
+  fb                  String?  @db.VarChar(11)
+  /// 注册附加信息
+  regExtra            String?  @map("reg_extra") @db.VarChar(1024)
+  remark              String?  @db.Text
+
+  // ---- 通知 / 邮件 ----
+  /// 到着邮件频率：1 实时 / 2 每小时 / 3 每 6 小时 / 4 每天
+  mailFrequency        Int?  @default(4) @map("mail_frequency") @db.TinyInt
+  /// 邮件订阅位标记（位定义待确认，Q5）
+  emailSubscribeStatus Int?  @map("email_subscribe_status")
+  /// 抄送邮箱
+  ccEmails             Json? @map("cc_emails")
+  /// 登录限制邮件提醒
+  loginLimitWarning    Int?  @default(0) @map("login_limit_warning") @db.TinyInt
+
+  // ---- 仓储 ----
+  storesFreeDays Int? @default(90) @map("stores_free_days")
+  storesWarnDays Int? @default(82) @map("stores_warn_days")
+
+  // ---- 登录 / 时间 ----
+  regIp       String?   @map("reg_ip") @db.Char(16)
+  createdAt   DateTime  @map("created_at") @db.DateTime(0)
+  loginIp     String?   @map("login_ip") @db.Char(16)
+  lastLoginAt DateTime? @map("last_login_at") @db.DateTime(0)
+  lastOrderAt DateTime? @map("last_order_at") @db.DateTime(0)
+  activeKey   String?   @map("active_key") @db.Char(5)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.DateTime(0)
+
+  // ---- 关系（应用层维护，DB 无 FK）----
+  company            MemberCompany?
+  addresses          MemberAddress[]
+  webhook            MemberWebhook?
+  oauthLogins        OauthLogin[]
+  favorites          Favorite[]
+  favoriteCategories FavoriteCategory[]
+  browseHistories    BrowseHistory[]
+  benefits           MemberBenefit[]
+  operationLogs      MemberOperationLog[]
+
+  @@index([email])
+  @@index([memberId])
+  @@index([bizCode])
+  @@index([state])
   @@map("member")
 }
+
+/// 会员法人信息（1:1，仅 regType=1；旧页 dg_users 的 com* 组拆出）
+model MemberCompany {
+  memberId   Int     @id @map("member_id")
+  /// 会社名（漢字）
+  name       String? @db.VarChar(50)
+  /// 会社名（アルファベット）
+  engName    String? @map("eng_name") @db.VarChar(50)
+  /// 担当者名（漢字）
+  manager    String? @db.VarChar(50)
+  /// 担当者名（アルファベット）
+  managerEng String? @map("manager_eng") @db.VarChar(50)
+  /// 法人番号 / JASTPRO コード
+  post       String? @db.VarChar(50)
+  /// 会社電話番号
+  tel        String? @db.VarChar(30)
+  address    String? @db.VarChar(255)
+  engAddress String? @map("eng_address") @db.VarChar(255)
+  zip        String? @db.VarChar(255)
+  /// 商号名
+  busNum     String? @map("bus_num") @db.VarChar(100)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@map("member_company")
+}
+
+/// 会员地址（旧源 dg_address）
+model MemberAddress {
+  id              Int     @id @default(autoincrement())
+  memberId        Int     @map("member_id")
+  /// 收件人姓名
+  consignee       String  @db.VarChar(30)
+  enName          String? @map("en_name") @db.VarChar(100)
+  country         String? @db.VarChar(30)
+  city            String? @db.VarChar(30)
+  zip             String? @db.VarChar(30)
+  tel             String? @db.VarChar(30)
+  address         String? @db.VarChar(255)
+  /// 类型：1 收货人地址 / 2 进口商地址
+  type            Int     @default(1) @db.TinyInt
+  email           String? @db.VarChar(30)
+  /// 银行账号信息
+  bankInfo        String? @map("bank_info") @db.VarChar(255)
+  /// 企业信息 JSON（公司名称 / 税号 / 关税号）
+  corporateInfo   String? @map("corporate_info") @db.VarChar(255)
+  /// 是否默认地址：0 否 / 1 是
+  isDefault       Int?    @default(0) @map("is_default") @db.SmallInt
+  /// 进口商输入番号
+  customsCode     String? @map("customs_code") @db.VarChar(255)
+  realTimeAccount String? @map("real_time_account") @db.VarChar(255)
+  /// 法人番号
+  corporateNumber String? @map("corporate_number") @db.VarChar(100)
+  companyName     String? @map("company_name") @db.VarChar(50)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId, type])
+  @@map("member_address")
+}
+
+/// 会员 Webhook 配置（旧源 v2_member_webhook）
+model MemberWebhook {
+  id                  BigInt    @id @default(autoincrement())
+  /// 一个会员一个接收 URL
+  memberId            Int       @unique @map("member_id")
+  url                 String    @db.VarChar(500)
+  /// 签名密钥（加密保存，禁明文落库）
+  secret              String    @db.Text
+  /// 是否发送：1 发送 / 0 停用
+  enabled             Boolean   @default(true) @db.TinyInt
+  /// 余额低于此值时发 balance.low，空=不发
+  balanceLowThreshold Decimal?  @map("balance_low_threshold") @db.Decimal(12, 2)
+  createdAt           DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt           DateTime? @map("updated_at") @db.Timestamp(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@map("member_webhook")
+}
+
+/// 会员 Webhook 投递队列（旧源 v2_member_webhook_delivery）★ 幂等出站
+model MemberWebhookDelivery {
+  id             BigInt    @id @default(autoincrement())
+  memberId       Int       @map("member_id")
+  /// 事件名
+  event          String    @db.VarChar(64)
+  /// 去重键：同一事件只发一次（幂等根）
+  eventKey       String    @unique @map("event_key") @db.VarChar(191)
+  payload        Json
+  /// 状态：0 待发送 / 1 成功 / 2 放弃
+  status         Int       @default(0) @db.UnsignedTinyInt
+  attempts       Int       @default(0) @db.UnsignedTinyInt
+  lastStatusCode Int?      @map("last_status_code") @db.UnsignedSmallInt
+  lastError      String?   @map("last_error") @db.VarChar(255)
+  /// 下次发送时间（待发送时；成功/放弃后为空）
+  nextAttemptAt  DateTime? @map("next_attempt_at") @db.Timestamp(0)
+  deliveredAt    DateTime? @map("delivered_at") @db.Timestamp(0)
+  createdAt      DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt      DateTime? @map("updated_at") @db.Timestamp(0)
+
+  @@index([memberId, createdAt])
+  @@index([status, nextAttemptAt])
+  @@map("member_webhook_delivery")
+}
+
+/// 个人访问令牌（旧源 v2_personal_access_tokens）
+model PersonalAccessToken {
+  id            BigInt    @id @default(autoincrement())
+  /// 主体（旧为 Laravel morph）—— 契约层收口为 Member
+  tokenableType String    @map("tokenable_type") @db.VarChar(255)
+  tokenableId   BigInt    @map("tokenable_id")
+  name          String    @db.VarChar(255)
+  /// 令牌（哈希存储）
+  token         String    @unique @db.VarChar(64)
+  abilities     String?   @db.Text
+  lastUsedAt    DateTime? @map("last_used_at") @db.Timestamp(0)
+  expiresAt     DateTime? @map("expires_at") @db.Timestamp(0)
+  createdAt     DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt     DateTime? @map("updated_at") @db.Timestamp(0)
+
+  @@index([tokenableType, tokenableId])
+  @@map("personal_access_token")
+}
+
+/// OAuth 登录绑定（旧源 v2_oauth_login）
+model OauthLogin {
+  id        Int       @id @default(autoincrement())
+  memberId  Int       @map("member_id")
+  appid     String    @db.VarChar(50)
+  openid    String    @db.VarChar(50)
+  detail    String?   @db.Text
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@unique([openid, appid])
+  @@index([memberId])
+  @@map("oauth_login")
+}
+
+/// 淘宝全球购授权（旧源 v2_oauth_taobao_global）
+model OauthTaobaoGlobal {
+  id        Int       @id @default(autoincrement())
+  account   String?   @db.VarChar(50)
+  token     Json?
+  memberId  Int?      @map("member_id")
+  sellerId  String?   @map("seller_id") @db.VarChar(50)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  @@map("oauth_taobao_global")
+}
+
+/// 开放 API 幂等键（旧源 v2_open_api_idempotency）★ 幂等标准实现
+model OpenApiIdempotency {
+  id          BigInt    @id @default(autoincrement())
+  memberId    Int       @map("member_id")
+  /// 作用域：orders 下单 / send_orders 配送委托
+  scope       String    @db.VarChar(32)
+  /// 客户防重键（client_order_id / Idempotency-Key）
+  clientKey   String    @map("client_key") @db.VarChar(64)
+  /// 首次请求内容 sha256（同键换内容 → 422）
+  requestHash String?   @map("request_hash") @db.Char(64)
+  /// 状态：0 处理中 / 1 完成
+  status      Int       @default(0) @db.UnsignedTinyInt
+  /// 首次结果（第 2 次起原样返回）
+  response    Json?
+  createdAt   DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt   DateTime? @map("updated_at") @db.Timestamp(0)
+
+  @@unique([memberId, scope, clientKey])
+  @@index([createdAt])
+  @@map("open_api_idempotency")
+}
+
+/// 收藏（旧源 v2_favorite）
+model Favorite {
+  id               Int       @id @default(autoincrement())
+  memberId         Int       @map("member_id")
+  categoryId       Int       @default(0) @map("category_id")
+  /// 多态目标：店铺 / 商品（契约层收口为枚举）
+  favoriteableType String    @map("favoriteable_type") @db.VarChar(255)
+  favoriteableId   Int       @map("favoriteable_id")
+  /// 扩展信息 JSON（sku / asin / fnsku / outid）
+  extra            String?   @db.Text
+  memo             String    @default("") @db.VarChar(255)
+  createdAt        DateTime  @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime? @map("updated_at") @db.DateTime(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId, categoryId])
+  @@index([favoriteableId, favoriteableType])
+  @@map("favorite")
+}
+
+/// 收藏分类（旧源 v2_favorite_category）
+model FavoriteCategory {
+  id        Int       @id @default(autoincrement())
+  memberId  Int       @map("member_id")
+  name      String    @default("") @db.VarChar(255)
+  /// 类型：1 商品 / 2 店铺
+  type      Int?      @default(0) @db.TinyInt
+  sort      Int?      @default(0) @db.UnsignedTinyInt
+  createdAt DateTime  @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId])
+  @@map("favorite_category")
+}
+
+/// 浏览记录（旧源 v2_user_browse_history）★ 高频写
+model BrowseHistory {
+  id        Int       @id @default(autoincrement())
+  memberId  Int       @map("member_id")
+  /// 商品表主键
+  goodsId   Int       @map("goods_id")
+  createdAt DateTime  @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId, createdAt])
+  @@map("browse_history")
+}
+
+/// 权益配置（旧源 user_benefit_configs）
+model BenefitConfig {
+  id              Int       @id @default(autoincrement())
+  benefitCode     String    @unique @map("benefit_code") @db.VarChar(50)
+  benefitName     String    @map("benefit_name") @db.VarChar(100)
+  /// 权益类型：1 会员续期 / 2 手续费抵扣
+  benefitType     Int       @map("benefit_type") @db.TinyInt
+  benefitConfig   Json?     @map("benefit_config")
+  validDays       Int?      @default(0) @map("valid_days")
+  activityStartAt DateTime? @map("activity_start_at") @db.Timestamp(0)
+  activityEndAt   DateTime? @map("activity_end_at") @db.Timestamp(0)
+  userConditions  Json?     @map("user_conditions")
+  /// 状态：0 禁用 / 1 启用
+  status          Int?      @default(1) @db.TinyInt
+  sortOrder       Int?      @default(0) @map("sort_order")
+  features        Json?
+  remark          String?   @db.Text
+  createdAt       DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime? @map("updated_at") @db.Timestamp(0)
+
+  benefits MemberBenefit[]
+
+  @@index([activityStartAt, activityEndAt])
+  @@index([benefitType])
+  @@map("benefit_config")
+}
+
+/// 会员权益（旧源 user_benefits）
+model MemberBenefit {
+  id              BigInt    @id @default(autoincrement())
+  memberId        Int       @map("member_id")
+  benefitConfigId Int       @map("benefit_config_id")
+  benefitCode     String    @map("benefit_code") @db.VarChar(50)
+  benefitName     String    @map("benefit_name") @db.VarChar(100)
+  /// 权益类型：1 会员续期 / 2 手续费抵扣
+  benefitType     Int       @map("benefit_type") @db.TinyInt
+  benefitValue    Json?     @map("benefit_value")
+  /// 状态：1 未使用 / 2 已使用 / 3 已过期
+  status          Int?      @default(1) @db.TinyInt
+  /// 来源：purchase 购买赠送 / activity 活动赠送 / manual 手动发放
+  source          String?   @db.VarChar(50)
+  sourceId        String?   @map("source_id") @db.VarChar(100)
+  receivedAt      DateTime? @map("received_at") @db.Timestamp(0)
+  startAt         DateTime? @map("start_at") @db.Timestamp(0)
+  usedAt          DateTime? @map("used_at") @db.Timestamp(0)
+  expiredAt       DateTime? @map("expired_at") @db.Timestamp(0)
+  features        Json?
+  remark          String?   @db.Text
+  createdAt       DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt       DateTime? @map("updated_at") @db.Timestamp(0)
+
+  member Member        @relation(fields: [memberId], references: [id])
+  config BenefitConfig @relation(fields: [benefitConfigId], references: [id])
+
+  @@unique([memberId, benefitConfigId])
+  @@index([memberId, status])
+  @@index([benefitConfigId])
+  @@index([source, sourceId])
+  @@map("member_benefit")
+}
+
+/// 会员资料修改审计（旧源 user_operation_log）
+model MemberOperationLog {
+  id        BigInt    @id @default(autoincrement())
+  memberId  Int       @map("member_id")
+  /// 操作员 uid（0 = 系统）
+  operator  Int
+  remark    String?   @default("") @db.VarChar(200)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  member Member @relation(fields: [memberId], references: [id])
+
+  @@index([memberId])
+  @@map("member_operation_log")
+}
+
+/// 行政区划字典（旧源 v2_area；v2_address 为老代重复表，弃用）
+/// 建议后续移入 common/geo 域，此处随 member 试水先行落位
+model Area {
+  id           Int     @id @default(autoincrement())
+  name         String  @db.VarChar(255)
+  /// 层级：1 国家 / 2 省·州 / 3 市·县 / 4 区·镇 / 5 街道·村
+  level        Int     @db.UnsignedTinyInt
+  parentId     Int     @map("parent_id")
+  /// ISO 3166-1 二位国家代码
+  countryCode  String  @map("country_code") @db.Char(2)
+  /// 官方行政区划代码
+  officialCode String? @map("official_code") @db.VarChar(50)
+
+  @@index([countryCode])
+  @@index([parentId])
+  @@map("area")
+}
+
+// ============================================================================
+// finance 域（占位：账本正本，member.balance 的来源）
+// 详情待 finance 域切片时展开（对账批次 / 四方对账 / 冻结）
+// ============================================================================
 
 /// 账本流水（append-only，不可变；核心：资金完整性）
 model LedgerEntry {
@@ -47,13 +507,13 @@ model LedgerEntry {
   /// 币种（JPY / CNY / USD）
   currency  String   @db.VarChar(8)
   /// 业务单号
-  bizNo     String?  @db.VarChar(64)
+  bizNo     String?  @map("biz_no") @db.VarChar(64)
   /// 流水类型（枚举词表正本见 contract）
-  flowType  String   @db.VarChar(32)
+  flowType  String   @map("flow_type") @db.VarChar(32)
   /// 关联单 id
-  refId     String?  @db.VarChar(64)
+  refId     String?  @map("ref_id") @db.VarChar(64)
   /// 创建时间（账本不可变，无 updated_at）
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
 
   @@index([bizNo])
   @@map("ledger_entry")

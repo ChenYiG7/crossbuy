@@ -67,7 +67,7 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架 |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架 |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `packages/db` | Prisma schema + 客户端 | 🟡 样板 schema，待 db pull |
+| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 member 域新表正本（17 模型）+ T0 DDL 已生成，其余域待建 |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
 | `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |

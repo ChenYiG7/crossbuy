@@ -12,7 +12,11 @@
 
 ### P1（阶段 0：基建，第 1 个月）
 
-- [ ] **#3 旧库表结构反推**：已拿到 `taotaro.sql`（174 张表结构）并完成盘点（见 docs/plans/00），下一步精读 v2_ 44 张 + finance 流水，产出 Prisma schema 草案
+- [x] **#3 旧库表结构反推**：完成 174 张表盘点（docs/plans/00）+ v2_ 44 张与 finance 流水字段级精读（docs/plans/01）+ member 域 schema 草案（docs/plans/member-schema.md + schema.prisma 17 模型）
+- [x] **#3a 关键决策已定**：Q7 = **新表为唯一正本 + 同库事务双写**（方案见 docs/plans/member-迁移与共存.md）；Q3 = 余额 **JPY + Decimal(12,2)**（跨币种靠 `balance_currency` 隔离）；Q4 = 用户名 **UNIQUE**（前置查重已完成）
+- [ ] **#3b 枚举反查**：从旧代码反查 `dg_users.utype/usetype/state`、`finance_order_cash_flow.change_type` 的完整枚举（member-schema.md Q1/Q2）
+- [ ] **#3c member 迁移脚本**：Q4 查重**已完成**（旧库只读：8 组 / 16 账号重名，见 `docs/plans/02-用户名重名处置.md`）；T0 建表 DDL 已生成（`packages/db/sql/0001-member-domain-up.sql`）；待办 = 定 `username` collation（建议 ci）+ 补 `username_original`/`username_auto_renamed` 两列 → T0 执行 → T1 回填（内嵌消歧映射 + 幂等 + 顶 AUTO_INCREMENT）→ 双写 repository → 一致性校验 → T2 切换 checklist
+- [ ] **#3d 消歧业务确认（T1 阻塞项）**：确认 `docs/plans/02-用户名重名处置.md` §五 的 4 组（`Haru0128` 是否合并 / `nr7shopping` 是否两人 / `longtai` 主体 / `megutoami` 主账号）
 - [ ] **#4 契约基线**：把旧系统 GraphQL/REST 的关键接口在 `packages/contract` 定义成 TS 类型 + zod
 - [ ] **#5 Tailwind + shadcn 接入**：web/mzk/admin 三个 app 接入 Tailwind 4 + shadcn/ui（`packages/ui` 的 token 与之对齐）
 - [ ] **#6 ESLint/Prettier 全量接线**：eslint flat config 加入 next/react-hooks 插件，CI 门禁落地
