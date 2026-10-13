@@ -42,6 +42,10 @@
 - **本地演练环境**：FlyEnv **MySQL 9.7.2**（`/d/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysql.exe`，127.0.0.1:3306，root/root），库 `crossbuy_dryrun`。注意该版本**无 `MD5()` 函数**；`ALTER TABLE ... AUTO_INCREMENT=(子查询)` 不被支持（用 `PREPARE`）；utf8mb3 字符串套 `utf8mb4_*` collation 需先 `CONVERT(... USING utf8mb4)`。
 - **列名约定**：一律 snake_case。Prisma 默认用字段名当列名 → **每个多词字段必须 `@map("snake_case")`**（否则生成 camelCase 列）。
 - **T0 建表 DDL** 由 `schema.prisma` 生成：`prisma migrate diff --from-empty --to-schema-datamodel ... --script > packages/db/sql/0001-member-domain-up.sql`（17 表，无外键）。改 schema 后必须重生成，**禁手改 DDL**。
+- **T1 回填脚本（2026-10-13 完成，本地演练 40 项断言全 PASS、3 遍幂等）**：`packages/db/sql/` 下 6 个脚本按 ①`0001` 建表 → ②`0001a` username collation → ③`0002` 核心三表回填 → ④`0003` 核心校验 → ⑤`0004` 13 张侧表回填 → ⑥`0005` 侧表校验。均 `INSERT..SELECT..ON DUPLICATE KEY UPDATE`（保留源 id）+ `PREPARE` 顶 AUTO_INCREMENT。
+- **回填两铁律（2026-10-13）**：① **带 `member` 必需关系的表必须 `JOIN member` 过滤外键孤儿**（否则 Prisma `include` 报错），实测孤儿 favorite 240 / browse 3389 / benefit 3 / log 68、oauth_login 唯一行即孤儿（回填 0）；② `dg_users` 有 id 空洞（max uid 25,289 / 实 22,612）→ 顶自增用 `MAX(id)+1` 不能用行数。
+- **PAT 取舍（T2 需复决）**：`v2_personal_access_tokens` 只回填 `App\Models\User` 且父会员存在（105,808 / 共 106,368）；排除 `AdminUser` 539（非会员域）。SQL 里写 `'App\\Models\\User'`（**双反斜杠**，否则 MySQL 吃 `\M`）。
+- **字典表**：`area`（旧 `v2_area`，1940 行 JP 行政区划）随 member 试水先行落位，后续可移入 common/geo 域。
 
 ## 数据模型参考（docs/plans）
 - `00-旧库表结构盘点.md`：174 张旧表按代际分组（dg_ 71 / v2_ 44 / deprecated_ 21 / admin_ 12 / sys_ 11 / 其他）

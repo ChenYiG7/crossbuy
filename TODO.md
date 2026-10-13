@@ -15,9 +15,9 @@
 - [x] **#3 旧库表结构反推**：完成 174 张表盘点（docs/plans/00）+ v2_ 44 张与 finance 流水字段级精读（docs/plans/01）+ member 域 schema 草案（docs/plans/member-schema.md + schema.prisma 17 模型）
 - [x] **#3a 关键决策已定**：Q7 = **新表为唯一正本 + 同库事务双写**（方案见 docs/plans/member-迁移与共存.md）；Q3 = 余额 **JPY + Decimal(12,2)**（跨币种靠 `balance_currency` 隔离）；Q4 = 用户名 **UNIQUE**（前置查重已完成）
 - [ ] **#3b 枚举反查**：从旧代码反查 `dg_users.utype/usetype/state`、`finance_order_cash_flow.change_type` 的完整枚举（member-schema.md Q1/Q2）
-- [x] **#3c member 迁移脚本**：Q4 查重**已完成**（8 组 / 16 账号，`docs/plans/02`）+ 消歧方案已拍板；T0 建表 DDL（`0001`）+ username collation（`0001a`）+ T1 回填（`0002`）+ 一致性校验（`0003`）全部就绪；**本地演练 15/15 PASS、3 遍幂等、回退 OK**（`docs/plans/03`）
-- [ ] **#3d ★ 生产写权限（T0/T1 阻塞项）**：生产账号 `datapro` 只有 `SELECT/INDEX/LOCK TABLES/SHOW VIEW`，**无 CREATE/INSERT/ALTER/DROP** → 需 DBA 用具备 DDL/DML 的账号执行 `0001 → 0001a → 0002 → 0003`
-- [ ] **#3e 第二批侧表回填**：webhook / oauth / favorite / browse_history / benefit / operation_log / area / PAT / open_api_idempotency（需先核各自源表字段）
+- [x] **#3c member 迁移脚本**：Q4 查重**已完成**（8 组 / 16 账号，`docs/plans/02`）+ 消歧方案已拍板；T0 建表 DDL（`0001`）+ username collation（`0001a`）+ T1 回填（`0002`/`0004`）+ 一致性校验（`0003`/`0005`）全部就绪；**本地演练核心三表 15/15 PASS + 侧表 25/25 PASS、3 遍幂等、回退 OK**（`docs/plans/03`）
+- [ ] **#3d ★ 生产写权限（T0/T1 阻塞项）**：生产账号 `datapro` 只有 `SELECT/INDEX/LOCK TABLES/SHOW VIEW`，**无 CREATE/INSERT/ALTER/DROP** → 需 DBA 用具备 DDL/DML 的账号执行 `0001 → 0001a → 0002 → 0003 → 0004 → 0005`
+- [x] **#3e 第二批侧表回填**：字段已按线上 `information_schema` 实测（122 列/13 表）→ `0004-member-backfill-t1-part2.sql`（13 表）+ `0005-member-backfill-verify-part2.sql`；**本地演练 25 项断言全 PASS、3 遍幂等**。要点：过滤外键孤儿（favorite 240 / browse 3389 / benefit 3 / log 68 / oauth_login 整表 1 行）、PAT 仅回填 `App\Models\User` 且父会员存在（105,808），保留源 id 并顶 AUTO_INCREMENT
 - [ ] **#3f 双写 MemberRepository + 反向同步水位**（T1 运行期）
 - [ ] **#4 契约基线**：把旧系统 GraphQL/REST 的关键接口在 `packages/contract` 定义成 TS 类型 + zod
 - [ ] **#5 Tailwind + shadcn 接入**：web/mzk/admin 三个 app 接入 Tailwind 4 + shadcn/ui（`packages/ui` 的 token 与之对齐）

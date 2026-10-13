@@ -273,18 +273,9 @@ ON DUPLICATE KEY UPDATE
   company_name     = a.company_name;
 
 -- ---------------------------------------------------------------------------
--- 5. 【第二批】v2_* 侧表回填（本轮未做，需先核各自源表字段）
---    v2_member_webhook → member_webhook
---    v2_member_webhook_delivery → member_webhook_delivery
---    v2_personal_access_tokens → personal_access_token
---    v2_oauth_login → oauth_login
---    v2_oauth_taobao_global → oauth_taobao_global
---    v2_open_api_idempotency → open_api_idempotency
---    v2_favorite / v2_favorite_category → favorite / favorite_category
---    v2_user_browse_history → browse_history
---    user_benefit_configs / user_benefits → benefit_config / member_benefit
---    user_operation_log → member_operation_log
---    v2_area → area
+-- 5.【第二批】v2_* / user_* 侧表回填 → 见独立脚本 `0004-member-backfill-t1-part2.sql`
+--    （13 张表；字段已按线上 information_schema 核准；含孤儿过滤与 PAT 类型过滤）
+--    校验 → `0005-member-backfill-verify-part2.sql`
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
