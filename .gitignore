@@ -13,6 +13,7 @@ next-env.d.ts
 # build
 dist/
 build/
+*.tsbuildinfo
 
 # env
 .env
