@@ -2,6 +2,9 @@
 CREATE TABLE `member` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `username` VARCHAR(50) NOT NULL,
+    `username_original` VARCHAR(50) NULL,
+    `username_auto_renamed` TINYINT NULL DEFAULT 0,
+    `merged_into_id` INTEGER NULL,
     `password_hash` VARCHAR(255) NOT NULL,
     `password_algo` VARCHAR(16) NOT NULL DEFAULT 'argon2id',
     `email` VARCHAR(50) NULL,

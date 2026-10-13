@@ -53,11 +53,13 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 ## 三、字段映射表（双写时的转换规则）
 
 > 双写只在 repository 层实现（唯一写入口）。下列差异必须在此层统一处理，禁散落。
+>
+> ⚠️ **2026-10-13 修订**：`dg_users` 实际为 **75 列**（此前依据的 `taotaro.sql` dump 是旧版，只有约 55 列）。已按线上 `information_schema` 全量核对；`biz_code` / `belong_company` / `tag` / `shopname` / `shopurl` / `prebuyfeq` / `prebuyamt` / `enname` / `monpayamt` / `origin_package_choice` / `stores_*` / `cc_emails` / `email_subscribe_status` **均确实存在**（`shopname`→`shop_name` 等为命名差异）。回填实现见 `packages/db/sql/0002-member-backfill-t1.sql`。
 
 | `member` 列（新） | `dg_users` 列（旧） | 转换 / 坑 |
 |---|---|---|
 | `id` | `uid` | 恒等，主键对齐 |
-| `username` | `uname` | 旧仅普通索引（可重名）→ 新加 UNIQUE，**上线前须查重**（Q4） |
+| `username` | `uname` | 旧仅普通索引（可重名）→ 新加 UNIQUE，**上线前须查重**（Q4 ✅ 已完成：8 组/16 账号）。**新列排序规则必须显式定为 `utf8mb4_general_ci`**（否则表级默认 `unicode_ci` 会把重名扩到 24 组，见 `docs/plans/03` §五） |
 | `password_hash` | `password` | 旧 CHAR(32)=MD5 无盐。**过渡期双写**：新存 argon2 时，旧列写不下 → 旧列写 `!upgraded!`+短标记占位，并置 `password_algo` 标记；登录时若旧列仍是 MD5 可回退校验 |
 | `email` | `email` | 旧 CHAR(50)，无唯一 |
 | `balance` | `money` | DECIMAL(12,2) ↔ (10,2)，按 2 位对齐；币种旧无 → 新 `balance_currency` 默认 JPY |
@@ -69,11 +71,12 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 | `stop_time` | `stoptime` | 同上 |
 | `validity` | `validity` | 旧 INT（语义待确认，可能也是时间戳） |
 | `df_flag` / `df_fee` | `dfflag` / `dffee` | 一致 |
-| `biz_code` | `biz_code` | 一致（MZK / PROXY_PURCHASE） |
+| `biz_code` | `biz_code` | 一致（MZK / PROXY_PURCHASE）；✔ 实测该列**确实存在**（曾存疑） |
+| `mon_pay_amt` | `monpayamt` | ⚠ 旧为 **DOUBLE 浮点** → 回填先 `ROUND(...,2)` 再落 `DECIMAL(12,2)`（又一个「float 存金额」实例） |
 | `password_algo` | —— | **新列**：回填旧数据置 `md5`，升级后置 `argon2id`；用于双读判据 |
 | `balance_currency` | —— | **新列，旧表无**（双写时忽略） |
 | `remember_token` | `remember_token` | **不迁移**：旧系统会话自用；新系统用 Auth.js 会话 |
-| 法人信息 | `com*` 组 | 拆到 `member_company`（1:1），双写时按 regType 决定是否写 |
+| 法人信息 | `com*` 组 | 拆到 `member_company`（1:1）。⚠ **修正**：不能只按 `regType=1` —— 实测 `regtype=1` 仅 **2,246** 人，而 `comname` 非空者 **7,409** 人。回填条件改为「`regType=1` **或任一 com\* 字段非空**」 |
 | `legacy_api_token` | `apitoken` | **不迁移**：由 `personal_access_token` 取代；旧 token 在 T2 一次性重签 |
 
 **多态外键**（`favorite.favoriteable_type/id`、`personal_access_token.tokenable_type/id`）：DB 层照原样写（旧数据能读），**契约层收口为枚举**。
@@ -130,9 +133,12 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 - [x] 拍板 Q3（余额 JPY + `Decimal(12,2)`）、Q4（用户名 UNIQUE，前置查重）
 - [x] 写迁移 SQL：建 `member_*` 表（T0）→ `packages/db/sql/0001-member-domain-up.sql`（由 schema.prisma 生成，17 表）
 - [x] 写 Q4 前置核查 SQL → `packages/db/sql/precheck-username-duplicate.sql`
-- [ ] 执行 Q4 查重（旧库只读）→ 有重名业务消歧
-- [ ] T0：在（新库/过渡库）执行 `0001-member-domain-up.sql` 建新表
-- [ ] 写回填脚本（幂等 + 分批 + 顶 AUTO_INCREMENT）
-- [ ] 写 `MemberRepository`（双写事务 + 反向同步水位）
-- [ ] 写回填/双写一致性校验脚本（验收 1~3）
-- [ ] T2 切换 checklist（含旧写入口核验、反向同步下线）
+- [x] 执行 Q4 查重（旧库只读）→ 8 组 / 16 账号；业务已拍板消歧 → `docs/plans/02-用户名重名处置.md`
+- [x] 补 `0001a-member-username-collation.sql`（username 定 `utf8mb4_general_ci`）
+- [x] 写回填脚本（幂等 + 显式 id + 消歧映射 + 顶 AUTO_INCREMENT）→ `packages/db/sql/0002-member-backfill-t1.sql`
+- [x] 写一致性校验脚本 → `packages/db/sql/0003-member-backfill-verify.sql`（15 项断言）
+- [x] **本地演练 T0→T1→校验**：15/15 PASS、3 遍幂等、回退 OK → `docs/plans/03-T1本地演练报告.md`
+- [ ] **★ 生产写权限**：`datapro` 只读 → 需 DBA 用具备 DDL/DML 的账号执行 ①~③
+- [ ] 第一回填批（侧表）：T1 期间双写 `MemberRepository`（双写事务 + 反向同步水位）
+- [ ] 第二批侧表回填（webhook/oauth/favorite/browse_history/benefit/operation_log/area/PAT/idempotency）
+- [ ] 双写一致性验收（验收 2）+ T2 切换 checklist（含旧写入口核验、反向同步下线）

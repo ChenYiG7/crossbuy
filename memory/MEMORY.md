@@ -36,8 +36,10 @@
 - 详见 `docs/plans/member-迁移与共存.md`；member 设计见 `docs/plans/member-schema.md`。
 - **已定参数（2026-10-13）**：余额 = **JPY + `Decimal(12,2)`**，跨币种靠 `balance_currency` 隔离、禁跨币种直接加减；`username` 上 **UNIQUE**。
 - **Q4 查重已跑（2026-10-13，旧库只读）**：22,611 用户中 **8 组 / 16 账号**重名；除 uid 4109（¥291.02/107 单）外全零订单。明细与消歧见 `docs/plans/02-用户名重名处置.md`，复现见 `packages/db/sql/disambiguate-username-proposal.sql`。
-- **Collation 坑（重要）**：旧库 `utf8_general_ci`（ci + **尾空格不敏感**），新表 `utf8mb4_unicode_ci` 同为 ci → 撞车口径一致；前导空格 ci 下有效但新表 TRIM 后仍撞。判尾空格**禁用** `uname = TRIM(uname)`（ci 下 `'a '='a'` 真），必须比 `CHAR_LENGTH`。`member.username` 的 collation 需显式定（**Prisma 不原生支持列级 collation，需 raw SQL ALTER**）；email **不加唯一**（`123456@qq.com` ×31 为测试号）。
-- **生产库只读通道**：跳板机 `114.215.206.28` + SSH 端口转发 → PolarDB `taotaro`；本机 PHP CLI（FlyEnv 8.4）作 PDO 客户端。密码不入代码/文档，放独立文件。
+- **Collation 坑（2026-10-13 修正，极重要）**：旧库 `utf8_general_ci`（ci + **尾空格不敏感**）；新表 T0 生成的表级默认是 `utf8mb4_unicode_ci`，**两者口径不等价** —— 实测 22,612 真实用户名下重名组数：`utf8mb4_general_ci`=**8**、`utf8mb4_unicode_ci`=**24**、`0900_ai_ci`=23、`bin`=8。`unicode_ci` 额外把「全角/半角」「片假名/平假名」「全角空格 U+3000」视为等价，多出的 16 组里**有多对是不同人**（`RYUJI` uid1801 渡辺様 815 单 vs uid7874 深澤竜二 2 单）。→ **`member.username` 必须显式 `utf8mb4_general_ci`**（`packages/db/sql/0001a-member-username-collation.sql`；Prisma 不支持列级 collation，只能 raw SQL `MODIFY`）。副作用：username 与其他 `unicode_ci` 列混用会报 Illegal mix of collations → **禁与其他字符串列 JOIN/UNION**。判尾空格**禁用** `uname = TRIM(uname)`（ci 下 `'a '='a'` 真），必须比 `CHAR_LENGTH`。email **不加唯一**（`123456@qq.com` ×31 为测试号）。
+- **生产库只读通道**：跳板机 `114.215.206.28` + SSH 端口转发 `-L 13306:<polardb>:3306` → PolarDB `taotaro`（MySQL 8.0.18）；本机 PHP CLI（FlyEnv 8.4）作 PDO 客户端。密码不入代码/文档，放独立文件（当前 `C:/Users/13621/.taotaro-db.pass`）。
+- **⚠ 生产账号 `datapro` 只读**：`SHOW GRANTS` 仅有 `SELECT, INDEX, LOCK TABLES, SHOW VIEW`（+ 全局 PROCESS/REPLICATION/SHOW VIEW），**无 CREATE/INSERT/ALTER/DROP** → T0 建表 / T1 回填**必须由 DBA 用写账号执行**，我方只能提供脚本。
+- **本地演练环境**：FlyEnv **MySQL 9.7.2**（`/d/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysql.exe`，127.0.0.1:3306，root/root），库 `crossbuy_dryrun`。注意该版本**无 `MD5()` 函数**；`ALTER TABLE ... AUTO_INCREMENT=(子查询)` 不被支持（用 `PREPARE`）；utf8mb3 字符串套 `utf8mb4_*` collation 需先 `CONVERT(... USING utf8mb4)`。
 - **列名约定**：一律 snake_case。Prisma 默认用字段名当列名 → **每个多词字段必须 `@map("snake_case")`**（否则生成 camelCase 列）。
 - **T0 建表 DDL** 由 `schema.prisma` 生成：`prisma migrate diff --from-empty --to-schema-datamodel ... --script > packages/db/sql/0001-member-domain-up.sql`（17 表，无外键）。改 schema 后必须重生成，**禁手改 DDL**。
 

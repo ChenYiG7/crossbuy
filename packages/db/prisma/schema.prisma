@@ -32,22 +32,28 @@ datasource db {
 
 /// 会员（正本；旧源 dg_users）
 model Member {
-  id           Int     @id @default(autoincrement())
+  id                  Int     @id @default(autoincrement())
   /// 登录名（唯一）。⚠ 旧表 uname 允许重名 → 上线前须查重（Q4）
-  username     String  @unique @db.VarChar(50)
+  username            String  @unique @db.VarChar(50)
+  /// 重名消歧：改名前的原名（仅 `usernameAutoRenamed=1` 时有值），便于客服/审计
+  usernameOriginal    String? @map("username_original") @db.VarChar(50)
+  /// 是否因重名被自动改名：1=是（登录时提示）。Q4 消歧，见 docs/plans/02-用户名重名处置.md
+  usernameAutoRenamed Int?    @default(0) @map("username_auto_renamed") @db.TinyInt
+  /// 账号合并目标（被并入的主账号 id）。当前仅 Haru0128: 15274 → 15272
+  mergedIntoId        Int?    @map("merged_into_id")
   /// 密码哈希（目标 argon2id）
-  passwordHash String  @map("password_hash") @db.VarChar(255)
+  passwordHash        String  @map("password_hash") @db.VarChar(255)
   /// 哈希算法标识：argon2id / bcrypt / md5（过渡期回填的旧数据）
-  passwordAlgo String  @default("argon2id") @map("password_algo") @db.VarChar(16)
-  email        String? @db.VarChar(50)
+  passwordAlgo        String  @default("argon2id") @map("password_algo") @db.VarChar(16)
+  email               String? @db.VarChar(50)
   /// 姓名（汉字）
-  name         String? @db.VarChar(50)
+  name                String? @db.VarChar(50)
   /// 客人英文名
-  enName       String? @map("en_name") @db.VarChar(60)
+  enName              String? @map("en_name") @db.VarChar(60)
   /// 外部会员号
-  memberId     String? @map("member_id") @db.VarChar(30)
+  memberId            String? @map("member_id") @db.VarChar(30)
   /// 头像 URL
-  face         String? @db.VarChar(128)
+  face                String? @db.VarChar(128)
 
   // ---- 基本资料 ----
   sex     Int?    @default(0) @db.SmallInt
