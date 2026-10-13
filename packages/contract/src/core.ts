@@ -1,0 +1,35 @@
+import { z } from 'zod';
+
+/**
+ * 契约核心类型与 schema。
+ * 契约包唯一运行时依赖是 zod——classpath 里没有 ORM、没有框架，
+ * 「不污染契约」靠物理隔离，不靠自觉（system-kit c2 的 TS 版）。
+ */
+
+/** 金额：字符串承载（服务端重算，禁浮点）。语义与 @crossbuy/utils 的 Money 一致。 */
+export type Money = string;
+
+/** 分页入参 schema：调用方漏传也安全（<1 归 1、缺省 20、上限 100） */
+export const pageQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+export type PageQuery = z.infer<typeof pageQuerySchema>;
+
+/** 分页出参：list 永不为 null（约定） */
+export interface PageResult<T> {
+  list: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+/** 统一错误体（跨端一致） */
+export interface ApiError {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+/** 会员 id（品牌类型，防与订单/运单 id 混用） */
+export type MemberId = number & { readonly __brand: 'MemberId' };

@@ -1,0 +1,60 @@
+// ============================================================================
+// Prisma schema —— 本文件是数据库结构的「正本」。
+//
+// 阶段 0（基建）纪律：先 `prisma db pull` 拉取旧系统 MySQL 的真实 schema，
+// 以 introspect 结果为准反推字段语义，再决定新系统的表设计。
+// 下面两个模型是「字段规约样板」，用于定死列命名/类型约定，不保证与旧库一致：
+//   - 金额一律 Decimal(12,4)，禁 float/double
+//   - 状态/枚举列 TINYINT + 注释写明含义（Prisma 用 /// 注释 + Int）
+//   - 每表带 created_at / updated_at；逻辑删除用 deleted
+//   - 业务唯一键必须建（幂等的根本）
+//   - 禁外键与级联（引用完整性归应用层）
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+/// 会员（样板：字段规约示范；正本待 db pull 校准）
+model Member {
+  id        Int      @id @default(autoincrement())
+  /// 会员邮箱（登录名，唯一键）
+  email     String   @unique @db.VarChar(255)
+  /// 会员昵称
+  nickname  String?  @db.VarChar(64)
+  /// 是否代发用户（dfFlag）
+  isDf      Boolean  @default(false)
+  /// 创建时间
+  createdAt DateTime @default(now()) @map("created_at")
+  /// 更新时间
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("member")
+}
+
+/// 账本流水（append-only，不可变；核心：资金完整性）
+model LedgerEntry {
+  id        BigInt   @id @default(autoincrement())
+  /// 方向：DR 借 / CR 贷
+  direction String   @db.VarChar(2)
+  /// 金额（服务端重算，禁浮点）
+  amount    Decimal  @db.Decimal(12, 4)
+  /// 币种（JPY / CNY / USD）
+  currency  String   @db.VarChar(8)
+  /// 业务单号
+  bizNo     String?  @db.VarChar(64)
+  /// 流水类型（枚举词表正本见 contract）
+  flowType  String   @db.VarChar(32)
+  /// 关联单 id
+  refId     String?  @db.VarChar(64)
+  /// 创建时间（账本不可变，无 updated_at）
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([bizNo])
+  @@map("ledger_entry")
+}

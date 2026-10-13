@@ -1,0 +1,29 @@
+{
+  "name": "@crossbuy/admin",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "echo \"(no tests yet)\""
+  },
+  "dependencies": {
+    "@crossbuy/auth": "workspace:*",
+    "@crossbuy/contract": "workspace:*",
+    "@crossbuy/db": "workspace:*",
+    "@crossbuy/ui": "workspace:*",
+    "@crossbuy/utils": "workspace:*",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}
