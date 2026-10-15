@@ -120,6 +120,30 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 本机 mysql CLI 默认 gbk，脚本内含中文**字符串字面量**（如 `'dg_fapiao(子集)'`）会报 `ERROR 3854 Cannot convert string from gbk to gbk`。
 **规避**：① 脚本内字面量一律 ASCII（已改）；② 跑校验脚本加 `--default-character-set=utf8mb4`。
 
+## 口径变更后的复跑清单（2026-10-15，Q1 面值 CNY + Q8 金额 14,2）
+
+改精度/币种时**容易漏的三类落点**（本轮全部踩到并已修）：
+
+1. **列定义**：`schema.prisma` 的 `@db.Decimal(...)` 与 `@default("JPY")` → 重生成 `0001/0002/0003`。
+2. **回填脚本里的类型转换**：`CAST(... AS DECIMAL(12, 2))` 共 4 处（`0007:251`、`0008:88/115/117`）——不改会把宽口径截回两位整数上限。
+3. ★ **硬写的币种字面量**：`0002:95` / `0002:166`（`balance_currency`）、`0007:248`（`charged_currency`）三处 `'JPY'` → `'CNY'`。**这类只有跑演练才暴露**，静态扫 `schema.prisma` 完全看不见。
+
+**不该跟着改的**（按列义判断，非按精度判断）：
+
+| 位置 | 为什么保留 |
+|---|---|
+| `member.float_rate` `(10,2)` | Q3 判死列，处置未拍板 |
+| `invoices.order_weight` `(10,2)`、`invoices.low_multiple` `(10,2)` | 重量与倍率，**不是金额** |
+| `0011` 的 `CAST(countweight AS DECIMAL(12,4)) * 1000` | 千克→克，需要 4 位小数 |
+| `shops.currency` DEFAULT `'JPY'`（= `0002` DDL 内那条） | **外部平台店铺自己的结算币种**（`v2_ecommerce_shop`），与本系统账本面值无关；`0008` 对 `v2_ecommerce_order.price`「2999 JPY」的拆分同理 |
+
+**静态验证已做**（临时空库 `crossbuy_ddlcheck`，跑 `0001 → 0001a → 0002 → 0002a → 0003`）：49 表建成、`decimal(14,2)`×65、`decimal(12,8)`×1、`decimal(10,2)`×3（即上表保留项）、`balance_currency`/`charged_currency` 默认值实测 CNY、`member.username` + 4 个 `tid` 仍 `utf8mb4_general_ci`。
+
+**仍欠 T1 数据级复跑**，且有两个前置条件（本机 MySQL 停机后暴露出来的真实缺口）：
+
+1. ⚠ **member 域旧源表没有导入脚本**：前几轮演练是在 `crossbuy_dryrun` 里**手工**建旧表副本（这也是该库 `dg_users` 比 `taotaro` 多一列 `biz_code` 的来源——`0002` 会读它）。库一旦重建就得先有这份脚本，否则 ③⑤ 无法起跑。→ 待补 `drill-member-source-import.sql`（本地演练专用，命名对齐已有的 `0006`/`0010` 与 `precheck-*.sql` 惯例）。
+2. ⚠ **`0006` 假定目标库里已有 `dg_users`**（它 `TRUNCATE` 后灌数据，不建表）→ 新库需先建 `dg_users` 再跑 ⑨，或把它改成 `CREATE TABLE IF NOT EXISTS ... LIKE taotaro.dg_users`。
+
 ## 执行注意
 
 1. **只对新表**：DDL 只建 `member*`、`favorite*`、`oauth_*`、`open_api_idempotency`、`browse_history`、`benefit*`、`area`、`ledger_entry`——全部新表名，**与旧库 174 张无重名**（已核查）。

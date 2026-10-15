@@ -245,7 +245,7 @@ BEGIN
         o.senduprice,
         o.inspection,
         0.00,
-        'JPY',
+        'CNY',
         COALESCE(
           CASE WHEN JSON_VALID(o.extend)
             THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(o.extend AS JSON), '$.deducted_service_fee')) AS DECIMAL(14, 2))

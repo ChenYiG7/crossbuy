@@ -454,11 +454,11 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 | `schema.prisma` 清扫 | **61 处** `Decimal(12, 2)` → `(14, 2)`；另 3 处金额在 `(10, 2)`（`df_fee` / 发票 `bargain_price` / 发票 `send_price`）→ `(14, 2)`；`exchange_rate` `(10, 4)` → **`(12, 8)`**；`balance_currency` 注释 + `default("CNY")`、`charged_currency` `default("CNY")`；**22 处**「JPY（旧 …）」注释 → CNY，order 段头与 `4.2` 分组说明改为「对客价 / 采购成本价（同币种 CNY）」 |
 | ★ **有意不改的三处 `(10,2)`** | `member.float_rate`（Q3 死列待处置）、`invoices.order_weight`（重量）、`invoices.low_multiple`（倍率）——**非金额**，盲替换会改错语义；同理 `0011` 里 `CAST(countweight AS DECIMAL(12,4)) * 1000` 是**千克→克**的精度需要，保持不动 |
 | 外部平台币种保留 | `v2_ecommerce_shop.currency default('JPY')`（:938）**不改**——那是 Shopify/Rakuten 等**平台自己的结算币种**，与本系统账本面值无关；`v2_ai_task.cost_currency` 同理 |
-| 回填脚本 | `0007:251`、`0008:88/115/117` 四处 `CAST(... AS DECIMAL(12, 2))` → `(14, 2)`；`0012` 汇率注释同步 |
+| 回填脚本 | `0007:251`、`0008:88/115/117` 四处 `CAST(... AS DECIMAL(12, 2))` → `(14, 2)`；`0012` 汇率注释同步；★ **另发现三处硬写币种字面量** `0002:95`、`0002:166`（`balance_currency`）、`0007:248`（`charged_currency`）`'JPY'` → `'CNY'`——静态扫 schema 看不见，详见 `packages/db/sql/README.md`「口径变更后的复跑清单」 |
 | 计划书订正 | `member-schema.md` §3.1/§六/§七（含「日本市场主币 JPY」的错误推断段落重写）、`member-迁移与共存.md:65/133`、`order-schema.md` §4.2 全段 + §五 4 处注释 + `chargedCurrency` 默认值、`send-order-schema.md` 金额组 6 条 + 7 处注释 |
 | DDL 重生成 | 按段基线截断法重建：`head -535`（member+finance 占位）/ `head -1413`（+order）→ 三次 `prisma migrate diff` 生成 `0001`(17 表) / `0002`(26 表) / `0003`(6 表)，**表数与结构同先前一致**，只有精度与默认值变化 |
 | **静态验证** | 新建空库 `crossbuy_ddlcheck` 跑完整链 `0001 → 0001a → 0002 → 0002a → 0003`：**49 表建成**；`decimal(14,2)` 65 处 / `decimal(12,8)` 1 处 / `decimal(10,2)` 3 处（即上面有意保留的非金额列）；`member.balance_currency` 与 `orders.charged_currency` 默认值实测 `CNY`；`member.username` + 4 个 `tid` 列 `utf8mb4_general_ci` 未被重生成冲掉。`pnpm db:generate` ✓、`pnpm typecheck` 16/16 ✓、`pnpm test`（contract smoke）15/15 ✓。校验后已 drop 该临时库 |
-| ⚠ **仍欠** | **T1 回填全链在 `crossbuy_dryrun` 的复跑**（演练库里是旧 DDL 建的 12,2 表 + 前几轮灌入的数据）。重跑要先决定是重建该库还是新建副本库，属破坏性动作，未擅自执行 |
+| ⚠ **仍欠** | **T1 回填全链的复跑**（本机 FlyEnv MySQL 现已停机，连接失败——`crossbuy_dryrun` 的实际存况待库起来后确认）。库起来后要补两个真实缺口：① **member 域旧源表没有导入脚本**——前几轮是手工建副本（这就是它比 `taotaro` 多一列 `biz_code` 的原因，而 `0002` 会读该列），需补 `drill-member-source-import.sql`；② **`0006` 假定目标库已有 `dg_users`**（只 `TRUNCATE` 不建表）。细节见 `packages/db/sql/README.md` |
 
 ★ **时机窗口**：`0001/0002/0003` 三份 DDL 都还**没落生产**（#3d 等 DBA 写权限）→ 现在改只需 `prisma migrate diff` 重生成 + 本地演练重跑；一旦生产建表，同样的改动就是 ALTER + 三域回填重跑。清扫必须**赶在 T0 落库前**。
 
