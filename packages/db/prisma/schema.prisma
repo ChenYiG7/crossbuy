@@ -8,12 +8,18 @@
 //   - 禁外键与级联（引用完整性归应用层）→ relationMode = "prisma"
 //   - 列名一律 snake_case（Prisma 默认用字段名当列名 → 每个多词字段须 @map）
 //
-// 当前内容 = 【member 域新表正本（试水）】
+// 当前内容 = 【member 域 + order 域 + send-order 域新表正本】
 //   - 决策（Q7，2026-10-13）：**新表为唯一正本**，不继承旧表结构。
 //   - 过渡期旧表（dg_users 等）由「同库同事务双写」保持可用，见
 //     docs/plans/member-迁移与共存.md。
 //   - 本文件表名/列名均为新设计的干净命名（无 v2_ / dg_ 前缀）。
 //   - 字段级来源与转换规则见 docs/plans/01-v2表字段精读.md 与 member-迁移与共存.md。
+//   - order 域设计依据 docs/plans/order-schema.md；Q5（OrderGroup 显式化）已拍板，
+//     见 docs/plans/05-order-group-评审与拍板.md。
+//   - send-order 域设计依据 docs/plans/send-order-schema.md；Q3（发票归本域）等
+//     七条未决问题已收口，见 docs/plans/06-send-order-评审与拍板.md。
+//     ⚠ 跨域引用（orders.send_order_id → send_orders.id）只存标量列 + 索引，
+//       禁建 Prisma relation（域间禁横向依赖，docs/07 铁律 5）。
 // ============================================================================
 
 generator client {
@@ -523,4 +529,1227 @@ model LedgerEntry {
 
   @@index([bizNo])
   @@map("ledger_entry")
+}
+
+// ============================================================================
+// order 域（2026-10-14）
+//
+// 设计依据：docs/plans/order-schema.md（精读旧系统后）
+//   - Q5 已拍板：OrderGroup 显式化，bargainAmount 挂组级，carrier/holder 机制删除
+//     （docs/plans/05-order-group-评审与拍板.md）
+//   - 金额一律 Decimal(12,2)；采购成本列（CNY）与对客列（JPY）分组命名
+//   - 状态机 12 态 cas 更新 + order_status_histories 历史表（替代旧 10 个时间戳列）
+//   - 回填主键对齐：orders.id == dg_order.oid；其余表 id == 旧表主键
+//   - ⚠ order_groups.tid 的 collation 须 utf8mb4_general_ci（raw SQL，见 0002a）
+// ============================================================================
+
+/// 采购单分组（tid）。旧系统无此表：整单砍价挂在组内某个 oid 上（holder 机制），
+/// 本表使其显式化（Q5 拍板，2026-10-14）
+model OrderGroup {
+  id     Int @id @default(autoincrement())
+  /// 平台交易号（1688 一次店铺下单 = 一个 tid）。NULL = 未关联平台的手动建单/空 tid 历史单
+  /// ⚠ collation 必须显式 utf8mb4_general_ci（raw SQL MODIFY，见 0002a 脚本）——
+  ///   与 unicode_ci 列 JOIN/UNION 会报 Illegal mix of collations
+  tid String? @unique @db.VarChar(64)
+  /// 空 tid 单独立成组时的源 oid（回填幂等键：tid 为 NULL 时 UNIQUE 不去重，用此列保证
+  /// 重复执行不产生重复组；tid 组为 NULL）。新系统写入的组不使用此列
+  legacyOrderId Int? @unique @map("legacy_order_id")
+  /// 会员（旧 dg_order.uid；禁冗余 uname/memberid）
+  memberId Int @map("member_id")
+  /// 供应商店铺快照（supplier 域 shop_id；禁外键）
+  supplierShopId Int? @map("supplier_shop_id")
+  /// 整单砍价总额（旧 dg_order.bargainprice 按 tid SUM 汇总）——组级唯一正本
+  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  /// 砍价返金时间（旧 dg_sendorder.bargainstate 的 order 侧对照；finance 事件后回写）
+  bargainRefundedAt DateTime? @map("bargain_refunded_at") @db.DateTime(0)
+  /// 组内订单行对客运费汇总（旧 sendprice 按 tid SUM）——send-order 已邮寄返金口径源
+  shippingFeeTotal Decimal @default(0.00) @map("shipping_fee_total") @db.Decimal(12, 2)
+  /// 组创建时间（旧组内 MIN(addtime)）
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  orders Order[]
+
+  @@index([memberId, createdAt])
+  @@map("order_groups")
+}
+
+/// 订单行（oid 语义）。旧源 dg_order：一行 = 一个商品（587 万行热表）
+model Order {
+  id Int @id @default(autoincrement()) // == 旧 dg_order.oid（回填显式对齐）
+  /// 所属采购组（旧 tid 分组）；NULL = 独立单
+  groupId Int? @map("group_id")
+  /// 会员（旧 uid；禁冗余 uname/memberid，§4.10）
+  memberId Int @map("member_id")
+  /// 订单类型：1 代购 / 2 转运 / 3 一件代发（contract OrderType）
+  type Int @default(1) @db.SmallInt
+  /// 12 态状态机（contract OrderStatus）：1 采购中/2 已采购/3 在途/4 已入库/5 配送提交/
+  /// 6 无效未返金/7 增值检品中/8 航空禁运/9 售後中/10 无效已返金/11 无效已废弃/12 售后待确认
+  /// 无效态集合 [6,10,11] 不参与金额计算；cas 更新（UPDATE ... WHERE id=? AND status=?）
+  status Int @default(1) @db.SmallInt
+  /// 当前态进入时间（旧 13 个时间列按 state 映射；全量原值见 legacyStateTimes）
+  statusEnteredAt DateTime @default(now()) @map("status_entered_at") @db.DateTime(0)
+  /// 下单来源：web / mzk / admin / api / import / plugin（旧 add_from 合并：0,1,3→web 2→plugin 8→api）
+  source String @default("web") @db.VarChar(16)
+  /// 创建模式：one_click / manual / auto（旧 purchase_type 0/1/2）
+  creationMode String @default("one_click") @map("creation_mode") @db.VarChar(16)
+  /// 来源备注（旧 add_from_memo）
+  sourceRef String? @map("source_ref") @db.VarChar(64)
+  /// 客人外部管理号（旧 outid，对接方重要）
+  outId String? @map("out_id") @db.VarChar(80)
+  /// 负责公司：HHO / Gouba（业务隔离维度，非冗余）
+  belongCompany String? @map("belong_company") @db.VarChar(32)
+  /// 支付批次号（旧 payid；语义待确认 Q1，回填保留）
+  payId String? @map("pay_id") @db.VarChar(50)
+  /// 拍货分派选中值（旧 xz）
+  xzAssignee String? @map("xz_assignee") @db.VarChar(50)
+
+  // ---- 商品快照（旧系统全量冗余在订单行，保留：订单是历史事实）----
+  goodsId       String? @map("goods_id") @db.VarChar(20)
+  goodsUrl      String? @map("goods_url") @db.VarChar(512)
+  goodsName     String  @map("goods_name") @db.VarChar(255)
+  goodsImg      String? @map("goods_img") @db.VarChar(255)
+  /// 订单图片（旧 orderimg）
+  orderImg      String? @map("order_img") @db.VarChar(255)
+  skuName       String  @default("") @map("sku_name") @db.VarChar(1024)
+  goodsSize     String? @map("goods_size") @db.VarChar(20)
+  goodsColor    String? @map("goods_color") @db.VarChar(20)
+  goodsSeller   String? @map("goods_seller") @db.VarChar(50)
+  goodsSite     String? @map("goods_site") @db.VarChar(50)
+  /// supplier 域引用（禁外键）
+  supplierShopId    Int? @map("supplier_shop_id")
+  supplierProductId Int? @map("supplier_product_id")
+  /// 代发商品名（旧 dfgoodsname）
+  dfGoodsName String? @map("df_goods_name") @db.VarChar(20)
+
+  // ---- 数量与金额（双币种分组：对客 JPY / 采购 CNY）----
+  quantity Int @default(1)
+  /// 对客单价 JPY（旧 goodsprice，float→Decimal 无损）
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  /// 砍后单价 JPY（旧 goodsprice1；OrderGroup.bargainAmount 分摊后的行级派生展示值）
+  bargainedUnitPrice Decimal @default(0.00) @map("bargained_unit_price") @db.Decimal(12, 2)
+  /// 促销价 JPY（旧 proprice）
+  promoPrice Decimal? @map("promo_price") @db.Decimal(12, 2)
+  /// 对客运费 JPY（旧 sendprice）
+  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(12, 2)
+  /// 采购单价 CNY（旧 goodsuprice，成本）
+  purchaseUnitPrice Decimal @default(0.00) @map("purchase_unit_price") @db.Decimal(12, 2)
+  /// 采购国内运费 CNY（旧 senduprice，成本）
+  purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(12, 2)
+  /// 验货金额 JPY（旧 inspection）
+  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(12, 2)
+  /// 下单时实扣金额快照（payOrder 服务端重算结果；正本在 finance.ledger_entry）
+  chargedAmount   Decimal @default(0.00) @map("charged_amount") @db.Decimal(12, 2)
+  chargedCurrency String  @default("JPY") @map("charged_currency") @db.VarChar(3)
+  /// 服务费抵扣（旧 extend.deducted_service_fee 显式化）
+  serviceFeeOffset Decimal @default(0.00) @map("service_fee_offset") @db.Decimal(12, 2)
+
+  // ---- 物流/到库（关系只存一侧，§4.5；后缀显式化，§3.8）----
+  /// 运单号（旧 sid；只存这一侧，禁 dg_sendorder.oids 双写）
+  sendOrderId Int? @map("send_order_id")
+  /// 国内物流号（旧 expressno）——存原始号，禁 _S 后缀编码
+  domesticTrackingNo String? @map("domestic_tracking_no") @db.VarChar(100)
+  /// 补发单号（旧 bufaid）
+  reissueNo String? @map("reissue_no") @db.VarChar(255)
+  /// 补发序号（旧 _N 后缀显式化；NULL = 非补发）
+  reissueSeq Int? @map("reissue_seq")
+  /// 是否售后包裹（旧 _S 后缀显式化）
+  isAfterSale Boolean @default(false) @map("is_after_sale")
+  /// 重量 g（旧 orderweight）
+  weightGrams Int? @map("weight_grams")
+  /// 运输方式：1 空运 / 2 海运 / 3 敏感货（旧 ship）
+  shipMethod Int? @map("ship_method") @db.SmallInt
+  /// 敏感货标记（旧 flag：2 是 / 1 不是）
+  isSensitive Boolean @default(false) @map("is_sensitive")
+
+  // ---- 代发/库存（WMS 边界：库存台账归 WMS）----
+  /// 一件代发库存单（旧 dfstoremode=1）
+  dfStoreMode Boolean @default(false) @map("df_store_mode")
+
+  // ---- 条款与标记 ----
+  /// { qtyShortBuy, priceAdjust, shippingAdjust }（旧 TermQty/TermPrice/TermShipping 字符串布尔）
+  terms Json?
+  /// 紧急订单（旧 isjinji varchar 当布尔）
+  isUrgent Boolean @default(false) @map("is_urgent")
+  /// 收藏标记（旧 mark_flag 位 0-1：0 默认/1 收藏；mark_flag 是 2bit 一态打包整数）
+  isFavorite Boolean @default(false) @map("is_favorite")
+  /// 到货标记（旧 mark_flag 位 2-3：0 默认/1 已到货/2 处理中/3 失败）
+  arrivalMark Int? @default(0) @map("arrival_mark") @db.UnsignedTinyInt
+
+  // ---- 检品/增值选项（旧 var1-var12 + yanhuo 家族 + 平台标签 30+ 列 → JSON 受控词表）----
+  /// [{ code, enabled, textValue }]；code 词表正本在 contract（InspectionOptionCode）
+  /// 布尔语义：只有 true 算勾选，禁 "1"/"0" 字符串布尔（旧系统已发生误写入事故）
+  inspectionOptions Json? @map("inspection_options")
+  /// 强类型列（旧 yanhuoasin/yanhuofnsku 显式化）
+  asin          String? @db.VarChar(64)
+  fnsku         String? @db.VarChar(64)
+  fbaShipmentId String? @map("fba_shipment_id") @db.VarChar(64)
+
+  // ---- 备注族（旧 goodsremark/goodsremark1-4/mremark/orderremark 六列）----
+  /// 买家备忘（API 层 buyer_memo；dg_order 无此列，回填 NULL）
+  buyerRemark String? @map("buyer_remark") @db.VarChar(512)
+  /// 管理备注（旧 mremark）
+  adminRemark String? @map("admin_remark") @db.VarChar(512)
+  /// 历史备注兜底（旧 goodsremark/goodsremark1-4/orderremark 原样 JSON）
+  remarksExtra Json? @map("remarks_extra")
+  /// 旧 extend 兜底（deducted_service_fee/inquiry 来源等，Q9 契约化后清退）
+  extendExtra Json? @map("extend_extra")
+  /// 自动下单失败原因（旧 auto_order_error）
+  autoOrderError String? @map("auto_order_error") @db.VarChar(512)
+  /// 旧 13 个状态时间戳列原值（审计保真；新写入走 order_status_histories）
+  legacyStateTimes Json? @map("legacy_state_times")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(0) // 旧 addtime
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(0)      // 旧 uptime
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  group            OrderGroup?           @relation(fields: [groupId], references: [id])
+  extension        OrderExtension?
+  platformCreation OrderPlatformCreation?
+  clientRef        OrderClientRef?
+  messages         OrderMessage[]
+  examinations     OrderExamination[]
+  statusHistories  OrderStatusHistory[]
+  valueAddedServices OrderValueAddedService[]
+  invalidMarks     OrderInvalidMark[]
+  splits           OrderSplit[]          @relation("SplitMain")
+  splitChildren    OrderSplit[]          @relation("SplitSource")
+  skuOrderLinks    PlatformSkuOrderLink[]
+
+  @@index([memberId, createdAt])
+  @@index([status])
+  @@index([groupId])
+  @@index([outId])
+  @@index([source, createdAt])
+  @@index([domesticTrackingNo])
+  @@index([sendOrderId])
+  @@map("orders")
+}
+
+/// 订单状态历史（旧系统无此表：10+ 个时间戳列平铺在 dg_order 上）
+model OrderStatusHistory {
+  id BigInt @id @default(autoincrement())
+  orderId Int @map("order_id")
+  /// 迁移前状态（NULL = 建单初始）
+  fromStatus Int? @map("from_status") @db.SmallInt
+  /// 迁移后状态（12 态同 Order.status）
+  toStatus Int @map("to_status") @db.SmallInt
+  /// 操作者类型：member / admin / system
+  operatorType String @map("operator_type") @db.VarChar(16)
+  operatorId Int? @map("operator_id")
+  reason String? @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@map("order_status_histories")
+}
+
+/// 订单扩展信息（旧源 v2_order_detail；id 即 oid，1:1）
+model OrderExtension {
+  orderId Int @id @map("order_id")
+  /// 商品名翻译（旧 goods_name_trans）
+  goodsNameTrans String? @map("goods_name_trans") @db.VarChar(255)
+  /// SKU 翻译（旧 sku_trans，旧表已是 json）
+  skuTrans Json? @map("sku_trans")
+  /// 优惠金额 JPY（旧 coupon_fee，float→Decimal）
+  couponFee Decimal @default(0.00) @map("coupon_fee") @db.Decimal(12, 2)
+  /// 卖家改价金额 JPY（旧 seller_change_amount，float→Decimal）
+  sellerChangeAmount Decimal @default(0.00) @map("seller_change_amount") @db.Decimal(12, 2)
+  /// 即时通讯标签（旧 instant_chat_tag）
+  instantChatTag String? @map("instant_chat_tag") @db.VarChar(255)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("order_extensions")
+}
+
+/// 下单防重映射（旧源 v2_order_client_ref；PK=oid）★ 幂等第二道防线
+model OrderClientRef {
+  orderId Int @id @map("order_id")
+  memberId Int @map("member_id")
+  /// 客户侧订单号（防重查询路径：(memberId, clientOrderId)）
+  clientOrderId String @map("client_order_id") @db.VarChar(64)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([memberId, clientOrderId])
+  @@map("order_client_refs")
+}
+
+/// 平台自动下单记录（旧源 v2_order_auto_created）
+model OrderPlatformCreation {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 订单行（旧 oid）——与 Order 1:1（一单至多一条自动下单记录）
+  orderId Int @unique @map("order_id")
+  /// 平台：1688 / taobao_global（旧 type：1=1688 2=淘宝全球购）
+  platform String @db.VarChar(32)
+  /// 创建模式：auto / manual（旧 add_from：0=api 自动 1=手动）
+  creationMode String @default("auto") @map("creation_mode") @db.VarChar(16)
+  /// 平台子账号（v2_platform_sub_account.id）
+  platformSubAccountId Int @default(0) @map("platform_sub_account_id")
+  /// 平台交易号（webhook 幂等查找路径）
+  platformTradeId String @map("platform_trade_id") @db.VarChar(50)
+  platformSubTradeId String @map("platform_sub_trade_id") @db.VarChar(50)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([platformTradeId, platformSubTradeId])
+  @@index([orderId])
+  @@map("order_platform_creations")
+}
+
+/// 平台子账号（旧源 v2_platform_sub_account；token 敏感）
+model PlatformSubAccount {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  appid String @db.VarChar(32)
+  /// 会员标识（旧 member_id，varchar 存储）
+  memberRef String? @map("member_ref") @db.VarChar(32)
+  outUserId String? @map("out_user_id") @db.VarChar(32)
+  username String @db.VarChar(255)
+  /// 账号类型（旧 type）
+  accountType String @map("account_type") @db.VarChar(30)
+  /// 平台令牌（加密保存，禁明文落库；旧实现是否加密待核实 Q8）
+  token String? @db.Text
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamp(0)
+
+  @@map("platform_sub_accounts")
+}
+
+/// 平台交易金额快照（旧源 v2_platform_order_amount）★ 对账锚点
+model PlatformTradeAmount {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  platform String @db.VarChar(32)
+  /// 平台交易号（旧表 varchar(64)；⚠ collation 须 utf8mb4_general_ci，见 0002a）
+  tid String @db.VarChar(64)
+  /// 阶段快照对：stage 单调（created < sync < price_modified < paid，只前进）
+  firstStage String @map("first_stage") @db.VarChar(32)
+  firstSnapshotAt DateTime? @map("first_snapshot_at") @db.DateTime(0)
+  firstGoodsTotal Decimal? @map("first_goods_total") @db.Decimal(12, 2)
+  firstShippingFee Decimal? @map("first_shipping_fee") @db.Decimal(12, 2)
+  firstTotalAmount Decimal? @map("first_total_amount") @db.Decimal(12, 2)
+  firstRaw Json? @map("first_raw")
+  latestStage String @map("latest_stage") @db.VarChar(32)
+  latestSnapshotAt DateTime? @map("latest_snapshot_at") @db.DateTime(0)
+  latestGoodsTotal Decimal? @map("latest_goods_total") @db.Decimal(12, 2)
+  latestShippingFee Decimal? @map("latest_shipping_fee") @db.Decimal(12, 2)
+  latestTotalAmount Decimal? @map("latest_total_amount") @db.Decimal(12, 2)
+  latestCouponFee Decimal? @map("latest_coupon_fee") @db.Decimal(12, 2)
+  latestSellerAdjust Decimal? @map("latest_seller_adjust") @db.Decimal(12, 2)
+  latestRaw Json? @map("latest_raw")
+  paidAt DateTime? @map("paid_at") @db.DateTime(0)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  @@unique([tid, platform])
+  @@map("platform_trade_amounts")
+}
+
+/// 平台订单（旧源 v2_ecommerce_order；同步进来的原始单，confirm 时才转 dg_order）
+model PlatformOrder {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  shopId Int @map("shop_id")
+  /// 平台唯一单号（与 shopId 构成 UK）
+  uniqueId String @map("unique_id") @db.VarChar(100)
+  platformOrderSn String @map("platform_order_sn") @db.VarChar(100)
+  /// 平台原始状态串（原样保存）
+  platformOrderStatus String @map("platform_order_status") @db.VarChar(50)
+  platformModifiedAt DateTime? @map("platform_modified_at") @db.DateTime(0)
+  /// 平台原始详情 JSON
+  detail Json?
+  /// 处理状态：-1 暂不处理 / 1 待处理 / 2 已提交订单（旧 order_status）
+  status Int @default(1) @db.SmallInt
+  /// 平台是否已发货回写（旧 is_fulfilled）
+  isFulfilled Boolean @default(false) @map("is_fulfilled")
+  fulfillmentFailureReason String? @map("fulfillment_failure_reason") @db.VarChar(1000)
+  /// 订单总金额 + 币种（旧 price varchar「价格+币种」拆分）
+  totalAmount Decimal? @map("total_amount") @db.Decimal(12, 2)
+  currency String? @db.VarChar(3)
+  /// 物流信息 JSON（旧 shipping_info）
+  shippingInfo Json? @map("shipping_info")
+  orderedAt DateTime? @map("ordered_at") @db.DateTime(0)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  shop Shop @relation(fields: [shopId], references: [id])
+  items PlatformOrderItem[]
+
+  @@unique([shopId, uniqueId])
+  @@index([status])
+  @@map("platform_orders")
+}
+
+/// 平台订单子单（旧源 v2_ecommerce_order_item）
+model PlatformOrderItem {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  orderId Int @map("order_id")
+  skuId Int @map("sku_id")
+  /// 平台子单唯一号
+  uniqueId String @map("unique_id") @db.VarChar(100)
+  /// 数量（旧 num）
+  quantity Int @default(1)
+  /// 单价 + 币种（旧 unit_price varchar 拆分）
+  unitPrice Decimal? @map("unit_price") @db.Decimal(12, 2)
+  unitCurrency String? @map("unit_currency") @db.VarChar(3)
+  /// 总价 + 币种（旧 total_price varchar 拆分）
+  totalPrice Decimal? @map("total_price") @db.Decimal(12, 2)
+  totalCurrency String? @map("total_currency") @db.VarChar(3)
+  /// 商品快照 JSON（旧 product_snapshot）
+  productSnapshot Json? @map("product_snapshot")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  order PlatformOrder     @relation(fields: [orderId], references: [id])
+  sku   PlatformProductSku @relation(fields: [skuId], references: [id])
+
+  @@unique([orderId, uniqueId])
+  @@index([skuId])
+  @@map("platform_order_items")
+}
+
+/// 平台店铺（旧源 v2_ecommerce_shop；member-schema.md 已定归 order 域）
+model Shop {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 会员（旧 uid）
+  memberId Int @map("member_id")
+  /// 平台：amazon / shopify / ebay / rakuten / yahoo / mercari
+  platform String @db.VarChar(50)
+  uniqueId String? @map("unique_id") @db.VarChar(50)
+  name String @db.VarChar(100)
+  url String? @db.VarChar(100)
+  marketplaceId String? @map("marketplace_id") @db.VarChar(100)
+  sellerId String? @map("seller_id") @db.VarChar(100)
+  /// API 凭证 JSON（旧 api_credentials；旧实现是否加密待核实 Q8）
+  apiCredentials Json? @map("api_credentials")
+  currency String @default("JPY") @db.VarChar(10)
+  timezone String @default("Asia/Tokyo") @db.VarChar(50)
+  description String? @db.Text
+  /// 状态：0 待审核 / 1 激活 / 2 暂停 / 3 已删除
+  status Int @default(0) @db.TinyInt
+  /// 连接状态（旧 connection_status）
+  connectionStatus Int @default(0) @map("connection_status") @db.TinyInt
+  lastVerifiedAt DateTime? @map("last_verified_at") @db.DateTime(0)
+  authExpiresAt DateTime? @map("auth_expires_at") @db.DateTime(0)
+  lastVerifiedStatus Int? @default(0) @map("last_verified_status") @db.TinyInt
+  lastVerifiedMessage String? @map("last_verified_message") @db.VarChar(500)
+  /// 是否使用仓储（旧 use_store）
+  useStore Boolean @default(false) @map("use_store")
+  /// 订单是否自动同步转 dg_order（旧 auto_sync_orders）
+  autoSyncOrders Boolean @default(false) @map("auto_sync_orders")
+  lastSyncAt DateTime? @map("last_sync_at") @db.Timestamp(0)
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
+  deletedAt DateTime? @map("deleted_at") @db.Timestamp(0)
+  /// 软删恢复时间（可恢复软删）
+  restoredAt DateTime? @map("restored_at") @db.DateTime(0)
+  deletedByMemberId Int? @map("deleted_by_member_id")
+  restoredByMemberId Int? @map("restored_by_member_id")
+
+  platformOrders PlatformOrder[]
+  products PlatformProduct[]
+  skus PlatformProductSku[]
+
+  @@index([memberId, platform])
+  @@index([status])
+  @@map("shops")
+}
+
+/// 平台商品目录（旧源 v2_ecommerce_product）
+model PlatformProduct {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  shopId Int @map("shop_id")
+  uniqueId String @map("unique_id") @db.VarChar(100)
+  name String @db.VarChar(100)
+  goodsUrl String? @map("goods_url") @db.VarChar(500)
+  imgUrl String @map("img_url") @db.VarChar(300)
+  platformStatus Int? @default(0) @map("platform_status") @db.TinyInt
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  shop Shop @relation(fields: [shopId], references: [id])
+  skus PlatformProductSku[]
+
+  @@unique([shopId, uniqueId])
+  @@map("platform_products")
+}
+
+/// 平台 SKU 目录（旧源 v2_ecommerce_product_sku）
+model PlatformProductSku {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  shopId Int @map("shop_id")
+  productId Int @map("product_id")
+  uniqueId String @map("unique_id") @db.VarChar(100)
+  sku String @db.VarChar(255)
+  fnsku String @db.VarChar(255)
+  name String @db.VarChar(100)
+  imgUrl String @map("img_url") @db.VarChar(300)
+  /// 属性 JSON（旧 attribute）
+  attribute Json?
+  /// 价格（旧表已是 decimal(10,2)）
+  price Decimal @default(0.00) @db.Decimal(12, 2)
+  /// 平台库存 JSON（旧 platform_inventory）
+  platformInventory Json? @map("platform_inventory")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  product PlatformProduct @relation(fields: [productId], references: [id])
+  shop Shop @relation(fields: [shopId], references: [id])
+  orderLinks PlatformSkuOrderLink[]
+  orderItems PlatformOrderItem[]
+
+  @@unique([productId, uniqueId])
+  @@index([shopId])
+  @@map("platform_product_skus")
+}
+
+/// 平台 SKU ↔ 订单关联（旧源 v2_relation_ecommerce_product_sku_and_order；电商库存统计入口）
+model PlatformSkuOrderLink {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  orderId Int @map("order_id")
+  skuId Int @map("sku_id")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+  sku PlatformProductSku @relation(fields: [skuId], references: [id])
+
+  @@unique([skuId, orderId])
+  @@map("platform_sku_order_links")
+}
+
+/// 订单增值服务收费（旧源 v2_order_value_added_service；检品等勾选服务的计价行）
+model OrderValueAddedService {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  orderId Int @map("order_id")
+  /// 服务目录 id（v2_value_added_service；归属 cms/supplier 域，禁外键）
+  serviceId Int @map("service_id")
+  /// 服务名快照（旧 name_snapshot）
+  nameSnapshot String @map("name_snapshot") @db.VarChar(255)
+  remark String? @db.VarChar(255)
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  qty Int @default(1)
+  /// 费用小计 JPY（旧 fee）
+  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@map("order_value_added_services")
+}
+
+/// 库存拆分记录（旧源 dg_order_split；无库存拆分：原单 ↔ 拆分单）
+model OrderSplit {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 主单（旧 oid）
+  orderId Int? @map("order_id")
+  /// 被拆原单（旧 spoid）
+  splitFromOrderId Int? @map("split_from_order_id")
+  /// 拆分数量（旧 goodsnum）
+  quantity Int @default(0)
+  memberId Int? @map("member_id")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+
+  order Order? @relation("SplitMain", fields: [orderId], references: [id])
+  /// 被拆原单（旧 spoid）
+  splitFromOrder Order? @relation("SplitSource", fields: [splitFromOrderId], references: [id])
+
+  @@index([orderId])
+  @@index([splitFromOrderId])
+  @@map("order_splits")
+}
+
+/// 询价单（旧源 dg_inquiry_order）
+model InquiryOrder {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 询价单号（唯一）
+  inquiryNo String @unique @map("inquiry_no") @db.VarChar(64)
+  memberId Int? @map("member_id")
+  /// 状态：0 待报价 / 1 部分报价 / 2 已报价 / 3 已关闭 / 4 已下单
+  status Int? @default(0) @db.TinyInt
+  /// PO 文件 URL（旧 po_file_url）
+  poFileUrl String? @map("po_file_url") @db.VarChar(500)
+  /// 报价文件 URL（旧 quotation_file_url）
+  quotationFileUrl String? @map("quotation_file_url") @db.VarChar(500)
+  itemCount Int? @default(0) @map("item_count")
+  quotedItemCount Int? @default(0) @map("quoted_item_count")
+  isDeleted Int? @default(0) @map("is_deleted") @db.TinyInt
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  items InquiryOrderItem[]
+
+  @@index([memberId, isDeleted, createdAt])
+  @@map("inquiry_orders")
+}
+
+/// 询价子单（旧源 dg_inquiry_order_item；报价行）
+model InquiryOrderItem {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 询价子单号（旧 inquiry_order_item_id，唯一）
+  inquiryItemNo String @unique @map("inquiry_item_no") @db.VarChar(64)
+  /// 所属询价单号（旧 inquiry_no）
+  inquiryNo String @map("inquiry_no") @db.VarChar(64)
+  productImgUrl String? @map("product_img_url") @db.VarChar(500)
+  productTitle String? @map("product_title") @db.VarChar(500)
+  /// 商品名翻译（旧 product_title_trans）
+  productTitleTrans String? @map("product_title_trans") @db.VarChar(500)
+  sellerName String? @map("seller_name") @db.VarChar(255)
+  quantity Int? @default(1)
+  /// 规格描述（旧 spec_desc）
+  specDesc String? @map("spec_desc") @db.VarChar(1000)
+  /// 规格描述翻译 JSON（旧 spec_desc_trans）
+  specDescTrans Json? @map("spec_desc_trans")
+  productId Int? @map("product_id")
+  skuId Int? @map("sku_id")
+  productRemark String? @map("product_remark") @db.VarChar(1000)
+  /// 商品单价 CNY（旧 product_price）
+  productPrice Decimal? @map("product_price") @db.Decimal(12, 2)
+  /// 报价单价 CNY（旧 quoted_amount——是单价不是小计，乘 quantity 得总价）
+  quotedUnitPrice Decimal? @map("quoted_unit_price") @db.Decimal(12, 2)
+  productUrl String? @map("product_url") @db.VarChar(500)
+  productSite String? @map("product_site") @db.VarChar(100)
+  memberId Int? @map("member_id")
+  isDeleted Int? @default(0) @map("is_deleted") @db.TinyInt
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  inquiry InquiryOrder @relation(fields: [inquiryNo], references: [inquiryNo])
+
+  @@index([inquiryNo, productId, skuId])
+  @@map("inquiry_order_items")
+}
+
+/// 导入批（旧源 dg_imporder；Excel/API 导入）
+model ImportBatch {
+  id BigInt @id @default(autoincrement()) // == 旧表 id
+  memberId Int? @map("member_id")
+  /// 批类型：1 代购 / 3 代发（旧 type）
+  type Int? @db.TinyInt
+  /// 状态：0 初建 / 1 申请处理 / 2 处理中 / 3 成功 / 4 异常（旧 state）
+  status Int? @default(0) @db.TinyInt
+  memo String? @db.VarChar(500)
+  fileName String? @map("file_name") @db.VarChar(100)
+  /// 通知状态：0 无需 / 1 未通知 / 2 通知中 / 3 成功 / 4 失败（旧 notify_state）
+  notifyState Int? @default(0) @map("notify_state") @db.UnsignedTinyInt
+  createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0) // 旧 uptime
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  items ImportItem[]
+
+  @@index([memberId])
+  @@index([createdAt])
+  @@map("import_batches")
+}
+
+/// 导入明细（旧源 dg_imporder_detail）
+model ImportItem {
+  id BigInt @id @default(autoincrement()) // == 旧表 id
+  batchId BigInt @map("batch_id") // 旧 impid
+  memberId Int? @map("member_id")
+  type Int? @db.TinyInt
+  goodsUrl String? @map("goods_url") @db.VarChar(300)
+  goodsName String? @map("goods_name") @db.VarChar(200)
+  goodsId String? @map("goods_id") @db.VarChar(20)
+  supplierProductId Int @default(0) @map("supplier_product_id")
+  goodsImg String? @map("goods_img") @db.VarChar(255)
+  goodsSite String? @map("goods_site") @db.VarChar(30)
+  /// 商品单价 CNY（旧 goodsprice，旧表已是 decimal）
+  unitPrice Decimal? @map("unit_price") @db.Decimal(12, 2)
+  quantity Int? @map("quantity")
+  skuName String? @map("sku_name") @db.VarChar(1024)
+  color String? @db.VarChar(30)   // 旧 goodscolor
+  size String? @db.VarChar(30)    // 旧 goodssize
+  seller String? @db.VarChar(100) // 旧 goodsseller
+  remark String? @db.VarChar(200) // 旧 goodsremark
+  orderRemark String? @map("order_remark") @db.VarChar(200)
+  /// 代发收件人族（旧 dfsend*）
+  consignee String? @db.VarChar(50)
+  tel String? @db.VarChar(30)
+  zip String? @db.VarChar(30)
+  address String? @db.VarChar(200)
+  outId String? @map("out_id") @db.VarChar(50)
+  /// 明细状态：0 初建 / 1 异常url / 2 taobao 获取成功 / 3 接口获取错误 / 4 下单成功 / 5 主单信息错误
+  status Int? @default(0) @db.TinyInt
+  /// 处理信息（旧 pro_info）
+  proInfo String? @map("pro_info") @db.VarChar(100)
+  /// 下单时间（旧 ordertime）
+  orderedAt DateTime? @map("ordered_at") @db.DateTime(0)
+  /// 建单结果订单（旧 oid）
+  orderId BigInt? @map("order_id")
+  /// 数据来源：excel / api（旧 datafrom）
+  dataFrom Int? @default(0) @map("data_from") @db.TinyInt
+  /// 价格上限 CNY（旧 maxprice）
+  maxPrice Decimal? @map("max_price") @db.Decimal(12, 2)
+  /// 拆分来源订单（旧 original_oid）
+  originalOrderId BigInt? @map("original_order_id")
+  createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  batch ImportBatch @relation(fields: [batchId], references: [id])
+
+  @@index([outId])
+  @@index([orderId])
+  @@index([batchId])
+  @@map("import_items")
+}
+
+/// 禁运/无效标记（旧源 dg_invalid_order；按商品 item_id）
+model OrderInvalidMark {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  orderId Int? @map("order_id")
+  adminId Int? @default(0) @map("admin_id")
+  /// 类型：1 1688 / 2 淘宝（旧 type）
+  type Int? @default(0) @db.TinyInt
+  itemId String? @map("item_id") @db.VarChar(30)
+  /// 状态：1 禁运（旧 status）
+  status Int? @default(0) @db.TinyInt
+  /// 附加信息（旧 extra，varchar(200)）
+  extra String? @db.VarChar(200)
+  memo String? @db.VarChar(50)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  order Order? @relation(fields: [orderId], references: [id])
+
+  @@index([orderId])
+  @@index([itemId])
+  @@map("order_invalid_marks")
+}
+
+/// 订单站内信（旧源 dg_yunjiao，293 万行大表，按 uid 分片回填）
+model OrderMessage {
+  id Int @id @default(autoincrement()) // == 旧 jid
+  orderId Int @map("order_id")
+  memberId Int @map("member_id") // 旧 uid
+  status Int
+  /// 信箱号（旧 xbox）
+  boxNo String @default("0") @map("box_no") @db.VarChar(5)
+  /// 分派（旧 xz）
+  assignee String @db.VarChar(255)
+  /// 操作者（旧 user）
+  operator String @db.VarChar(255)
+  /// 用户内容（旧 ucon）
+  userContent String @map("user_content") @db.VarChar(500)
+  /// 管理内容（旧 xcon）
+  adminContent String @map("admin_content") @db.VarChar(500)
+  images String? @db.VarChar(1024)
+  /// 星标（旧 is_focus/user_focus）
+  isFocused Boolean @default(false) @map("is_focused")
+  isUserFocused Boolean @default(false) @map("is_user_focused")
+  createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@index([memberId, createdAt])
+  @@map("order_messages")
+}
+
+/// 检品记录（旧源 dg_examination_record；oid/tid/expressno/item_id 四键可查）
+model ExaminationRecord {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  /// 关联订单 oid（冗余便捷列；正本关系在 order_examinations）
+  orderId Int? @map("order_id")
+  tid String? @db.VarChar(60)
+  /// 国内物流号（旧 expressno——存原始号）
+  domesticTrackingNo String? @map("domestic_tracking_no") @db.VarChar(60)
+  /// 订单类型（旧 order_type，varchar）
+  orderType String? @map("order_type") @db.VarChar(10)
+  itemId String? @map("item_id") @db.VarChar(30)
+  creatorId Int? @map("creator_id")
+  salesman String? @db.VarChar(4)
+  /// 原因（旧 reason）
+  reason String? @db.VarChar(20)
+  /// 详情（旧 detail）+ 日文（旧 detail_ja）
+  detail String? @db.VarChar(200)
+  detailJa String? @map("detail_ja") @db.VarChar(200)
+  images String? @db.VarChar(1000)
+  status Int? @default(1) @db.TinyInt
+  extra String? @db.VarChar(1000)
+  memo String? @db.VarChar(200)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  orderExaminations OrderExamination[]
+
+  @@index([tid])
+  @@index([domesticTrackingNo])
+  @@index([itemId])
+  @@index([createdAt])
+  @@map("examination_records")
+}
+
+/// 订单 ↔ 检品记录（旧源 relation_order_and_examination_record；多对多显式列）
+model OrderExamination {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  orderId Int @map("order_id")
+  examinationId Int @map("examination_id")
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
+
+  order Order @relation(fields: [orderId], references: [id])
+  examination ExaminationRecord @relation(fields: [examinationId], references: [id])
+
+  @@index([orderId])
+  @@index([examinationId])
+  @@map("order_examinations")
+}
+
+/// 购物车（旧源 dg_cart，697 万行；下单入口，含检品勾选快照）
+model Cart {
+  id Int @id @default(autoincrement()) // == 旧 gid
+  memberId Int @map("member_id") // 旧 uid
+  /// 购物车类型：1 代购 / 2 代发货（旧 type，由用户 dfflag 决定）
+  type Int? @default(1) @db.SmallInt
+  /// 平台交易号（旧 tid，加购时可能已知）
+  tid String? @db.VarChar(50)
+
+  // ---- 商品快照（与 Order 同构）----
+  goodsId String? @map("goods_id") @db.VarChar(20)
+  goodsUrl String? @map("goods_url") @db.VarChar(255)
+  goodsName String @map("goods_name") @db.VarChar(255)
+  goodsImg String? @map("goods_img") @db.VarChar(255)
+  skuName String @default("") @map("sku_name") @db.VarChar(1024)
+  goodsSize String? @map("goods_size") @db.VarChar(20)
+  goodsColor String? @map("goods_color") @db.VarChar(20)
+  goodsSeller String? @map("goods_seller") @db.VarChar(50)
+  sellerUrl String? @map("seller_url") @db.VarChar(255)
+  goodsSite String? @map("goods_site") @db.VarChar(50)
+  siteUrl String? @map("site_url") @db.VarChar(255)
+  supplierProductId Int @default(0) @map("supplier_product_id")
+  /// 国内物流号（旧 expressno）
+  domesticTrackingNo String? @map("domestic_tracking_no") @db.VarChar(50)
+
+  // ---- 数量与三价（§4.2 float→Decimal）----
+  quantity Int? @default(1)
+  /// 商品单价 JPY（旧 goodsprice）
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  /// 报价 JPY（旧 offer_price）
+  offerPrice Decimal @default(0.00) @map("offer_price") @db.Decimal(12, 2)
+  /// 零售价 JPY（旧 retail_price）
+  retailPrice Decimal? @map("retail_price") @db.Decimal(12, 2)
+  /// 一件价 JPY（旧 one_piece_price）
+  onePiecePrice Decimal @default(0.00) @map("one_piece_price") @db.Decimal(12, 2)
+  /// 对客运费 JPY（旧 sendprice）
+  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(12, 2)
+  /// 促销价 JPY（旧 proprice）
+  promoPrice Decimal? @map("promo_price") @db.Decimal(12, 2)
+  /// 验货金额 JPY（旧 inspection）
+  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(12, 2)
+  /// 1688 最小起批量（旧 min_order_quantity；按同商品全部 SKU 合计校验）
+  minOrderQuantity Int? @default(0) @map("min_order_quantity") @db.UnsignedSmallInt
+
+  // ---- 翻译列 ----
+  goodsNameTrans String? @map("goods_name_trans") @db.VarChar(255)
+  /// SKU 翻译（旧 sku_trans，cart 旧列为 varchar）
+  skuTrans String? @map("sku_trans") @db.VarChar(255)
+
+  // ---- 条款/检品（与 Order 同构收敛，§4.6）----
+  /// { qtyShortBuy, priceAdjust, shippingAdjust }（旧 TermQty/TermPrice/TermShipping）
+  terms Json?
+  /// 1 空运 / 2 海运 / 3 敏感货（旧 ship）
+  shipMethod Int? @default(0) @map("ship_method") @db.TinyInt
+  /// [{ code, enabled, textValue }]（旧 var1-var12 + yanhuo 家族 + 平台标签 → JSON 受控词表）
+  inspectionOptions Json? @map("inspection_options")
+  asin String? @db.VarChar(64)  // 旧 yanhuoasin
+  fnsku String? @db.VarChar(64) // 旧 yanhuofnsku
+
+  /// 客人外部管理号（旧 outid）
+  outId String? @map("out_id") @db.VarChar(80)
+  /// 来源（旧 add_from）
+  addFrom Int? @default(0) @map("add_from") @db.TinyInt
+  /// 来源备注（旧 add_from_memo）
+  addFromMemo String? @map("add_from_memo") @db.VarChar(20)
+  /// 匿名袋标识（旧 anonymous——客户端防重/会话关联键）
+  clientRef String? @map("client_ref") @db.VarChar(50)
+  /// 商品备注（旧 goodsremark）
+  remark String? @db.VarChar(512)
+  createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime
+
+  valueAddedServices CartValueAddedService[]
+
+  @@index([memberId, type, createdAt])
+  @@index([clientRef])
+  @@map("carts")
+}
+
+/// 购物车增值服务收费（旧源 v2_cart_value_added_service）
+model CartValueAddedService {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  cartId Int @map("cart_id")
+  /// 服务目录 id（v2_value_added_service；禁外键）
+  serviceId Int @map("service_id")
+  nameSnapshot String @map("name_snapshot") @db.VarChar(255)
+  remark String? @db.VarChar(255)
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  qty Int @default(1)
+  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  createdAt DateTime? @map("created_at") @db.Timestamp(0)
+  updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
+
+  cart Cart @relation(fields: [cartId], references: [id])
+
+  @@index([cartId])
+  @@map("cart_value_added_services")
+}
+
+// ============================================================================
+// send-order 域（旧源 dg_sendorder / dg_fapiao / v2_send_order_label /
+//               v2_send_order_invoice_event / v2_sendorder_value_added_service）
+// 设计依据 docs/plans/send-order-schema.md；未决问题收口见 06-send-order-评审与拍板.md
+// ============================================================================
+
+/// 配送委托运单（sid 维度）。旧源 dg_sendorder
+model SendOrder {
+  id Int @id @default(autoincrement()) // == 旧 dg_sendorder.sid（回填对齐）
+  /// 同捆主运单（旧 parent_id；NULL = 主运单/独立单）——纯组织关系，禁金额 rollup（Q7 拍板）
+  bundledIntoId Int? @map("bundled_into_id")
+  /// 运单流水号（旧 sn）# 连接多单号时为首段；全量拆分入 snExtra（Q10 拍板）
+  sn String? @db.VarChar(64)
+  /// 旧 sn 超长/多单号时的全量拆分：{trackingNumbers: [...]}
+  snExtra Json? @map("sn_extra")
+  memberId Int @map("member_id")
+  /// 运单类型：1 普通代购 / 3 一件代发（旧 otype，实测只有 1/3）
+  orderType Int @default(1) @map("order_type") @db.TinyInt
+  /// 8 态状态机（contract SendOrderStatus）：1 待处理/2 已邮寄/3 已完成/4 无效/
+  /// 5 处理中/6 待审核/7 待付款/8 待邮寄；cas 更新
+  status Int @default(1) @map("status") @db.SmallInt
+  statusEnteredAt DateTime @default(now()) @map("status_entered_at") @db.DateTime(0)
+  /// 作业子状态 0-9（contract ProstateCode：0 无/1 等待同梱/2 等OEM同梱/3 FBA作业中/
+  /// 4 等客户指示/5 打包中/6 有商品找不到/7 正在做发票/8 拍照中/9 缝标中）——与 status 并存两流
+  prostate Int? @map("prostate") @db.TinyInt
+  prostateEnteredAt DateTime? @map("prostate_entered_at") @db.DateTime(0)
+
+  // ---- 金额（totalfee 禁存历史值：五费公式服务端现算，§4.3； chargedTotalFee 仅审计）----
+  /// 对客国际运费 JPY（旧 freight）
+  internationalFreight Decimal @default(0.00) @map("international_freight") @db.Decimal(12, 2)
+  /// 采购国际运费 CNY（旧 ufreight，成本）
+  purchaseInternationalFreight Decimal @default(0.00) @map("purchase_international_freight") @db.Decimal(12, 2)
+  /// 增值费 JPY（旧 serverfee）
+  serviceFee Decimal @default(0.00) @map("service_fee") @db.Decimal(12, 2)
+  /// 报关费 JPY（旧 customsfee）
+  customsFee Decimal @default(0.00) @map("customs_fee") @db.Decimal(12, 2)
+  /// 偏远费 JPY（旧 remotefee）
+  remoteFee Decimal @default(0.00) @map("remote_fee") @db.Decimal(12, 2)
+  /// 国内运费 JPY（旧 sendprice；0 = 走订单兜底，禁直接读）
+  domesticShippingFee Decimal @default(0.00) @map("domestic_shipping_fee") @db.Decimal(12, 2)
+  /// 保险费 JPY（旧 Insurancefee——禁并入 totalfee，对账单独口径）
+  insuranceFee Decimal @default(0.00) @map("insurance_fee") @db.Decimal(12, 2)
+  /// 实扣总费快照（已邮寄/支付成功时回写；审计用，禁作业务读值）
+  chargedTotalFee Decimal? @map("charged_total_fee") @db.Decimal(12, 2)
+  /// 运单砍价汇总（旧 bargainprice = Σ order.bargainprice 排除无效态）
+  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  /// 砍价返金状态（旧 bargainstate：0 未返 / 1 已返）
+  bargainRefunded Boolean @default(false) @map("bargain_refunded")
+  bargainRefundedAt DateTime? @map("bargain_refunded_at") @db.DateTime(0)
+  /// 优惠券快照（旧 couponid/couponmoney；券实体归营销域）
+  couponId Int? @map("coupon_id")
+  couponAmount Decimal? @map("coupon_amount") @db.Decimal(12, 2)
+  /// 损坏/修理费（旧 xiwgfei，本地全 0、无业务逻辑，Q1 拍板：审计兜底禁入公式）
+  damageFee Decimal? @map("damage_fee") @db.Decimal(12, 2)
+  /// 疑损坏单价（旧 xwdj varchar，语义待查，与 xiwgfei 配对）
+  damageUnitPrice String? @map("damage_unit_price") @db.VarChar(255)
+  /// 已收取费（旧 yishouqufee）
+  receivedFee Decimal? @map("received_fee") @db.Decimal(12, 2)
+  /// 仓储费 JPY（旧 storage）
+  storageFee Decimal? @map("storage_fee") @db.Decimal(12, 2)
+  /// 计费金额（旧 countmoney）
+  chargeableAmount Decimal? @map("chargeable_amount") @db.Decimal(12, 2)
+  /// 计费重 g（旧 countweight 十进制千克字符串 ×1000，Q2 拍板；不可解析入 legacyExtra）
+  chargeableWeightGrams Int? @map("chargeable_weight_grams")
+
+  // ---- 收件人快照（历史事实，保留；uname/memberid/email 会员副本禁冗余——join member）----
+  consignee String @db.VarChar(30)
+  enName String? @map("en_name") @db.VarChar(30)
+  country String? @db.VarChar(30)
+  city String? @db.VarChar(30)
+  zip String? @db.VarChar(30)
+  tel String? @db.VarChar(30)
+  address String? @db.VarChar(255)
+  /// 进口商信息 JSON（旧 importer_info；real_time_account 禁掩码，§4.8）
+  importerInfo Json? @map("importer_info")
+  companyName String? @map("company_name") @db.VarChar(100)
+  /// 运营备注（旧 remark text）
+  remark String? @db.Text
+
+  // ---- 物流/配送 ----
+  /// 配送渠道（旧 deliveryname 自由字符串，14 观察值；did 与值不对应已废弃 Q6 拍板）
+  deliveryChannel String? @map("delivery_channel") @db.VarChar(30)
+  /// 配送区域名（旧 areaname）
+  deliveryArea String? @map("delivery_area") @db.VarChar(30)
+  /// 发货仓（旧 shipping_warehouse）
+  shippingWarehouse String? @map("shipping_warehouse") @db.VarChar(20)
+  /// 通关类型（旧 passtype，本地全 0，词表待生产核实）
+  passType Int? @map("pass_type") @db.TinyInt
+  /// 可否发货（旧 dfsendflag）
+  canShip Boolean @default(false) @map("can_ship")
+  /// 代发收货码（旧 dfshcode；已邮寄清空）
+  dfReceiveCode String? @map("df_receive_code") @db.VarChar(30)
+  /// 代发物流号（旧 dflwh）
+  dfTrackingNo String? @map("df_tracking_no") @db.VarChar(30)
+  /// 代发收件族（旧 dfsendname/dfsendtel/dfsendaddress/dfsendinfo/dfremarkcn）
+  dfConsignee String? @map("df_consignee") @db.VarChar(50)
+  dfTel String? @map("df_tel") @db.VarChar(50)
+  dfAddress String? @map("df_address") @db.VarChar(255)
+  dfInfo String? @map("df_info") @db.VarChar(300)
+  dfRemarkCn String? @map("df_remark_cn") @db.VarChar(512)
+
+  // ---- 发票/标签/作业 ----
+  /// 发票是否给用户（旧 havefapiao）
+  invoiceDelivered Boolean @default(false) @map("invoice_delivered")
+  /// 发票给用户时间（旧 fapiaotime unix → datetime）
+  invoiceDeliveredAt DateTime? @map("invoice_delivered_at") @db.DateTime(0)
+  /// 发票完成方式：1 系统生成 / 2 人工生成（旧 invoice_completed_type）
+  invoiceCompletedType Int @default(1) @map("invoice_completed_type") @db.TinyInt
+  invoiceCompletedAt DateTime? @map("invoice_completed_at") @db.DateTime(0)
+  /// 包裹数（旧 totalpackages）
+  totalPackages Int? @default(0) @map("total_packages")
+  packageName String? @map("package_name") @db.VarChar(50)
+  packageId Int? @map("package_id")
+  /// 贴标规则 0-3（旧 madeinchina_flag）
+  madeInChinaFlag Int? @default(0) @map("made_in_china_flag") @db.TinyInt
+  /// 原包装：0 废弃 / 1 保留（旧 origin_package_choice）
+  originPackageKeep Boolean @default(false) @map("origin_package_keep")
+  /// 邮件备注文本（旧 mailremark 双形态拆分，§4.9）
+  mailRemark String? @map("mail_remark") @db.VarChar(1024)
+  /// 邮件附件路径数组（旧 mailremark.files）
+  mailAttachments Json? @map("mail_attachments")
+  /// 评价 JSON（旧 comment/commenttime/reply/showcomment 四合为一：
+  /// {content, reply, show, commentedAt}）
+  comment Json?
+  /// 位运算标记（旧 mark_flag；本地全 NULL 且无位定义，Q5 拍板不拆包）
+  markFlags Int? @map("mark_flags")
+  /// 历史兜底（旧 sn 超长部分已入 snExtra；countweight 脏值 / xiwgfei 语义查明前原值）
+  legacyExtra Json? @map("legacy_extra")
+
+  createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime unix
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0) // 旧 uptime unix
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  bundledInto SendOrder? @relation("Bundle", fields: [bundledIntoId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  bundledSendOrders SendOrder[] @relation("Bundle")
+  labels SendOrderLabel[]
+  invoiceEvents SendOrderInvoiceEvent[]
+  valueAddedServices SendOrderValueAddedService[]
+  invoices Invoice[]
+  statusHistories SendOrderStatusHistory[]
+
+  @@index([memberId, createdAt])
+  @@index([status])
+  @@index([sn])
+  @@index([bundledIntoId])
+  @@index([orderType, status])
+  @@map("send_orders")
+}
+
+/// 运单状态/作业流变迁历史（新系统新增；kind 区分 state 8 态与 prostate 9 态两流，禁混枚举）
+model SendOrderStatusHistory {
+  id Int @id @default(autoincrement())
+  sendOrderId Int @map("send_order_id")
+  /// 流类型：state（客户可见生命周期）/ prostate（仓库作业子状态）
+  kind String @db.VarChar(16)
+  fromStatus Int? @map("from_status")
+  toStatus Int @map("to_status")
+  /// 操作者类型：member / admin / system / worker
+  operatorType String @map("operator_type") @db.VarChar(16)
+  operatorId Int? @map("operator_id")
+  reason String? @db.VarChar(255)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  sendOrder SendOrder @relation(fields: [sendOrderId], references: [id])
+
+  @@index([sendOrderId, createdAt])
+  @@index([kind])
+  @@map("send_order_status_histories")
+}
+
+/// 客户上传标签（旧源 v2_send_order_label）。文件走 OSS，库内只存 path——禁 base64
+model SendOrderLabel {
+  id BigInt @id @default(autoincrement()) // == 旧表 id（bigint unsigned）
+  sendOrderId Int @map("send_order_id")
+  memberId Int @map("member_id")
+  /// 标签类型：fba_box FBA 箱标 / fba_item FNSKU 商品标 / 3pl_box 其他 3PL 箱标 / carrier 运单
+  type String @db.VarChar(16)
+  filePath String @map("file_path") @db.VarChar(255)
+  fileName String @map("file_name") @db.VarChar(191)
+  mime String @db.VarChar(32)
+  size Int @default(0)
+  /// FBA 货件编号（FBA 标签时）
+  fbaShipmentId String? @map("fba_shipment_id") @db.VarChar(64)
+  /// 目的仓库代码
+  destinationCode String? @map("destination_code") @db.VarChar(32)
+  /// [{box_no, oid, qty}]
+  boxes Json?
+  /// 状态：0 已收到 / 1 已贴 / 2 已扫描核对
+  status Int @default(0) @db.TinyInt
+  /// 扫描核对结果（仓库填）
+  scanResult Json? @map("scan_result")
+  /// 贴好后的照片（仓库填）
+  photoUrls Json? @map("photo_urls")
+  appliedAt DateTime? @map("applied_at") @db.DateTime(0)
+  verifiedAt DateTime? @map("verified_at") @db.DateTime(0)
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+
+  sendOrder SendOrder @relation(fields: [sendOrderId], references: [id])
+
+  @@index([sendOrderId, type])
+  @@index([status])
+  @@index([memberId])
+  @@map("send_order_labels")
+}
+
+/// 发票事件流（旧源 v2_send_order_invoice_event；append-only，禁更新）
+model SendOrderInvoiceEvent {
+  id BigInt @id @default(autoincrement()) // == 旧表 id（bigint unsigned）
+  sendOrderId Int @map("send_order_id")
+  memberId Int @map("member_id")
+  /// 事件类型：revise_requested 客户要求修改发票 / paid_confirmed 支付＝确认了这一版发票
+  type String @db.VarChar(32)
+  /// 当时的发票版本（内容指纹；开放接口锁内校验的关键）
+  invoiceVersion String @map("invoice_version") @db.VarChar(32)
+  /// 修改要求的内容
+  comment String? @db.Text
+  /// 客户附的图片 URL
+  imageUrls Json? @map("image_urls")
+  /// 来源：api / web
+  source String @default("api") @db.VarChar(16)
+  /// 为修改要求建的工单（可溯源到 ticket 域）
+  ticketId BigInt? @map("ticket_id")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+
+  sendOrder SendOrder @relation(fields: [sendOrderId], references: [id])
+
+  @@index([sendOrderId, createdAt])
+  @@index([ticketId])
+  @@map("send_order_invoice_events")
+}
+
+/// 运单增值服务收费（旧源 v2_sendorder_value_added_service）
+model SendOrderValueAddedService {
+  id Int @id @default(autoincrement()) // == 旧表 id
+  sendOrderId Int @map("send_order_id")
+  /// 服务目录 id（禁外键）
+  serviceId Int @map("service_id")
+  nameSnapshot String @map("name_snapshot") @db.VarChar(255)
+  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  /// 手工加项标记（非客户自助勾选）
+  isManual Boolean @default(false) @map("is_manual")
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+
+  sendOrder SendOrder @relation(fields: [sendOrderId], references: [id])
+
+  @@index([sendOrderId])
+  @@map("send_order_value_added_services")
+}
+
+/// 发票（旧源 dg_fapiao，371 万+ 行；Q3 拍板归 send-order 域，sid 维度出货文件快照）
+/// ⚠ 整表是「出货文件快照」：收件人/会员/货物信息为历史事实，禁反查实时表
+model Invoice {
+  id Int @id // == 旧 dg_fapiao.fid（回填对齐）
+  sendOrderId Int @map("send_order_id")
+  orderId Int @map("order_id")
+  memberId Int @map("member_id")
+  /// 地址簿 ID（旧 cid；0 → NULL，本地 78,344 行=0）
+  addressBookId Int? @map("address_book_id")
+
+  // ---- 会员快照（旧 uname/utel/upost/uaddress；历史事实）----
+  memberName String? @map("member_name") @db.VarChar(50)
+  memberTel String? @map("member_tel") @db.VarChar(20)
+  memberPost String? @map("member_post") @db.VarChar(20)
+  memberAddress String? @map("member_address") @db.VarChar(200)
+
+  // ---- 收件人快照（旧 cname/ctel/cpost/caddress）----
+  consigneeName String? @map("consignee_name") @db.VarChar(50)
+  /// 货品溶剂？（旧 goodsrongji，语义待查）
+  goodsRongji String? @map("goods_rongji") @db.VarChar(50)
+  consigneeTel String? @map("consignee_tel") @db.VarChar(20)
+  consigneePost String? @map("consignee_post") @db.VarChar(20)
+  consigneeAddress String? @map("consignee_address") @db.VarChar(200)
+
+  // ---- 物流/包装 ----
+  transport String? @db.VarChar(50)
+  /// 航空运单号（旧 airbill varchar(2512)；多单号场景首段 ≤64，全量入 legacyExtra）
+  airbill String? @db.VarChar(64)
+  /// 总重（旧 totalweight——含代码值如 'A'，语义待查，Q2 拍板禁转数值）
+  totalWeight String? @map("total_weight") @db.VarChar(32)
+  country String? @db.VarChar(50)
+  teams String? @db.VarChar(50)
+  packages String? @db.VarChar(50)
+  /// 关税（旧 tariff varchar，原样字符串）
+  tariff String? @db.VarChar(50)
+  /// 国际品名（旧 goodsinternational varchar(1150)）
+  goodsInternational String? @map("goods_international") @db.VarChar(1150)
+  /// 数量合计（旧 amount int）
+  amount Int?
+  boxNum Int? @map("box_num")
+  /// 混装箱号（旧 hyboxnum varchar(500)）
+  hyBoxNum String? @map("hy_box_num") @db.VarChar(500)
+
+  // ---- 货物族 ----
+  goodsPrice Decimal? @map("goods_price") @db.Decimal(12, 2)
+  goodsName String? @map("goods_name") @db.VarChar(200)
+  goodsCaizhi String? @map("goods_caizhi") @db.VarChar(50)
+  goodsNum Int? @map("goods_num")
+  goodsUrl String? @map("goods_url") @db.VarChar(255)
+  goodsId String? @map("goods_id") @db.VarChar(30)
+  goodsImg String? @map("goods_img") @db.VarChar(300)
+  /// 订单重量（旧 orderweight float(10,2)）
+  orderWeight Decimal? @map("order_weight") @db.Decimal(10, 2)
+  goodsTotal Decimal? @map("goods_total") @db.Decimal(12, 2)
+  subtotal Decimal? @db.Decimal(12, 2)
+  bargainPrice Decimal? @map("bargain_price") @db.Decimal(10, 2)
+  /// 材质备注（旧 gcaizhimemo）
+  caizhiMemo String? @map("caizhi_memo") @db.VarChar(50)
+  /// 低申报倍数（旧 lowmultiple float(10,2)）
+  lowMultiple Decimal? @map("low_multiple") @db.Decimal(10, 2)
+  /// 中国品名（旧 expcnname）
+  expCnName String? @map("exp_cn_name") @db.VarChar(30)
+  enName String? @map("en_name") @db.VarChar(60)
+  goodsUseful String? @map("goods_useful") @db.VarChar(10)
+  usefulMemo String? @map("useful_memo") @db.VarChar(50)
+
+  // ---- 销售/汇率 ----
+  exportName String? @map("export_name") @db.VarChar(200)
+  /// 汇率快照（旧 exchangerate float(10,2)→Decimal(10,4)，防舍入丢失）
+  exchangeRate Decimal? @map("exchange_rate") @db.Decimal(10, 4)
+  salesName String? @map("sales_name") @db.VarChar(200)
+  salesTel String? @map("sales_tel") @db.VarChar(20)
+  rateType Int? @map("rate_type")
+  /// 国内运费（旧 sendprice float(10,2)）
+  sendPrice Decimal? @map("send_price") @db.Decimal(10, 2)
+
+  // ---- 包装明细 ----
+  packageName String? @map("package_name") @db.VarChar(100)
+  packageId Int? @map("package_id")
+
+  /// 旧表无时间列；新系统审计用（回填空置，新写入必须赋值）
+  createdAt DateTime? @map("created_at") @db.DateTime(0)
+  updatedAt DateTime? @map("updated_at") @db.DateTime(0)
+  /// 历史兜底（airbill 超长全量 / totalweight 原值异常时的留档）
+  legacyExtra Json? @map("legacy_extra")
+
+  sendOrder SendOrder @relation(fields: [sendOrderId], references: [id])
+
+  @@index([sendOrderId])
+  @@index([orderId])
+  @@index([memberId])
+  @@map("invoices")
 }

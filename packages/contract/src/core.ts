@@ -31,5 +31,16 @@ export interface ApiError {
   details?: unknown;
 }
 
+/** 开放 API 业务码（旧系统 ApiResponse 约定，各域共用；成功为 200） */
+export const OpenApiCode = {
+  OK: 200,
+  /** 无/无效 Bearer、token 未绑定 User */
+  UNAUTHORIZED: 40100,
+  /** 参数校验 / 业务校验（含 captcha_error 等 message 级细分） */
+  VALIDATION: 40000,
+  /** 余额不足 */
+  INSUFFICIENT_BALANCE: 40010,
+} as const;
+
 /** 会员 id（品牌类型，防与订单/运单 id 混用） */
 export type MemberId = number & { readonly __brand: 'MemberId' };

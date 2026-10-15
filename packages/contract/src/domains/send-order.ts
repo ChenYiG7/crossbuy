@@ -1,0 +1,367 @@
+import { z } from 'zod';
+import { pageQuerySchema, type Money, type PageResult } from '../core';
+
+/**
+ * send-order 域契约 —— 唯一对外类型源（docs/07 §2）。
+ * 词表正本：状态机/totalfee 口径/发票归属见 docs/plans/send-order-schema.md；
+ * Q3（发票归本域）等七条收口见 docs/plans/06-send-order-评审与拍板.md。
+ *
+ * 纪律：
+ *   · 金额一律 Money（字符串）；totalfee 禁信历史值——契约不出 totalfee 快照读值，
+ *     只出五费分列 + chargedTotalFee（审计列，仅已邮寄/支付成功后有值）
+ *   · 日期一律 ISO 字符串
+ *   · importerInfo.real_time_account（报关完整号码）禁出行视图（敏感）；
+ *     保存服务层「禁掩码」校验见 send-order-schema.md §4.8
+ */
+
+// ---------------------------------------------------------------------------
+// 一、词表（schema 注释即拍板表）
+// ---------------------------------------------------------------------------
+
+/** 运单 8 态状态机（SendOrder.php 定稿） */
+export const SendOrderStatus = {
+  /** 1 待处理（唯一可取消态） */
+  WAITING: 1,
+  /** 2 已邮寄（确认已邮寄并返金后进入） */
+  SHIPPED: 2,
+  /** 3 已完成（确认收货 + 积分同事务） */
+  COMPLETED: 3,
+  /** 4 无效运单 */
+  INVALID: 4,
+  /** 5 处理中（写入点未定位全，迁移表白名单暂拒） */
+  PROCESSING: 5,
+  /** 6 待审核（写入点未定位全，迁移表白名单暂拒） */
+  PENDING_CHECK: 6,
+  /** 7 待付款（支付 7→8） */
+  PENDING_PAY: 7,
+  /** 8 待邮寄（支付成功后） */
+  PENDING_SHIP: 8,
+} as const;
+export type SendOrderStatusCode = (typeof SendOrderStatus)[keyof typeof SendOrderStatus];
+export const sendOrderStatusSchema = z.nativeEnum(SendOrderStatus);
+
+/** 可取消态（旧系统核实：仅 1；副作用 = 订单回 4 + sid=0 + 券复原 + 仓储回改） */
+export const SEND_ORDER_CANCELABLE_STATUS: SendOrderStatusCode = SendOrderStatus.WAITING;
+/** 支付迁移（SendOrderPayService：锁 sendorder → 锁 user → 扣 totalfee → 回写） */
+export const SEND_ORDER_PAY_TRANSITION: { from: SendOrderStatusCode; to: SendOrderStatusCode } = {
+  from: SendOrderStatus.PENDING_PAY,
+  to: SendOrderStatus.PENDING_SHIP,
+};
+
+/** 作业子状态 0-9（prostate，与 status 并存的两条流，禁混枚举） */
+export const ProstateCode = {
+  /** 0 无 */
+  NONE: 0,
+  /** 1 等待同梱 */
+  WAIT_BUNDLE: 1,
+  /** 2 等 OEM 商品同梱 */
+  WAIT_OEM_BUNDLE: 2,
+  /** 3 FBA 作业中 */
+  FBA_WORKING: 3,
+  /** 4 等客户指示 */
+  WAIT_CUSTOMER: 4,
+  /** 5 打包中 */
+  PACKING: 5,
+  /** 6 有商品找不到 */
+  GOODS_MISSING: 6,
+  /** 7 正在做发票 */
+  INVOICING: 7,
+  /** 8 拍照中 */
+  PHOTOING: 8,
+  /** 9 缝标中 */
+  SEWING_LABEL: 9,
+} as const;
+export type ProstateCodeValue = (typeof ProstateCode)[keyof typeof ProstateCode];
+export const prostateCodeSchema = z.nativeEnum(ProstateCode);
+
+/** 运单类型（旧 otype：实测只有 1/3，无 2） */
+export const SendOrderType = {
+  /** 1 普通代购 */
+  PURCHASE: 1,
+  /** 3 一件代发 */
+  ONE_PIECE: 3,
+} as const;
+export type SendOrderTypeCode = (typeof SendOrderType)[keyof typeof SendOrderType];
+export const sendOrderTypeSchema = z.nativeEnum(SendOrderType);
+
+/** 贴标规则（旧 madeinchina_flag） */
+export const MadeInChinaFlag = {
+  /** 0 不贴 */
+  NONE: 0,
+  /** 1-3 贴标规则（运营配置） */
+  RULE_1: 1,
+  RULE_2: 2,
+  RULE_3: 3,
+} as const;
+export type MadeInChinaFlagCode = (typeof MadeInChinaFlag)[keyof typeof MadeInChinaFlag];
+export const madeInChinaFlagSchema = z.nativeEnum(MadeInChinaFlag);
+
+/** 客户上传标签类型（v2_send_order_label.type） */
+export const LabelType = {
+  /** FBA 箱标 */
+  FBA_BOX: 'fba_box',
+  /** FNSKU 商品标 */
+  FBA_ITEM: 'fba_item',
+  /** 其他 3PL 箱标 */
+  THIRD_PL_BOX: '3pl_box',
+  /** 运单 */
+  CARRIER: 'carrier',
+} as const;
+export type LabelTypeCode = (typeof LabelType)[keyof typeof LabelType];
+export const labelTypeSchema = z.nativeEnum(LabelType);
+
+/** 标签状态（v2_send_order_label.status） */
+export const LabelStatus = {
+  /** 0 已收到 */
+  RECEIVED: 0,
+  /** 1 已贴 */
+  APPLIED: 1,
+  /** 2 已扫描核对 */
+  VERIFIED: 2,
+} as const;
+export type LabelStatusCode = (typeof LabelStatus)[keyof typeof LabelStatus];
+export const labelStatusSchema = z.nativeEnum(LabelStatus);
+
+/** 发票事件类型（v2_send_order_invoice_event.type；append-only） */
+export const InvoiceEventType = {
+  /** 客户要求修改发票 */
+  REVISE_REQUESTED: 'revise_requested',
+  /** 支付＝确认了这一版发票 */
+  PAID_CONFIRMED: 'paid_confirmed',
+} as const;
+export type InvoiceEventTypeCode = (typeof InvoiceEventType)[keyof typeof InvoiceEventType];
+export const invoiceEventTypeSchema = z.nativeEnum(InvoiceEventType);
+
+/**
+ * 配送渠道（旧 deliveryname 自由字符串）。
+ * ⚠ 禁做严格枚举——运营会加新渠道（本地实测 14 个观察值）；
+ *   下面是观察值文档，service 层容错新值。
+ */
+export const DELIVERY_CHANNEL_OBSERVED = [
+  'ヤマト急便',
+  '佐川急便',
+  'ZC航空便',
+  '日本郵政船便',
+  'EMS',
+  'OCS',
+  'TW閩専線',
+  'TW閩専線VIP',
+  '中国郵政船便VIP',
+  '自提',
+  'SG国内便',
+  '山九急便',
+  'EMS航空便',
+  '佐川急便飞马',
+] as const;
+export const deliveryChannelSchema = z.string().max(30);
+
+// ---------------------------------------------------------------------------
+// 二、开放 API（支付/取消；错误码见 core.OpenApiCode）
+// ---------------------------------------------------------------------------
+
+/**
+ * 运单支付入参（POST /send-orders/pay）。
+ * captcha 来自 GET /send-orders/pay-captcha（6 位数字，Cache 绑定 uid，TTL 300s，一次性）。
+ */
+export const paySendOrderSchema = z.object({
+  sid: z.number().int().positive(),
+  captcha: z.string().regex(/^\d{6}$/),
+});
+export type PaySendOrderInput = z.infer<typeof paySendOrderSchema>;
+
+/** 运单支付出参 */
+export interface PaySendOrderResult {
+  sid: number;
+}
+
+/** 运单取消入参（POST /send-orders/cancel；仅 STATE_WAITING(1)） */
+export const cancelSendOrderSchema = z.object({
+  sid: z.number().int().positive(),
+});
+export type CancelSendOrderInput = z.infer<typeof cancelSendOrderSchema>;
+
+// ---------------------------------------------------------------------------
+// 三、只读查询（XxxQuery + XxxRow）
+// ---------------------------------------------------------------------------
+
+/** 运单列表查询：分页 + 状态/类型过滤；数据权限（会员轴）service 层强制覆盖 */
+export const sendOrderQuerySchema = pageQuerySchema.extend({
+  status: z.union([sendOrderStatusSchema, z.array(sendOrderStatusSchema)]).optional(),
+  type: sendOrderTypeSchema.optional(),
+  createdAtFrom: z.string().datetime().optional(),
+  createdAtTo: z.string().datetime().optional(),
+});
+export type SendOrderQuery = z.infer<typeof sendOrderQuerySchema>;
+
+/**
+ * 运单行视图（HTTP 边界出参）。
+ * 禁出：importerInfo（报关敏感）；consignee/address 等收件人快照仅详情接口按需出。
+ * totalfee 不出读值（禁信历史值）——出五费分列，客户端/服务端现算。
+ */
+export const sendOrderRowSchema = z.object({
+  id: z.number().int().positive(),
+  sn: z.string().nullable(),
+  memberId: z.number().int().positive(),
+  orderType: sendOrderTypeSchema,
+  status: sendOrderStatusSchema,
+  statusEnteredAt: z.string(),
+  prostate: prostateCodeSchema.nullable(),
+  /** 五费分列（Money）——totalfee 由服务端 calculateTotalFee() 现算 */
+  internationalFreight: z.string(),
+  serviceFee: z.string(),
+  customsFee: z.string(),
+  remoteFee: z.string(),
+  domesticShippingFee: z.string(),
+  insuranceFee: z.string(),
+  /** 实扣总费快照（审计列；仅已邮寄/支付成功后有值，禁作业务读值） */
+  chargedTotalFee: z.string().nullable(),
+  bargainAmount: z.string(),
+  bargainRefunded: z.boolean(),
+  deliveryChannel: z.string().nullable(),
+  totalPackages: z.number().int().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SendOrderRow = z.infer<typeof sendOrderRowSchema>;
+
+/** 运单分页出参（list 永不为 null，core 约定） */
+export type SendOrderPageResult = PageResult<SendOrderRow>;
+
+/**
+ * 运单详情行视图（会员本人查询；收件人快照是历史事实）。
+ * importerInfo 仍禁出——报关号码仅仓储/清关内部面经 wms-gateway 流转。
+ */
+export const sendOrderDetailRowSchema = sendOrderRowSchema.extend({
+  consignee: z.string().nullable(),
+  enName: z.string().nullable(),
+  country: z.string().nullable(),
+  city: z.string().nullable(),
+  zip: z.string().nullable(),
+  tel: z.string().nullable(),
+  address: z.string().nullable(),
+  companyName: z.string().nullable(),
+  invoiceDelivered: z.boolean(),
+  invoiceDeliveredAt: z.string().nullable(),
+  dfTrackingNo: z.string().nullable(),
+  mailRemark: z.string().nullable(),
+});
+export type SendOrderDetailRow = z.infer<typeof sendOrderDetailRowSchema>;
+
+// ---------------------------------------------------------------------------
+// 四、侧表行视图
+// ---------------------------------------------------------------------------
+
+/** 客户上传标签行视图（文件只出 path，禁 base64） */
+export const sendOrderLabelRowSchema = z.object({
+  id: z.string(),
+  sendOrderId: z.number().int().positive(),
+  type: labelTypeSchema,
+  status: labelStatusSchema,
+  filePath: z.string(),
+  fileName: z.string(),
+  mime: z.string(),
+  size: z.number().int(),
+  fbaShipmentId: z.string().nullable(),
+  destinationCode: z.string().nullable(),
+  createdAt: z.string().nullable(),
+});
+export type SendOrderLabelRow = z.infer<typeof sendOrderLabelRowSchema>;
+
+/** 客户上传标签入参（文件先经 OSS 直传得到 path，禁 base64 过契约） */
+export const sendOrderLabelCreateSchema = z.object({
+  sendOrderId: z.number().int().positive(),
+  type: labelTypeSchema,
+  filePath: z.string().min(1).max(255),
+  fileName: z.string().min(1).max(191),
+  mime: z.string().max(32),
+  size: z.number().int().min(0),
+  fbaShipmentId: z.string().max(64).optional(),
+  destinationCode: z.string().max(32).optional(),
+  boxes: z
+    .array(z.object({ boxNo: z.string(), orderId: z.number().int().positive().optional(), qty: z.number().int().min(1) }))
+    .optional(),
+});
+export type SendOrderLabelCreate = z.infer<typeof sendOrderLabelCreateSchema>;
+
+/** 发票事件行视图（append-only） */
+export const sendOrderInvoiceEventRowSchema = z.object({
+  id: z.string(),
+  sendOrderId: z.number().int().positive(),
+  type: invoiceEventTypeSchema,
+  invoiceVersion: z.string(),
+  comment: z.string().nullable(),
+  source: z.string(),
+  ticketId: z.string().nullable(),
+  createdAt: z.string().nullable(),
+});
+export type SendOrderInvoiceEventRow = z.infer<typeof sendOrderInvoiceEventRowSchema>;
+
+/**
+ * 发票修订请求入参（开放接口；invoiceVersion 是锁内校验的关键——
+ * service 层在锁内比对当前版本，防并发双改）。
+ */
+export const invoiceReviseRequestSchema = z.object({
+  sendOrderId: z.number().int().positive(),
+  invoiceVersion: z.string().min(1).max(32),
+  comment: z.string().max(2000),
+  imagePaths: z.array(z.string().max(255)).max(9).optional(),
+});
+export type InvoiceReviseRequest = z.infer<typeof invoiceReviseRequestSchema>;
+
+/** 运单增值服务收费行视图 */
+export const sendOrderValueAddedServiceRowSchema = z.object({
+  id: z.number().int().positive(),
+  sendOrderId: z.number().int().positive(),
+  serviceId: z.number().int().positive(),
+  nameSnapshot: z.string(),
+  fee: z.string(),
+  isManual: z.boolean(),
+});
+export type SendOrderValueAddedServiceRow = z.infer<typeof sendOrderValueAddedServiceRowSchema>;
+
+// ---------------------------------------------------------------------------
+// 五、写侧命令（内部管理面）
+// ---------------------------------------------------------------------------
+
+/**
+ * 运单保存命令（importerInfo 的 real_time_account 禁掩码——
+ * service 层检出掩码时按地址簿补回、对不上拒绝，§4.8）。
+ */
+export const sendOrderSaveSchema = z.object({
+  consignee: z.string().min(1).max(30),
+  enName: z.string().max(30).nullable().optional(),
+  country: z.string().max(30).nullable().optional(),
+  city: z.string().max(30).nullable().optional(),
+  zip: z.string().max(30).nullable().optional(),
+  tel: z.string().max(30).nullable().optional(),
+  address: z.string().max(255).nullable().optional(),
+  companyName: z.string().max(100).nullable().optional(),
+  deliveryChannel: deliveryChannelSchema.nullable().optional(),
+  /** 进口商信息 JSON（键契约化：aid/real_time_account/...；禁掩码） */
+  importerInfo: z.record(z.unknown()).nullable().optional(),
+  mailRemark: z.string().max(1024).nullable().optional(),
+});
+export type SendOrderSave = z.infer<typeof sendOrderSaveSchema>;
+
+/**
+ * 运单状态迁移命令（集中式迁移表白名单，§4.4）。
+ * 已核实迁移：取消仅 1；支付 7→8；收货→3；出库/评价要求 3。
+ * ⚠ 5/6 态写入点未定位全——未核实迁移一律拒（灰度前补核实）。
+ */
+export const sendOrderStatusChangeSchema = z.object({
+  sendOrderId: z.number().int().positive(),
+  toStatus: sendOrderStatusSchema,
+  operatorType: z.enum(['member', 'admin', 'system', 'worker']),
+  operatorId: z.number().int().positive().nullable().optional(),
+  reason: z.string().max(255).nullable().optional(),
+});
+export type SendOrderStatusChange = z.infer<typeof sendOrderStatusChangeSchema>;
+
+/** prostate 作业流变更命令（与 state 分离的第二条流） */
+export const prostateChangeSchema = z.object({
+  sendOrderId: z.number().int().positive(),
+  toProstate: prostateCodeSchema,
+  operatorType: z.enum(['admin', 'system', 'worker']),
+  operatorId: z.number().int().positive().nullable().optional(),
+});
+export type ProstateChange = z.infer<typeof prostateChangeSchema>;

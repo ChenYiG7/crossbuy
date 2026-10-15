@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"(no tests yet)\""
+    "test": "tsc -p tsconfig.json && node --import ./test/register-loader.mjs test/smoke.mjs"
   },
   "dependencies": {
     "zod": "catalog:"

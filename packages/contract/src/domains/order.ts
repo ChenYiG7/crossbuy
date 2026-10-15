@@ -1,0 +1,266 @@
+import { z } from 'zod';
+import { pageQuerySchema, type Money, type PageResult } from '../core';
+
+/**
+ * order 域契约 —— 唯一对外类型源（docs/07 §2：契约物理隔离，禁 import ORM/框架类型）。
+ * 词表正本：状态机与金额口径见 docs/plans/order-schema.md（Q5 已拍板）。
+ *
+ * 纪律：
+ *   · 金额一律 Money（字符串，服务端重算，禁浮点）
+ *   · 日期一律 ISO 字符串（行视图出参）
+ *   · 状态列用 Int 字面量枚举 + 中文/日文注释（三方对齐：schema ↔ 设计文档 ↔ 本文件）
+ *   · 行视图禁出敏感字段（importerInfo/real_time_account 归 send-order 域且禁出）
+ */
+
+// ---------------------------------------------------------------------------
+// 一、词表（schema 注释即拍板表）
+// ---------------------------------------------------------------------------
+
+/** 订单 12 态状态机（Order.php 定稿；无效三态不参与金额计算，10/11 为终态） */
+export const OrderStatus = {
+  /** 1 采购中（唯一可取消态之一，与 6） */
+  WAIT_CREATE: 1,
+  /** 2 已采购 */
+  PAID: 2,
+  /** 3 从商店发货完成（在途；库存拆分允许的源态） */
+  SEND: 3,
+  /** 4 到达本公司仓库（提交运单的唯一入口态） */
+  ARRIVE_CHINA: 4,
+  /** 5 发送请求提交完毕（取消运单回 4） */
+  DELIVERY: 5,
+  /** 6 无效订单（未返金；可取消态；不参与金额计算） */
+  INVALID: 6,
+  /** 7 增值检品中（库存拆分允许的源态） */
+  CHECKING: 7,
+  /** 8 航空禁运品 */
+  FORBIDDEN_AIRLINE: 8,
+  /** 9 不良对应（售后）中（进入即给 expressno 加 _S 后缀） */
+  AFTER_SALE: 9,
+  /** 10 无效订单（已返金；最终态） */
+  INVALID_REFUNDED: 10,
+  /** 11 无效订单（已废弃；最终态） */
+  INVALID_DISUSED: 11,
+  /** 12 不良对应（售后）待确认（同 9 加 _S） */
+  AFTER_SALE_WAIT_CHECK: 12,
+} as const;
+export type OrderStatusCode = (typeof OrderStatus)[keyof typeof OrderStatus];
+export const orderStatusSchema = z.nativeEnum(OrderStatus);
+
+/** 金额计算一律排除的无效态（旧 $invalidStates） */
+export const ORDER_INVALID_STATUSES: readonly OrderStatusCode[] = [
+  OrderStatus.INVALID,
+  OrderStatus.INVALID_REFUNDED,
+  OrderStatus.INVALID_DISUSED,
+];
+/** 终态（禁再迁移） */
+export const ORDER_FINAL_STATUSES: readonly OrderStatusCode[] = [
+  OrderStatus.INVALID_REFUNDED,
+  OrderStatus.INVALID_DISUSED,
+];
+/** 可取消态（旧系统核实：仅 1/6） */
+export const ORDER_CANCELABLE_STATUSES: readonly OrderStatusCode[] = [
+  OrderStatus.WAIT_CREATE,
+  OrderStatus.INVALID,
+];
+/** 提交运单的唯一入口态 */
+export const ORDER_SUBMIT_SEND_STATUS: OrderStatusCode = OrderStatus.ARRIVE_CHINA;
+
+/** 订单类型（旧 type 列：1 代购 / 2 转运 / 3 一件代发） */
+export const OrderType = {
+  /** 1 代购 */
+  PURCHASE: 1,
+  /** 2 转运 */
+  TRANSFER: 2,
+  /** 3 一件代发 */
+  ONE_PIECE: 3,
+} as const;
+export type OrderTypeCode = (typeof OrderType)[keyof typeof OrderType];
+export const orderTypeSchema = z.nativeEnum(OrderType);
+
+/** 下单来源（旧 add_from：2 plugin / 8 api / 其余 web） */
+export const OrderSource = {
+  WEB: 'web',
+  PLUGIN: 'plugin',
+  API: 'api',
+} as const;
+export type OrderSourceCode = (typeof OrderSource)[keyof typeof OrderSource];
+export const orderSourceSchema = z.nativeEnum(OrderSource);
+
+/** 建单方式（旧 purchase_type：1 manual / 2 auto / 其余 one_click） */
+export const CreationMode = {
+  MANUAL: 'manual',
+  AUTO: 'auto',
+  ONE_CLICK: 'one_click',
+} as const;
+export type CreationModeCode = (typeof CreationMode)[keyof typeof CreationMode];
+export const creationModeSchema = z.nativeEnum(CreationMode);
+
+/** 商品平台（开放 API goods_list.platform） */
+export const OrderPlatform = {
+  TAOBAO: 'taobao',
+  PLATFORM_1688: '1688',
+  TRANSSHIPMENT: 'transshipment',
+} as const;
+export type OrderPlatformCode = (typeof OrderPlatform)[keyof typeof OrderPlatform];
+export const orderPlatformSchema = z.nativeEnum(OrderPlatform);
+
+// ---------------------------------------------------------------------------
+// 二、开放 API（契约归 member 域开放接口，业务在 order 域；错误码见 core.OpenApiCode）
+// ---------------------------------------------------------------------------
+
+/** 开放 API 商品项（POST /orders 的 goods_list 元素） */
+export const openApiGoodsItemSchema = z.object({
+  platform: orderPlatformSchema,
+  title: z.string().min(1).max(200),
+  /** 商品库 ID（goods/detail 返回的 product_id） */
+  productId: z.number().int().positive().optional(),
+  /** 平台 SKU ID */
+  skuId: z.string().max(64).optional(),
+  url: z.string().url(),
+  quantity: z.number().int().min(1),
+  /** 店铺昵称；缺省时服务端按平台补全 */
+  shopNick: z.string().max(100).nullable().optional(),
+  /** 商品图；缺省时服务端按平台补全 */
+  img: z.string().url().nullable().optional(),
+  /** 售价——服务端按平台实价覆盖，禁信客户端值 */
+  price: z.string().nullable().optional(),
+  /** 一件代发价——服务端按平台实价覆盖 */
+  onePiecePrice: z.string().nullable().optional(),
+  /** 供货价——服务端按平台实价覆盖 */
+  offerPrice: z.string().nullable().optional(),
+  /** 1688 一件零售价——服务端按平台 SKU 实价覆盖，未设置为 null 不转 0 */
+  retailPrice: z.string().nullable().optional(),
+  /** 是否一件包邮 */
+  onePieceFreePostage: z.union([z.literal(0), z.literal(1)]).nullable().optional(),
+  /** 价格区间（字符串透传） */
+  priceRange: z.string().max(100).nullable().optional(),
+  /** 混批设置（字符串透传） */
+  sellerMixSetting: z.string().max(255).nullable().optional(),
+  /** 规格；缺省时服务端补全 */
+  props: z
+    .array(z.object({ name: z.string().nullable().optional(), value: z.string().nullable().optional() }))
+    .nullable()
+    .optional(),
+  /** 最低起订量——按同一商品全部 SKU 合计校验，不是单个 SKU */
+  minOrderQuantity: z.number().int().min(0).nullable().optional(),
+  /** 国内运费（Money） */
+  sendPrice: z.string().nullable().optional(),
+  remark: z.string().max(500).nullable().optional(),
+  /** 物流单号（转运常用） */
+  expressNo: z.string().max(64).nullable().optional(),
+  /** FBA 勾选。只有 true 写入 FBA；false/缺省为未勾选（旧 "1"/"1" 之外一律未勾选） */
+  fba: z.boolean().nullable().optional(),
+});
+
+/** 开放 API 建单入参（POST /orders；旧系统上限 20 条临时防护保留） */
+export const openApiCreateOrderSchema = z.object({
+  goodsList: z.array(openApiGoodsItemSchema).min(1).max(20),
+});
+export type OpenApiCreateOrderInput = z.infer<typeof openApiCreateOrderSchema>;
+
+/** 开放 API 建单出参（非分页结构；order_ids 多商品时含多个 oid） */
+export interface OpenApiCreateOrderResult {
+  orderIds: number[];
+  /** 本单扣款总额（Money，服务端重算） */
+  totalMoney: Money;
+}
+
+/**
+ * 开放 API 取消入参（POST /orders/cancel）。
+ * orderIds 支持逗号分隔字符串或整型数组（旧接口兼容形态），
+ * 服务端归一化为正整数去重后校验：仅允许 1/6 态。
+ */
+export const openApiCancelOrderSchema = z.object({
+  orderIds: z.union([z.string().min(1), z.array(z.number().int().positive()).min(1)]),
+});
+export type OpenApiCancelOrderInput = z.infer<typeof openApiCancelOrderSchema>;
+
+// ---------------------------------------------------------------------------
+// 三、只读查询（XxxQuery + XxxRow）
+// ---------------------------------------------------------------------------
+
+/** 订单列表查询：分页 + 状态/类型过滤；数据权限（会员轴）由 service 层强制覆盖，禁信调用方 */
+export const orderQuerySchema = pageQuerySchema.extend({
+  status: z.union([orderStatusSchema, z.array(orderStatusSchema)]).optional(),
+  type: orderTypeSchema.optional(),
+  /** 按下单时间过滤（ISO 字符串） */
+  createdAtFrom: z.string().datetime().optional(),
+  createdAtTo: z.string().datetime().optional(),
+});
+export type OrderQuery = z.infer<typeof orderQuerySchema>;
+
+/**
+ * 订单行视图（HTTP 边界出参）。
+ * 禁出：extendExtra 原始 JSON（内部字段，服务端按需投影为结构化出参）。
+ * 金额字段为 Money 字符串；statusEnteredAt 为当前态进入时间。
+ */
+export const orderRowSchema = z.object({
+  id: z.number().int().positive(),
+  groupId: z.number().int().positive(),
+  memberId: z.number().int().positive(),
+  type: orderTypeSchema,
+  status: orderStatusSchema,
+  statusEnteredAt: z.string(),
+  source: orderSourceSchema,
+  creationMode: creationModeSchema,
+  goodsId: z.string().nullable(),
+  goodsUrl: z.string().nullable(),
+  goodsName: z.string().nullable(),
+  goodsImg: z.string().nullable(),
+  skuName: z.string().nullable(),
+  quantity: z.number().int(),
+  unitPrice: z.string(),
+  bargainedUnitPrice: z.string(),
+  shippingFee: z.string(),
+  /** 服务费抵减（从 extend 显式化；Q9 第一步） */
+  serviceFeeOffset: z.string(),
+  sendOrderId: z.number().int().positive().nullable(),
+  domesticTrackingNo: z.string().nullable(),
+  reissueNo: z.string().nullable(),
+  reissueSeq: z.number().int().nullable(),
+  isAfterSale: z.boolean(),
+  isFavorite: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type OrderRow = z.infer<typeof orderRowSchema>;
+
+/** 订单分页出参（list 永不为 null，core 约定） */
+export type OrderPageResult = PageResult<OrderRow>;
+
+// ---------------------------------------------------------------------------
+// 四、写侧命令（内部管理面；开放 API 建单走上面的 openApiCreateOrderSchema）
+// ---------------------------------------------------------------------------
+
+/** 后台建单/改单命令：金额字段一律 Money，服务端重算后落库（禁信客户端） */
+export const orderCreateSchema = z.object({
+  memberId: z.number().int().positive(),
+  type: orderTypeSchema,
+  goodsId: z.string().max(64).optional(),
+  goodsUrl: z.string().url().optional(),
+  goodsName: z.string().min(1).max(200),
+  skuName: z.string().max(200).nullable().optional(),
+  quantity: z.number().int().min(1),
+  unitPrice: z.string(),
+  shippingFee: z.string().optional(),
+  remark: z.string().max(500).nullable().optional(),
+});
+export type OrderCreate = z.infer<typeof orderCreateSchema>;
+
+export const orderUpdateSchema = orderCreateSchema.partial();
+export type OrderUpdate = z.infer<typeof orderUpdateSchema>;
+
+/**
+ * 订单状态迁移命令（新系统集中式迁移表，§4.4）。
+ * ⚠ 旧系统没有迁移表白名单，5/6 态写入点未定位全——
+ *   本 schema 是唯一合法迁移入口，service 层按白名单拒绝非法迁移；
+ *   未核实迁移（如 →5/6）在灰度前补核实前一律拒。
+ */
+export const orderStatusChangeSchema = z.object({
+  orderId: z.number().int().positive(),
+  toStatus: orderStatusSchema,
+  operatorType: z.enum(['member', 'admin', 'system', 'worker']),
+  operatorId: z.number().int().positive().nullable().optional(),
+  reason: z.string().max(255).nullable().optional(),
+});
+export type OrderStatusChange = z.infer<typeof orderStatusChangeSchema>;
