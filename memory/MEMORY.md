@@ -34,7 +34,7 @@
 - **主键对齐**：`member.id == dg_users.uid`（回填显式带 id + 顶 AUTO_INCREMENT），保跨域 JOIN 与旧系统一致。
 - **切换时序**：T0 建新表 → T1 回填+读新写双 → T2 切写入口（旧写归零）→ T3 旧表降级只读投影（供未切换域 JOIN），随域退休。
 - 详见 `docs/plans/member-迁移与共存.md`；member 设计见 `docs/plans/member-schema.md`。
-- **已定参数（2026-10-13）**：余额 = **JPY + `Decimal(12,2)`**，跨币种靠 `balance_currency` 隔离、禁跨币种直接加减；`username` 上 **UNIQUE**。
+- **已定参数（2026-10-13）**：余额 = **JPY + `Decimal(12,2)`**，跨币种靠 `balance_currency` 隔离、禁跨币种直接加减；`username` 上 **UNIQUE**。⚠ **2026-10-15 该拍板已被实测推翻并改判**：旧库对客全链路（`dg_order.goodsprice`／`dg_users.money`／`dg_record.money`／`dg_sendorder.totalfee`）面值都是 **CNY**，只有 `dg_rechargerecord.amount` 与 `dg_users.monpayamt` 是 JPY；按 JPY 回填 CNY 数值会静默放大 ~22 倍并让同库双写无法比对。**Q1 已拍板 = CNY；Q8 已拍板 = 金额 `Decimal(14,2)`、汇率 `Decimal(12,8)`**（原 12,2/12,4 混写废止，`docs/07 §6.2` 与 `utils/money.ts` 注释本轮已同步）。⇒ 今后对客金额注释**禁写 JPY**，真实维度是「对客价 vs 采购成本价」；清扫清单见 `docs/plans/finance-schema.md` §4.14 与 TODO **#11b**，**必须赶在 T0 落生产前做完**（否则回头就是 ALTER + 三域回填重跑）。
 - **Q4 查重已跑（2026-10-13，旧库只读）**：22,611 用户中 **8 组 / 16 账号**重名；除 uid 4109（¥291.02/107 单）外全零订单。明细与消歧见 `docs/plans/02-用户名重名处置.md`，复现见 `packages/db/sql/disambiguate-username-proposal.sql`。
 - **Collation 坑（2026-10-13 修正，极重要）**：旧库 `utf8_general_ci`（ci + **尾空格不敏感**）；新表 T0 生成的表级默认是 `utf8mb4_unicode_ci`，**两者口径不等价** —— 实测 22,612 真实用户名下重名组数：`utf8mb4_general_ci`=**8**、`utf8mb4_unicode_ci`=**24**、`0900_ai_ci`=23、`bin`=8。`unicode_ci` 额外把「全角/半角」「片假名/平假名」「全角空格 U+3000」视为等价，多出的 16 组里**有多对是不同人**（`RYUJI` uid1801 渡辺様 815 单 vs uid7874 深澤竜二 2 单）。→ **`member.username` 必须显式 `utf8mb4_general_ci`**（`packages/db/sql/0001a-member-username-collation.sql`；Prisma 不支持列级 collation，只能 raw SQL `MODIFY`）。副作用：username 与其他 `unicode_ci` 列混用会报 Illegal mix of collations → **禁与其他字符串列 JOIN/UNION**。判尾空格**禁用** `uname = TRIM(uname)`（ci 下 `'a '='a'` 真），必须比 `CHAR_LENGTH`。email **不加唯一**（`123456@qq.com` ×31 为测试号）。
 - **生产库只读通道**：跳板机 `114.215.206.28` + SSH 端口转发 `-L 13306:<polardb>:3306` → PolarDB `taotaro`（MySQL 8.0.18）；本机 PHP CLI（FlyEnv 8.4）作 PDO 客户端。密码不入代码/文档，放独立文件（当前 `C:/Users/13621/.taotaro-db.pass`）。
@@ -44,21 +44,24 @@
 - **T0 建表 DDL** 由 `schema.prisma` 生成：`prisma migrate diff --from-empty --to-schema-datamodel ... --script > packages/db/sql/0001-member-domain-up.sql`（17 表，无外键）。改 schema 后必须重生成，**禁手改 DDL**。
 - **T1 回填脚本（2026-10-13 完成，本地演练 40 项断言全 PASS、3 遍幂等）**：`packages/db/sql/` 下 6 个脚本按 ①`0001` 建表 → ②`0001a` username collation → ③`0002` 核心三表回填 → ④`0003` 核心校验 → ⑤`0004` 13 张侧表回填 → ⑥`0005` 侧表校验。均 `INSERT..SELECT..ON DUPLICATE KEY UPDATE`（保留源 id）+ `PREPARE` 顶 AUTO_INCREMENT。
 - **回填两铁律（2026-10-13）**：① **带 `member` 必需关系的表必须 `JOIN member` 过滤外键孤儿**（否则 Prisma `include` 报错），实测孤儿 favorite 240 / browse 3389 / benefit 3 / log 68、oauth_login 唯一行即孤儿（回填 0）；② `dg_users` 有 id 空洞（max uid 25,289 / 实 22,612）→ 顶自增用 `MAX(id)+1` 不能用行数。
+- **旧库「幂等列」三例不可信（2026-10-15 确证）**：① `dg_record.idempotency_key` UNIQUE 是 **DBA 手工加列**（无 migration、全仓零读写、实测全 NULL），别当「旧系统已验证实践」引用；② 真正在用的 `dg_record↔dg_rechargerecord` JOIN 键是 `sn`，但生成规则 `date("YmdHis").random_int(100,999)` **含随机数 = 非幂等**；③ 现存判重全是「先查后插」文本匹配（`remark LIKE '月会員費'`+当月窗、`hasBargainRefundRecord()`）。`dg_rechargerecord.gateway_transaction_no` UNIQUE 同样 PHP 侧零引用（只有 Stripe doc 规定 Python 服务写）。⇒ 新系统幂等必须「唯一键 + 命令侧算 key」，并配**非 NULL 率断言**。
+- **账本分录表是「主键对齐旧 id」铁律的例外**：`dg_record`(8,073,550) 与 `dg_record_old`(5,987,115) **rid 各自自增、数值空间重叠**，合并进 `ledger_entries` 必撞号 ⇒ 分录 id 新分配，用 `(legacy_source, legacy_id)` 唯一键承载对齐。单据表（`recharge_orders.id=dg_rechargerecord.rid`）仍照铁律对齐。
 - **PAT 取舍（T2 需复决）**：`v2_personal_access_tokens` 只回填 `App\Models\User` 且父会员存在（105,808 / 共 106,368）；排除 `AdminUser` 539（非会员域）。SQL 里写 `'App\\Models\\User'`（**双反斜杠**，否则 MySQL 吃 `\M`）。
 - **字典表**：`area`（旧 `v2_area`，1940 行 JP 行政区划）随 member 试水先行落位，后续可移入 common/geo 域。
 
 ## 数据模型参考（docs/plans）
 - `00-旧库表结构盘点.md`：174 张旧表按代际分组（dg_ 71 / v2_ 44 / deprecated_ 21 / admin_ 12 / sys_ 11 / 其他）
 - `01-v2表字段精读.md`：44 张 v2_ + `finance_order_cash_flow` 字段级精读（唯一键/状态枚举/坑）
-- 关键发现：`v2_address`/`v2_area` 是**行政区划字典**（非收货地址）；会员主表是 `dg_users`（v2_ 无会员主表）；`finance_order_cash_flow` 是会员现金流水（非订单行）
-- 金额精度不统一（DECIMAL(10,2)/(12,2)/float/varchar「价格+币种」）；`v2_order_detail.coupon_fee` 是 float
+- 关键发现：`v2_address`/`v2_area` 是**行政区划字典**（非收货地址）；会员主表是 `dg_users`（v2_ 无会员主表）；`finance_order_cash_flow` **不是会员余额流水也不是订单行**——它是「财务代付动作」流水（`paid_money = price − bargain + send_price`，实测 100% 成立，不含服务费，带后台 operator）；**客户余额流水是 `dg_record`**（807 万行，`type` 收支方向 + `action` 业务原因 + `accountmoney` 动账后快照）。
+- `finance-schema.md`（2026-10-15 草案）：finance 域 4 表列级精读 + `action`/`state`/`paytype` 全量词表 + 账本链断实测 + 9 模型草案（另 3 表字段级待补）+ Q1~Q14。**Finance 并非 0 篇文档**：`backend/docs/business/` 实为 67 篇、finance 相关 4 篇（旧记载「80 篇 / Finance 0 篇」已订正）。
+- 金额精度不统一（DECIMAL(10,2)/(12,2)/float/varchar「价格+币种」）；`v2_order_detail.coupon_fee` 是 float；`dg_users.money` 是 **decimal(10,2)**（实测 max 99,999,350.04，距上限仅 64.95 元 = 溢出风险）；`dg_huilv.huilv` 是 **float(10,2)**（对 0.045 量级只剩 2 位有效数字）。
 
 ## 迁移顺序（价值 × 知识沉淀）
 先续命（fork 山景私有包 + 兼职张知识盘点）→ member 开放 API 试水（文档最全）→ order/send-order → finance（含对账）→ logistics/ticket/cms。前台 www 灰度替换（SEO 不能断收录）。
 
 ## 从旧系统继承的关键结论（重写时必须规避的坑）
 - **领域模型硬伤**（AGENTS.md 自曝）：`bargainprice` 在 Order/SendOrder 语义不同；`goodsprice` vs `goodsprice1`（原价/砍后价）；各域 `status` 独立状态机不可跨域假设
-- **对账体系缺失**：旧 `app/` 里 `对账/reconcile` 0 命中，有流水无对账；后门 `skip_price_check`、后台 `BatchUpdateOrder` 可改金额且无兜底 → 新系统必须内置对账
+- **对账体系缺失（2026-10-15 已量化）**：旧 `app/` 里**没有任何「Σ流水=余额」校验**；实测 `dg_record` 链断 **7.3%（36,482 环）、55% 会员受影响**、断点 98.6% 在下单扣款，而期末余额 673/676 仍相符 ⇒ 旧系统只保最终余额不保每笔可追溯，**对账必须逐环校验**。后门 `skip_price_check`、`BatchUpdateOrder` 可改金额、`dg_rechargerecord` 后台可改 `money`/汇率反算、`dg_huilv` 全字段可手改、PayPal 回调仅 2 秒 `Cache::lock`+先查后改、月费/仓储费 Job 无锁无校验。★ **唯一一处真对账实现 = WorldFirst**（`MatchWorldFirstCollectionStatementsService` 循环扣减+容差+不足标记），但其 `v2_worldfirst_*` 四表在生产 dump 与本地副本都不存在（是否在产待核）。⇒ 新系统必须内置对账，并可复用 WorldFirst 的匹配范式。
 - **山景私有包无主**：6 个 `shanjing/*` 包分发渠道全在山景手里，`vendor/` 未入 git，`laravel-admin`(2634 文件) 是后台骨架 → 重写前必须 fork 续命（详见 `haiou/.workbuddy/memory/2026-10-12.md`）
 - 领域边界（AGENTS.md）：Order · SendOrder · Finance · Logistics · Member/User · WMS · Ticket · Email
 

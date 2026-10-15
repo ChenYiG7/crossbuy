@@ -2,7 +2,7 @@ import Decimal from 'decimal.js';
 
 /**
  * 金额统一用字符串承载，禁止 JS number 参与金额运算（浮点误差是资金事故之源）。
- * 内部算术走 decimal.js 全精度；入库对齐 DECIMAL(12,4)，显示层再按币种格式化。
+ * 内部算术走 decimal.js 全精度；入库对齐 DECIMAL(14,2)（汇率列 DECIMAL(12,8)），显示层再按币种格式化。
  * 全项目金额计算只走本模块（单一入口），禁止在别处 `+ - * /` 直接算钱。
  */
 export type Money = string;
