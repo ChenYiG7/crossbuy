@@ -31,7 +31,7 @@
 | 队列 | BullMQ + Redis | ^5.34 | `apps/worker`，替代 58 个 Job |
 | 构建 | pnpm + Turborepo | pnpm 9 / turbo 2 | monorepo |
 | 校验 | zod | ^3.24 | 契约 + 服务端校验共用 |
-| 金额 | decimal.js（`utils` 单入口） | ^10.4 | 禁 JS 浮点算钱 |
+| 金额 | decimal.js（`utils` 单入口） | ^10.4 | 禁 JS 浮点算钱。**2026-10-15 定版**：金额列 `Decimal(14,2)`、汇率 `Decimal(12,8)`、**账本面值币种 = CNY**（旧库对客全链路实测是人民币；对日市场 ≠ 记账用日元，见 docs/plans/finance-schema.md §3.3） |
 
 ## 构建与运行（复制粘贴用）
 
@@ -67,7 +67,7 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架 |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架 |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 member 域新表正本（17 模型）+ T0/T1 脚本已就绪并**本地演练通过**；待 DBA 写权限落库 |
+| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 三域新表正本（member+order+send-order **49 模型**，金额列已定版 `Decimal(14,2)`/CNY）+ T0/T1 脚本本地演练通过；★ 定版后 DDL 需重生成（TODO #11b）**再**交 DBA 落库；finance 段待建（`docs/plans/finance-schema.md`） |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
 | `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |

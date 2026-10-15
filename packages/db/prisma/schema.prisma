@@ -94,9 +94,11 @@ model Member {
 
   // ---- 资金（正本在 finance.ledger_entry；下列为冗余/快照）----
   /// 账户余额（缓存列，唯一写入口 + 原子守卫维护）
-  balance              Decimal?  @default(0.00) @db.Decimal(12, 2)
-  /// 余额币种（JPY / CNY）—— 货币隔离，禁跨币种直接加减
-  balanceCurrency      String?   @default("JPY") @map("balance_currency") @db.VarChar(8)
+  balance              Decimal?  @default(0.00) @db.Decimal(14, 2)
+  /// 余额币种 —— ★ 2026-10-15 Q1 定版：旧库对客全链路（货价/余额/流水/运单费）面值是 CNY，
+  /// 故账本与投影列都按 CNY 记；JPY 只存在于充值原币（recharge_orders.source_amount）与前台展示层。
+  /// 货币隔离，禁跨币种直接加减（finance-schema.md §3.3 / §八 Q1）
+  balanceCurrency      String?   @default("CNY") @map("balance_currency") @db.VarChar(8)
   /// 积分
   scores               Int?      @default(0)
   /// 对客浮动汇率：基准汇率上加该值
@@ -112,7 +114,7 @@ model Member {
   /// 代发优先：0 非代发 / 1 代发优先 / 2 普通代购优先
   dfFlag        Int?     @default(0) @map("df_flag") @db.TinyInt
   /// 一件代发费用
-  dfFee         Decimal? @default(10.00) @map("df_fee") @db.Decimal(10, 2)
+  dfFee         Decimal? @default(10.00) @map("df_fee") @db.Decimal(14, 2)
   dfSendName    String?  @map("df_send_name") @db.VarChar(50)
   dfSendAddress String?  @map("df_send_address") @db.VarChar(200)
   dfSendTel     String?  @map("df_send_tel") @db.VarChar(50)
@@ -126,7 +128,7 @@ model Member {
   preBuyFeq           String?  @map("pre_buy_feq") @db.VarChar(60)
   preBuyAmt           String?  @map("pre_buy_amt") @db.VarChar(60)
   /// 月额会员每月扣费（日元）
-  monPayAmt           Decimal? @default(30000) @map("mon_pay_amt") @db.Decimal(12, 2)
+  monPayAmt           Decimal? @default(30000) @map("mon_pay_amt") @db.Decimal(14, 2)
   /// 是否保留原包装：0 废弃 / 1 保留
   originPackageChoice Int?     @default(0) @map("origin_package_choice") @db.TinyInt
   /// 拍货分派选中值
@@ -249,7 +251,7 @@ model MemberWebhook {
   /// 是否发送：1 发送 / 0 停用
   enabled             Boolean   @default(true) @db.TinyInt
   /// 余额低于此值时发 balance.low，空=不发
-  balanceLowThreshold Decimal?  @map("balance_low_threshold") @db.Decimal(12, 2)
+  balanceLowThreshold Decimal?  @map("balance_low_threshold") @db.Decimal(14, 2)
   createdAt           DateTime? @map("created_at") @db.Timestamp(0)
   updatedAt           DateTime? @map("updated_at") @db.Timestamp(0)
 
@@ -515,8 +517,8 @@ model LedgerEntry {
   /// 方向：DR 借 / CR 贷
   direction String   @db.VarChar(2)
   /// 金额（服务端重算，禁浮点）
-  amount    Decimal  @db.Decimal(12, 4)
-  /// 币种（JPY / CNY / USD）
+  amount    Decimal  @db.Decimal(14, 2)
+  /// 币种（本系统面值 CNY；外部平台店铺另有 JPY/USD，见 v2_ecommerce_shop.currency）
   currency  String   @db.VarChar(8)
   /// 业务单号
   bizNo     String?  @map("biz_no") @db.VarChar(64)
@@ -537,7 +539,9 @@ model LedgerEntry {
 // 设计依据：docs/plans/order-schema.md（精读旧系统后）
 //   - Q5 已拍板：OrderGroup 显式化，bargainAmount 挂组级，carrier/holder 机制删除
 //     （docs/plans/05-order-group-评审与拍板.md）
-//   - 金额一律 Decimal(12,2)；采购成本列（CNY）与对客列（JPY）分组命名
+//   - 金额一律 Decimal(14,2)（2026-10-15 Q8 定版）；★ 对客列与采购成本列**同一币种 CNY**
+//     （Q1 定版：旧库 goodsprice/goodsuprice/sendprice/余额/流水面值都是 CNY），
+//     分组维度是「对客价 vs 采购成本价」，不是币种
 //   - 状态机 12 态 cas 更新 + order_status_histories 历史表（替代旧 10 个时间戳列）
 //   - 回填主键对齐：orders.id == dg_order.oid；其余表 id == 旧表主键
 //   - ⚠ order_groups.tid 的 collation 须 utf8mb4_general_ci（raw SQL，见 0002a）
@@ -559,11 +563,11 @@ model OrderGroup {
   /// 供应商店铺快照（supplier 域 shop_id；禁外键）
   supplierShopId Int? @map("supplier_shop_id")
   /// 整单砍价总额（旧 dg_order.bargainprice 按 tid SUM 汇总）——组级唯一正本
-  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(14, 2)
   /// 砍价返金时间（旧 dg_sendorder.bargainstate 的 order 侧对照；finance 事件后回写）
   bargainRefundedAt DateTime? @map("bargain_refunded_at") @db.DateTime(0)
   /// 组内订单行对客运费汇总（旧 sendprice 按 tid SUM）——send-order 已邮寄返金口径源
-  shippingFeeTotal Decimal @default(0.00) @map("shipping_fee_total") @db.Decimal(12, 2)
+  shippingFeeTotal Decimal @default(0.00) @map("shipping_fee_total") @db.Decimal(14, 2)
   /// 组创建时间（旧组内 MIN(addtime)）
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
@@ -622,27 +626,27 @@ model Order {
   /// 代发商品名（旧 dfgoodsname）
   dfGoodsName String? @map("df_goods_name") @db.VarChar(20)
 
-  // ---- 数量与金额（双币种分组：对客 JPY / 采购 CNY）----
+  // ---- 数量与金额（同币种 CNY；分组维度 = 对客价 / 采购成本价）----
   quantity Int @default(1)
-  /// 对客单价 JPY（旧 goodsprice，float→Decimal 无损）
-  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
-  /// 砍后单价 JPY（旧 goodsprice1；OrderGroup.bargainAmount 分摊后的行级派生展示值）
-  bargainedUnitPrice Decimal @default(0.00) @map("bargained_unit_price") @db.Decimal(12, 2)
-  /// 促销价 JPY（旧 proprice）
-  promoPrice Decimal? @map("promo_price") @db.Decimal(12, 2)
-  /// 对客运费 JPY（旧 sendprice）
-  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(12, 2)
+  /// 对客单价 CNY（旧 goodsprice，float→Decimal 无损）
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(14, 2)
+  /// 砍后单价 CNY（旧 goodsprice1；OrderGroup.bargainAmount 分摊后的行级派生展示值）
+  bargainedUnitPrice Decimal @default(0.00) @map("bargained_unit_price") @db.Decimal(14, 2)
+  /// 促销价 CNY（旧 proprice）
+  promoPrice Decimal? @map("promo_price") @db.Decimal(14, 2)
+  /// 对客运费 CNY（旧 sendprice）
+  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(14, 2)
   /// 采购单价 CNY（旧 goodsuprice，成本）
-  purchaseUnitPrice Decimal @default(0.00) @map("purchase_unit_price") @db.Decimal(12, 2)
+  purchaseUnitPrice Decimal @default(0.00) @map("purchase_unit_price") @db.Decimal(14, 2)
   /// 采购国内运费 CNY（旧 senduprice，成本）
-  purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(12, 2)
-  /// 验货金额 JPY（旧 inspection）
-  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(12, 2)
+  purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(14, 2)
+  /// 验货金额 CNY（旧 inspection）
+  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(14, 2)
   /// 下单时实扣金额快照（payOrder 服务端重算结果；正本在 finance.ledger_entry）
-  chargedAmount   Decimal @default(0.00) @map("charged_amount") @db.Decimal(12, 2)
-  chargedCurrency String  @default("JPY") @map("charged_currency") @db.VarChar(3)
+  chargedAmount   Decimal @default(0.00) @map("charged_amount") @db.Decimal(14, 2)
+  chargedCurrency String  @default("CNY") @map("charged_currency") @db.VarChar(3)
   /// 服务费抵扣（旧 extend.deducted_service_fee 显式化）
-  serviceFeeOffset Decimal @default(0.00) @map("service_fee_offset") @db.Decimal(12, 2)
+  serviceFeeOffset Decimal @default(0.00) @map("service_fee_offset") @db.Decimal(14, 2)
 
   // ---- 物流/到库（关系只存一侧，§4.5；后缀显式化，§3.8）----
   /// 运单号（旧 sid；只存这一侧，禁 dg_sendorder.oids 双写）
@@ -753,10 +757,10 @@ model OrderExtension {
   goodsNameTrans String? @map("goods_name_trans") @db.VarChar(255)
   /// SKU 翻译（旧 sku_trans，旧表已是 json）
   skuTrans Json? @map("sku_trans")
-  /// 优惠金额 JPY（旧 coupon_fee，float→Decimal）
-  couponFee Decimal @default(0.00) @map("coupon_fee") @db.Decimal(12, 2)
-  /// 卖家改价金额 JPY（旧 seller_change_amount，float→Decimal）
-  sellerChangeAmount Decimal @default(0.00) @map("seller_change_amount") @db.Decimal(12, 2)
+  /// 优惠金额 CNY（旧 coupon_fee，float→Decimal）
+  couponFee Decimal @default(0.00) @map("coupon_fee") @db.Decimal(14, 2)
+  /// 卖家改价金额 CNY（旧 seller_change_amount，float→Decimal）
+  sellerChangeAmount Decimal @default(0.00) @map("seller_change_amount") @db.Decimal(14, 2)
   /// 即时通讯标签（旧 instant_chat_tag）
   instantChatTag String? @map("instant_chat_tag") @db.VarChar(255)
   createdAt DateTime? @map("created_at") @db.DateTime(0)
@@ -833,17 +837,17 @@ model PlatformTradeAmount {
   /// 阶段快照对：stage 单调（created < sync < price_modified < paid，只前进）
   firstStage String @map("first_stage") @db.VarChar(32)
   firstSnapshotAt DateTime? @map("first_snapshot_at") @db.DateTime(0)
-  firstGoodsTotal Decimal? @map("first_goods_total") @db.Decimal(12, 2)
-  firstShippingFee Decimal? @map("first_shipping_fee") @db.Decimal(12, 2)
-  firstTotalAmount Decimal? @map("first_total_amount") @db.Decimal(12, 2)
+  firstGoodsTotal Decimal? @map("first_goods_total") @db.Decimal(14, 2)
+  firstShippingFee Decimal? @map("first_shipping_fee") @db.Decimal(14, 2)
+  firstTotalAmount Decimal? @map("first_total_amount") @db.Decimal(14, 2)
   firstRaw Json? @map("first_raw")
   latestStage String @map("latest_stage") @db.VarChar(32)
   latestSnapshotAt DateTime? @map("latest_snapshot_at") @db.DateTime(0)
-  latestGoodsTotal Decimal? @map("latest_goods_total") @db.Decimal(12, 2)
-  latestShippingFee Decimal? @map("latest_shipping_fee") @db.Decimal(12, 2)
-  latestTotalAmount Decimal? @map("latest_total_amount") @db.Decimal(12, 2)
-  latestCouponFee Decimal? @map("latest_coupon_fee") @db.Decimal(12, 2)
-  latestSellerAdjust Decimal? @map("latest_seller_adjust") @db.Decimal(12, 2)
+  latestGoodsTotal Decimal? @map("latest_goods_total") @db.Decimal(14, 2)
+  latestShippingFee Decimal? @map("latest_shipping_fee") @db.Decimal(14, 2)
+  latestTotalAmount Decimal? @map("latest_total_amount") @db.Decimal(14, 2)
+  latestCouponFee Decimal? @map("latest_coupon_fee") @db.Decimal(14, 2)
+  latestSellerAdjust Decimal? @map("latest_seller_adjust") @db.Decimal(14, 2)
   latestRaw Json? @map("latest_raw")
   paidAt DateTime? @map("paid_at") @db.DateTime(0)
   createdAt DateTime? @map("created_at") @db.DateTime(0)
@@ -871,7 +875,7 @@ model PlatformOrder {
   isFulfilled Boolean @default(false) @map("is_fulfilled")
   fulfillmentFailureReason String? @map("fulfillment_failure_reason") @db.VarChar(1000)
   /// 订单总金额 + 币种（旧 price varchar「价格+币种」拆分）
-  totalAmount Decimal? @map("total_amount") @db.Decimal(12, 2)
+  totalAmount Decimal? @map("total_amount") @db.Decimal(14, 2)
   currency String? @db.VarChar(3)
   /// 物流信息 JSON（旧 shipping_info）
   shippingInfo Json? @map("shipping_info")
@@ -898,10 +902,10 @@ model PlatformOrderItem {
   /// 数量（旧 num）
   quantity Int @default(1)
   /// 单价 + 币种（旧 unit_price varchar 拆分）
-  unitPrice Decimal? @map("unit_price") @db.Decimal(12, 2)
+  unitPrice Decimal? @map("unit_price") @db.Decimal(14, 2)
   unitCurrency String? @map("unit_currency") @db.VarChar(3)
   /// 总价 + 币种（旧 total_price varchar 拆分）
-  totalPrice Decimal? @map("total_price") @db.Decimal(12, 2)
+  totalPrice Decimal? @map("total_price") @db.Decimal(14, 2)
   totalCurrency String? @map("total_currency") @db.VarChar(3)
   /// 商品快照 JSON（旧 product_snapshot）
   productSnapshot Json? @map("product_snapshot")
@@ -997,7 +1001,7 @@ model PlatformProductSku {
   /// 属性 JSON（旧 attribute）
   attribute Json?
   /// 价格（旧表已是 decimal(10,2)）
-  price Decimal @default(0.00) @db.Decimal(12, 2)
+  price Decimal @default(0.00) @db.Decimal(14, 2)
   /// 平台库存 JSON（旧 platform_inventory）
   platformInventory Json? @map("platform_inventory")
   createdAt DateTime? @map("created_at") @db.DateTime(0)
@@ -1038,10 +1042,10 @@ model OrderValueAddedService {
   /// 服务名快照（旧 name_snapshot）
   nameSnapshot String @map("name_snapshot") @db.VarChar(255)
   remark String? @db.VarChar(255)
-  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(14, 2)
   qty Int @default(1)
-  /// 费用小计 JPY（旧 fee）
-  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  /// 费用小计 CNY（旧 fee）
+  fee Decimal @default(0.00) @db.Decimal(14, 2)
   createdAt DateTime? @map("created_at") @db.Timestamp(0)
   updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
 
@@ -1117,9 +1121,9 @@ model InquiryOrderItem {
   skuId Int? @map("sku_id")
   productRemark String? @map("product_remark") @db.VarChar(1000)
   /// 商品单价 CNY（旧 product_price）
-  productPrice Decimal? @map("product_price") @db.Decimal(12, 2)
+  productPrice Decimal? @map("product_price") @db.Decimal(14, 2)
   /// 报价单价 CNY（旧 quoted_amount——是单价不是小计，乘 quantity 得总价）
-  quotedUnitPrice Decimal? @map("quoted_unit_price") @db.Decimal(12, 2)
+  quotedUnitPrice Decimal? @map("quoted_unit_price") @db.Decimal(14, 2)
   productUrl String? @map("product_url") @db.VarChar(500)
   productSite String? @map("product_site") @db.VarChar(100)
   memberId Int? @map("member_id")
@@ -1169,7 +1173,7 @@ model ImportItem {
   goodsImg String? @map("goods_img") @db.VarChar(255)
   goodsSite String? @map("goods_site") @db.VarChar(30)
   /// 商品单价 CNY（旧 goodsprice，旧表已是 decimal）
-  unitPrice Decimal? @map("unit_price") @db.Decimal(12, 2)
+  unitPrice Decimal? @map("unit_price") @db.Decimal(14, 2)
   quantity Int? @map("quantity")
   skuName String? @map("sku_name") @db.VarChar(1024)
   color String? @db.VarChar(30)   // 旧 goodscolor
@@ -1194,7 +1198,7 @@ model ImportItem {
   /// 数据来源：excel / api（旧 datafrom）
   dataFrom Int? @default(0) @map("data_from") @db.TinyInt
   /// 价格上限 CNY（旧 maxprice）
-  maxPrice Decimal? @map("max_price") @db.Decimal(12, 2)
+  maxPrice Decimal? @map("max_price") @db.Decimal(14, 2)
   /// 拆分来源订单（旧 original_oid）
   originalOrderId BigInt? @map("original_order_id")
   createdAt DateTime? @map("created_at") @db.DateTime(0) // 旧 addtime
@@ -1337,20 +1341,20 @@ model Cart {
 
   // ---- 数量与三价（§4.2 float→Decimal）----
   quantity Int? @default(1)
-  /// 商品单价 JPY（旧 goodsprice）
-  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
-  /// 报价 JPY（旧 offer_price）
-  offerPrice Decimal @default(0.00) @map("offer_price") @db.Decimal(12, 2)
-  /// 零售价 JPY（旧 retail_price）
-  retailPrice Decimal? @map("retail_price") @db.Decimal(12, 2)
-  /// 一件价 JPY（旧 one_piece_price）
-  onePiecePrice Decimal @default(0.00) @map("one_piece_price") @db.Decimal(12, 2)
-  /// 对客运费 JPY（旧 sendprice）
-  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(12, 2)
-  /// 促销价 JPY（旧 proprice）
-  promoPrice Decimal? @map("promo_price") @db.Decimal(12, 2)
-  /// 验货金额 JPY（旧 inspection）
-  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(12, 2)
+  /// 商品单价 CNY（旧 goodsprice）
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(14, 2)
+  /// 报价 CNY（旧 offer_price）
+  offerPrice Decimal @default(0.00) @map("offer_price") @db.Decimal(14, 2)
+  /// 零售价 CNY（旧 retail_price）
+  retailPrice Decimal? @map("retail_price") @db.Decimal(14, 2)
+  /// 一件价 CNY（旧 one_piece_price）
+  onePiecePrice Decimal @default(0.00) @map("one_piece_price") @db.Decimal(14, 2)
+  /// 对客运费 CNY（旧 sendprice）
+  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(14, 2)
+  /// 促销价 CNY（旧 proprice）
+  promoPrice Decimal? @map("promo_price") @db.Decimal(14, 2)
+  /// 验货金额 CNY（旧 inspection）
+  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(14, 2)
   /// 1688 最小起批量（旧 min_order_quantity；按同商品全部 SKU 合计校验）
   minOrderQuantity Int? @default(0) @map("min_order_quantity") @db.UnsignedSmallInt
 
@@ -1396,9 +1400,9 @@ model CartValueAddedService {
   serviceId Int @map("service_id")
   nameSnapshot String @map("name_snapshot") @db.VarChar(255)
   remark String? @db.VarChar(255)
-  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
+  unitPrice Decimal @default(0.00) @map("unit_price") @db.Decimal(14, 2)
   qty Int @default(1)
-  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  fee Decimal @default(0.00) @db.Decimal(14, 2)
   createdAt DateTime? @map("created_at") @db.Timestamp(0)
   updatedAt DateTime? @map("updated_at") @db.Timestamp(0)
 
@@ -1436,40 +1440,40 @@ model SendOrder {
   prostateEnteredAt DateTime? @map("prostate_entered_at") @db.DateTime(0)
 
   // ---- 金额（totalfee 禁存历史值：五费公式服务端现算，§4.3； chargedTotalFee 仅审计）----
-  /// 对客国际运费 JPY（旧 freight）
-  internationalFreight Decimal @default(0.00) @map("international_freight") @db.Decimal(12, 2)
+  /// 对客国际运费 CNY（旧 freight）
+  internationalFreight Decimal @default(0.00) @map("international_freight") @db.Decimal(14, 2)
   /// 采购国际运费 CNY（旧 ufreight，成本）
-  purchaseInternationalFreight Decimal @default(0.00) @map("purchase_international_freight") @db.Decimal(12, 2)
-  /// 增值费 JPY（旧 serverfee）
-  serviceFee Decimal @default(0.00) @map("service_fee") @db.Decimal(12, 2)
-  /// 报关费 JPY（旧 customsfee）
-  customsFee Decimal @default(0.00) @map("customs_fee") @db.Decimal(12, 2)
-  /// 偏远费 JPY（旧 remotefee）
-  remoteFee Decimal @default(0.00) @map("remote_fee") @db.Decimal(12, 2)
-  /// 国内运费 JPY（旧 sendprice；0 = 走订单兜底，禁直接读）
-  domesticShippingFee Decimal @default(0.00) @map("domestic_shipping_fee") @db.Decimal(12, 2)
-  /// 保险费 JPY（旧 Insurancefee——禁并入 totalfee，对账单独口径）
-  insuranceFee Decimal @default(0.00) @map("insurance_fee") @db.Decimal(12, 2)
+  purchaseInternationalFreight Decimal @default(0.00) @map("purchase_international_freight") @db.Decimal(14, 2)
+  /// 增值费 CNY（旧 serverfee）
+  serviceFee Decimal @default(0.00) @map("service_fee") @db.Decimal(14, 2)
+  /// 报关费 CNY（旧 customsfee）
+  customsFee Decimal @default(0.00) @map("customs_fee") @db.Decimal(14, 2)
+  /// 偏远费 CNY（旧 remotefee）
+  remoteFee Decimal @default(0.00) @map("remote_fee") @db.Decimal(14, 2)
+  /// 国内运费 CNY（旧 sendprice；0 = 走订单兜底，禁直接读）
+  domesticShippingFee Decimal @default(0.00) @map("domestic_shipping_fee") @db.Decimal(14, 2)
+  /// 保险费 CNY（旧 Insurancefee——禁并入 totalfee，对账单独口径）
+  insuranceFee Decimal @default(0.00) @map("insurance_fee") @db.Decimal(14, 2)
   /// 实扣总费快照（已邮寄/支付成功时回写；审计用，禁作业务读值）
-  chargedTotalFee Decimal? @map("charged_total_fee") @db.Decimal(12, 2)
+  chargedTotalFee Decimal? @map("charged_total_fee") @db.Decimal(14, 2)
   /// 运单砍价汇总（旧 bargainprice = Σ order.bargainprice 排除无效态）
-  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(14, 2)
   /// 砍价返金状态（旧 bargainstate：0 未返 / 1 已返）
   bargainRefunded Boolean @default(false) @map("bargain_refunded")
   bargainRefundedAt DateTime? @map("bargain_refunded_at") @db.DateTime(0)
   /// 优惠券快照（旧 couponid/couponmoney；券实体归营销域）
   couponId Int? @map("coupon_id")
-  couponAmount Decimal? @map("coupon_amount") @db.Decimal(12, 2)
+  couponAmount Decimal? @map("coupon_amount") @db.Decimal(14, 2)
   /// 损坏/修理费（旧 xiwgfei，本地全 0、无业务逻辑，Q1 拍板：审计兜底禁入公式）
-  damageFee Decimal? @map("damage_fee") @db.Decimal(12, 2)
+  damageFee Decimal? @map("damage_fee") @db.Decimal(14, 2)
   /// 疑损坏单价（旧 xwdj varchar，语义待查，与 xiwgfei 配对）
   damageUnitPrice String? @map("damage_unit_price") @db.VarChar(255)
   /// 已收取费（旧 yishouqufee）
-  receivedFee Decimal? @map("received_fee") @db.Decimal(12, 2)
-  /// 仓储费 JPY（旧 storage）
-  storageFee Decimal? @map("storage_fee") @db.Decimal(12, 2)
+  receivedFee Decimal? @map("received_fee") @db.Decimal(14, 2)
+  /// 仓储费 CNY（旧 storage）
+  storageFee Decimal? @map("storage_fee") @db.Decimal(14, 2)
   /// 计费金额（旧 countmoney）
-  chargeableAmount Decimal? @map("chargeable_amount") @db.Decimal(12, 2)
+  chargeableAmount Decimal? @map("chargeable_amount") @db.Decimal(14, 2)
   /// 计费重 g（旧 countweight 十进制千克字符串 ×1000，Q2 拍板；不可解析入 legacyExtra）
   chargeableWeightGrams Int? @map("chargeable_weight_grams")
 
@@ -1648,7 +1652,7 @@ model SendOrderValueAddedService {
   /// 服务目录 id（禁外键）
   serviceId Int @map("service_id")
   nameSnapshot String @map("name_snapshot") @db.VarChar(255)
-  fee Decimal @default(0.00) @db.Decimal(12, 2)
+  fee Decimal @default(0.00) @db.Decimal(14, 2)
   /// 手工加项标记（非客户自助勾选）
   isManual Boolean @default(false) @map("is_manual")
   createdAt DateTime? @map("created_at") @db.DateTime(0)
@@ -1704,7 +1708,7 @@ model Invoice {
   hyBoxNum String? @map("hy_box_num") @db.VarChar(500)
 
   // ---- 货物族 ----
-  goodsPrice Decimal? @map("goods_price") @db.Decimal(12, 2)
+  goodsPrice Decimal? @map("goods_price") @db.Decimal(14, 2)
   goodsName String? @map("goods_name") @db.VarChar(200)
   goodsCaizhi String? @map("goods_caizhi") @db.VarChar(50)
   goodsNum Int? @map("goods_num")
@@ -1713,9 +1717,9 @@ model Invoice {
   goodsImg String? @map("goods_img") @db.VarChar(300)
   /// 订单重量（旧 orderweight float(10,2)）
   orderWeight Decimal? @map("order_weight") @db.Decimal(10, 2)
-  goodsTotal Decimal? @map("goods_total") @db.Decimal(12, 2)
-  subtotal Decimal? @db.Decimal(12, 2)
-  bargainPrice Decimal? @map("bargain_price") @db.Decimal(10, 2)
+  goodsTotal Decimal? @map("goods_total") @db.Decimal(14, 2)
+  subtotal Decimal? @db.Decimal(14, 2)
+  bargainPrice Decimal? @map("bargain_price") @db.Decimal(14, 2)
   /// 材质备注（旧 gcaizhimemo）
   caizhiMemo String? @map("caizhi_memo") @db.VarChar(50)
   /// 低申报倍数（旧 lowmultiple float(10,2)）
@@ -1728,13 +1732,14 @@ model Invoice {
 
   // ---- 销售/汇率 ----
   exportName String? @map("export_name") @db.VarChar(200)
-  /// 汇率快照（旧 exchangerate float(10,2)→Decimal(10,4)，防舍入丢失）
-  exchangeRate Decimal? @map("exchange_rate") @db.Decimal(10, 4)
+  /// 汇率快照（旧 exchangerate float(10,2)；★ Q8 定版汇率统一 Decimal(12,8)，
+  /// 因 JPY→CNY 量级仅 0.04x，两位小数只剩 2 位有效数字，见 finance-schema.md §3.3）
+  exchangeRate Decimal? @map("exchange_rate") @db.Decimal(12, 8)
   salesName String? @map("sales_name") @db.VarChar(200)
   salesTel String? @map("sales_tel") @db.VarChar(20)
   rateType Int? @map("rate_type")
   /// 国内运费（旧 sendprice float(10,2)）
-  sendPrice Decimal? @map("send_price") @db.Decimal(10, 2)
+  sendPrice Decimal? @map("send_price") @db.Decimal(14, 2)
 
   // ---- 包装明细 ----
   packageName String? @map("package_name") @db.VarChar(100)

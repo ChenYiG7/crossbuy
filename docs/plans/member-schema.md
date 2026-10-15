@@ -50,10 +50,10 @@
 ### 3.1 金额：`money` 不是正本，是缓存
 
 - 旧：`dg_users.money DECIMAL(10,2)` 直接挂余额。
-- 新：`Member.balanceCents`（**整数分**）或 `Decimal(12,2)`，**仅作冗余缓存**；**正本在 `ledger_entry`**（finance 域），由 `MemberService` 通过「唯一写入口 + 原子 UPDATE 守卫」维护。
-- 币种：日本市场主币 **JPY**（无小数）。代购采购涉及 **CNY**。故余额列必须配 `balanceCurrency`，且**禁跨币种直接加减**。
+- 新：`Member.balance`（`Decimal(14,2)`），**仅作冗余缓存**；**正本在 `ledger_entries`**（finance 域），由 `MemberService` 通过「唯一写入口 + 原子 UPDATE 守卫」维护。
+- 币种：★ **2026-10-15 Q1 改判——账本面值 = CNY**（实测旧库对客全链路：`dg_order.goodsprice`／`dg_users.money`／`dg_record.money`／`dg_sendorder.totalfee` 同为人民币；配对 284,885 行扣款/货额比值 1.0331 = 5% 服务费口径）。原「日本市场主币 JPY 故余额以 JPY 计」的推断**不成立**：面向日本市场 ≠ 记账币种是日元，日元只出现在充值原币（`dg_rechargerecord.amount`）与月额（`monpayamt`）。故余额列仍配 `balanceCurrency`（默认 CNY）且**禁跨币种直接加减**。
 
-> 与 `docs/07` 红线一致：金额服务端重算 + ledger + 四方对账。**Decimal 精度用 (12,2)**（余额以 JPY 计，2 位足够；大额留 12 位）。
+> 与 `docs/07` 红线一致：金额服务端重算 + ledger + 四方对账。**精度用 (14,2)**（2026-10-15 Q8 定版；旧 `dg_users.money` 是 `decimal(10,2)`，实测最大余额 99,999,350.04 距上限仅 64.95 元 = 溢出风险，故整数位扩到 14）。
 
 ### 3.2 密码：MD5 → 需重新哈希（过渡期双读）
 
@@ -151,7 +151,7 @@
 |---|---|---|
 | Q1 | `dg_users.utype` / `usetype` / `state` 的完整枚举值？dump 无注释 | Member 状态字段契约 |
 | Q2 | `finance_order_cash_flow.change_type` 的枚举值？需从旧代码反查 | finance 域（下一步） |
-| ~~Q3~~ | ~~余额币种与精度~~ → **已定：JPY + `Decimal(12,2)`**；跨币种靠 `balanceCurrency` 隔离，**禁跨币种直接加减** | ✅ 已决 |
+| ~~Q3~~ | ~~余额币种与精度~~ → **已定，但 2026-10-15 改判：CNY + `Decimal(14,2)`**（原判「JPY + 12,2」被实测推翻，见 `finance-schema.md` §3.3 与 §八 Q1/Q8）；跨币种靠 `balanceCurrency` 隔离，**禁跨币种直接加减** | ✅ 已决（改判） |
 | ~~Q4~~ | ~~用户名唯一约束~~ → **已定：上 UNIQUE**；**查重已跑**（旧库只读）：22,611 用户中 **8 组 / 16 账号**重名（`utf8_general_ci` 语义），明细与消歧建议见 `docs/plans/02-用户名重名处置.md`；T1 回填前需业务定名（4 组待确认） | ✅ 已决（查重完成） |
 | Q5 | `email_subscribe_status` 位运算的位定义？ | 通知订阅 |
 | Q6 | `v2_user_platform_account` / `v2_platform_sub_account` 归 member 还是 order？ | 域边界 |
@@ -161,7 +161,7 @@
 
 ## 七、下一步
 
-1. ~~拍板 Q3/Q4~~ ✅ 已定（JPY + Decimal(12,2)；username UNIQUE）
+1. ~~拍板 Q3/Q4~~ ✅ 已定（**Q3 已于 2026-10-15 改判为 CNY + Decimal(14,2)**；username UNIQUE）
 2. ~~Q4 查重~~ ✅ **已跑**：8 组 / 16 账号（`docs/plans/02-用户名重名处置.md`）；**待业务确认 4 组** + 定 `member.username` collation（建议 ci）+ 补 `username_original`/`username_auto_renamed` 两列
 3. `packages/db/prisma/schema.prisma` member 段已按**新表方案**产出（17 模型）；T0 建表 DDL 已生成于 `packages/db/sql/0001-member-domain-up.sql`
 4. 待办：T0 建表 → T1 回填脚本（内嵌消歧映射）+ 双写 repository + 一致性校验（见 member-迁移与共存.md §八）

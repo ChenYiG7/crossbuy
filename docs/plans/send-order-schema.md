@@ -87,11 +87,12 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 - `otype` tinyint——1 普通代购 / 3 一件代发（**只有 1 和 3，无 2**；本地 7,220 vs 10,858）
 
 **金额（★ 7 个 decimal(10,2)，totalfee 口径曾双轨）**
-- `freight` 对客国际运费 JPY；`ufreight` 采购国际运费 CNY（成本）
-- `serverfee` 增值费 JPY；`customsfee` 报关费 JPY；`remotefee` 偏远费 JPY
-- `sendprice` 国内运费 JPY（**可为 0 → fallback 到 Σ order.sendprice**；本地 43% 为 0）
+- ★ **币种定版（2026-10-15）：本域「对客金额」与「采购成本」同为 CNY**——原判「对客 JPY / 采购 CNY」不成立。实测 `totalfee` 均值 774.54、`freight` 均值 460.54，与 `dg_record` 的国际运费扣款（`action=3`）均值 -659 属同一量级；若对客是日元，这里应是数万级（见 `finance-schema.md` §3.3 与 §八 Q1）
+- `freight` 对客国际运费；`ufreight` 采购国际运费（成本）——同一币种下的**对客价 vs 成本价**两个维度
+- `serverfee` 增值费；`customsfee` 报关费；`remotefee` 偏远费
+- `sendprice` 国内运费（**可为 0 → fallback 到 Σ order.sendprice**；本地 43% 为 0）
 - `totalfee` 总费用——**历史双口径**（含/不含偏远费或国内运费），2026-03-19 统一改造（§3.3）
-- `Insurancefee` 保险费 JPY（**不在 totalfee 公式内**，FinanceStatistic 单独相加）
+- `Insurancefee` 保险费（**不在 totalfee 公式内**，FinanceStatistic 单独相加 → 是否作为独立账本事件见 `finance-schema.md` §八 Q12）
 - `xiwgfei` decimal（损坏/修理费？fillable 但无业务逻辑，Q1 待查）
 - `couponmoney` 优惠券金额；`yishouqufee` 已收取费
 - `countmoney` 计费金额；`countweight` **varchar(1500)**——计费重（类型错，Q2）
@@ -304,38 +305,38 @@ model SendOrder {
   prostateEnteredAt DateTime? @map("prostate_entered_at")
 
   // ---- 金额（§4.3 双币种分组；totalfee 禁存历史值，服务端重算）----
-  /// 对客国际运费 JPY（旧 freight）
-  internationalFreight Decimal @default(0.00) @map("international_freight") @db.Decimal(12, 2)
+  /// 对客国际运费 CNY（旧 freight）
+  internationalFreight Decimal @default(0.00) @map("international_freight") @db.Decimal(14, 2)
   /// 采购国际运费 CNY（旧 ufreight，成本）
-  purchaseInternationalFreight Decimal @default(0.00) @map("purchase_international_freight") @db.Decimal(12, 2)
-  /// 增值费 JPY（旧 serverfee）
-  serviceFee Decimal @default(0.00) @map("service_fee") @db.Decimal(12, 2)
-  /// 报关费 JPY（旧 customsfee）
-  customsFee Decimal @default(0.00) @map("customs_fee") @db.Decimal(12, 2)
-  /// 偏远费 JPY（旧 remotefee）
-  remoteFee Decimal @default(0.00) @map("remote_fee") @db.Decimal(12, 2)
-  /// 国内运费 JPY（旧 sendprice；0 = 走订单兜底，禁直接读）
-  domesticShippingFee Decimal @default(0.00) @map("domestic_shipping_fee") @db.Decimal(12, 2)
-  /// 保险费 JPY（旧 Insurancefee——禁并入 totalfee，对账单独口径）
-  insuranceFee Decimal @default(0.00) @map("insurance_fee") @db.Decimal(12, 2)
+  purchaseInternationalFreight Decimal @default(0.00) @map("purchase_international_freight") @db.Decimal(14, 2)
+  /// 增值费 CNY（旧 serverfee）
+  serviceFee Decimal @default(0.00) @map("service_fee") @db.Decimal(14, 2)
+  /// 报关费 CNY（旧 customsfee）
+  customsFee Decimal @default(0.00) @map("customs_fee") @db.Decimal(14, 2)
+  /// 偏远费 CNY（旧 remotefee）
+  remoteFee Decimal @default(0.00) @map("remote_fee") @db.Decimal(14, 2)
+  /// 国内运费 CNY（旧 sendprice；0 = 走订单兜底，禁直接读）
+  domesticShippingFee Decimal @default(0.00) @map("domestic_shipping_fee") @db.Decimal(14, 2)
+  /// 保险费 CNY（旧 Insurancefee——禁并入 totalfee，对账单独口径）
+  insuranceFee Decimal @default(0.00) @map("insurance_fee") @db.Decimal(14, 2)
   /// 实扣总费快照（已邮寄/支付成功时回写；审计用，禁作业务读值）
-  chargedTotalFee Decimal? @map("charged_total_fee") @db.Decimal(12, 2)
+  chargedTotalFee Decimal? @map("charged_total_fee") @db.Decimal(14, 2)
   /// 运单砍价汇总（旧 bargainprice = Σ order.bargainprice 排除无效态）
-  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  bargainAmount Decimal @default(0.00) @map("bargain_amount") @db.Decimal(14, 2)
   /// 砍价返金状态（旧 bargainstate：0 未返 / 1 已返）+ 返金时间
   bargainRefunded Boolean @default(false) @map("bargain_refunded")
   bargainRefundedAt DateTime? @map("bargain_refunded_at")
   /// 优惠券快照（旧 couponid/couponmoney；券实体归营销域）
   couponId Int? @map("coupon_id")
-  couponAmount Decimal? @map("coupon_amount") @db.Decimal(12, 2)
+  couponAmount Decimal? @map("coupon_amount") @db.Decimal(14, 2)
   /// 损坏/修理费（旧 xiwgfei，语义待查 Q1）
-  damageFee Decimal? @map("damage_fee") @db.Decimal(12, 2)
+  damageFee Decimal? @map("damage_fee") @db.Decimal(14, 2)
   /// 已收取费（旧 yishouqufee）
-  receivedFee Decimal? @map("received_fee") @db.Decimal(12, 2)
-  /// 仓储费 JPY（旧 storage）
-  storageFee Decimal? @map("storage_fee") @db.Decimal(12, 2)
+  receivedFee Decimal? @map("received_fee") @db.Decimal(14, 2)
+  /// 仓储费 CNY（旧 storage）
+  storageFee Decimal? @map("storage_fee") @db.Decimal(14, 2)
   /// 计费金额（旧 countmoney）
-  chargeableAmount Decimal? @map("chargeable_amount") @db.Decimal(12, 2)
+  chargeableAmount Decimal? @map("chargeable_amount") @db.Decimal(14, 2)
   /// 计费重 g（旧 countweight varchar → Int；不可解析入 legacyExtra，Q2）
   chargeableWeightGrams Int? @map("chargeable_weight_grams")
 

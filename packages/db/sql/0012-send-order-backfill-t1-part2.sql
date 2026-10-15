@@ -106,7 +106,7 @@ PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 --   · cid → address_book_id：0 → NULL（本地 78,344 行=0）
 --   · airbill：# 多单号 → 首段入 airbill（≤64 断言见 0013），全量原值入 legacyExtra
 --   · totalweight：含代码值（'A'）→ 字符串列禁转数值（Q2 拍板）
---   · exchangerate float(10,2) → Decimal(10,4)（防舍入丢失）
+--   · exchangerate float(10,2) → Decimal(12,8)（Q8 定版：JPY→CNY 量级仅 0.04x，两位小数只剩 2 位有效数字）
 --   · 源表 39 个 NOT NULL varchar 实为空串常态 → 新表可空列 + NULLIF 清洗
 --   · 会员/收件人快照列保留（历史事实），禁反查实时表
 --   · 旧表无时间列 → created_at/updated_at 回填空置（新写入必须赋值）

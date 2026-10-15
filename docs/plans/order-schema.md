@@ -262,20 +262,20 @@
 ### 4.1 `OrderGroup` 显式化：bargainAmount 挂组，删除 carrier/holder
 
 - 旧：tid 分组**隐式**（无表），整单砍价挂某个 oid，管理员改单可迁移 holder，`sendorder/stores/fapiao` 全靠逗号分隔 oids 找组
-- 新：`order_groups` 表 —— `tid` UNIQUE（可空：无平台交易号的手动建单自成一组）、`memberId`、`shopId`（供应商店铺快照）、**`bargainAmount` Decimal(12,2) 整单砍价总额**、`bargainRefundedAt`、`supplierShopId`
+- 新：`order_groups` 表 —— `tid` UNIQUE（可空：无平台交易号的手动建单自成一组）、`memberId`、`shopId`（供应商店铺快照）、**`bargainAmount` Decimal(14,2) 整单砍价总额**、`bargainRefundedAt`、`supplierShopId`
 - `orders.groupId Int?` → 组。砍价重算只动组一行；`goodsprice1`（砍后单价）作为行的派生展示值
 - ➜ **收益**：holder/carrier/migrate 整套机制删除；`dg_sendorder.oids`、`dg_stores.oids` 的字符串拆分改 `groupId` 关联；30% 砍价风控从「按 tid 分组汇总」变成组级一行
 - ⚠ 回填：按 `dg_order.tid` 分组建组；**空 tid 的订单**（`loadAmountCarrierCandidateOrders` 已处理该分支）每单独立成组；原 holder 行（最大 oid）的 bargainprice 迁入组，其余行置 0 的记录直接丢弃
 
-### 4.2 金额：float → `Decimal(12,2)` + 双币种显式列
+### 4.2 金额：float → `Decimal(14,2)` + 「对客价 / 采购成本价」双列显式化
 
 - 旧 `dg_order` **7 个金额列全 float(10,2)**（`goodsprice/goodsuprice/sendprice/senduprice/bargainprice/proprice/inspection`）；`v2_order_detail.coupon_fee/seller_change_amount` 也 float
-- 新：一律 `Decimal(12,2)`；**采购成本列（CNY）与对客列（JPY）分组命名 + currency 列**：
-  - `unitPrice`（对客 JPY）、`bargainedUnitPrice`（砍后 JPY）
-  - `purchaseUnitPrice`（采购 CNY）、`purchaseShippingFee`（采购国内运费 CNY）
-  - `shippingFee`（对客 JPY）
-- 汇率换算（`dg_users.floatrate` 对客浮动汇率）归 **finance 域费率服务**，order 只存快照
-- `v2_ecommerce_order.price` varchar「价格+币种」→ `totalAmount Decimal(12,2)` + `currency`（§4.8）
+- 新：一律 `Decimal(14,2)`（2026-10-15 Q8 定版）；★ **对客列与采购成本列是同一币种 CNY**（原判「对客 JPY / 采购 CNY」不成立，见 `finance-schema.md` §3.3 与 Q1 改判），分组命名要区分的是**价格维度**不是币种：
+  - `unitPrice`（对客价）、`bargainedUnitPrice`（砍后对客价）
+  - `purchaseUnitPrice`（采购成本价）、`purchaseShippingFee`（采购国内运费）
+  - `shippingFee`（对客运费）
+- 汇率换算归 **finance 域**（`fee_rules` + `exchange_rates`），order 只存快照。★ 注意 `dg_users.floatrate` 已判**死列**（全仓仅后台详情读它，无任何计算读取），真实浮动是三菱 +0.5 / Yahoo +0.8 硬编码加点
+- `v2_ecommerce_order.price` varchar「价格+币种」→ `totalAmount Decimal(14,2)` + `currency`（§4.8）——这里的 `currency` 是**外部平台自己的币种**（JP 平台确实 JPY），与本系统账本面值无关，别混为一谈
 
 ### 4.3 服务端重算：每一次资金变动都是 ledger 事件
 
@@ -311,7 +311,7 @@
 ### 4.8 「价格+币种」varchar → amount + currency
 
 - `v2_ecommerce_order.price`、`v2_ecommerce_order_item.unit_price/total_price` 全是 varchar(50)「价格+币种」字符串
-- 新：`Decimal(12,2)` + `currency`（ISO 4217）；平台原始串入 `rawSnapshot` JSON 备查
+- 新：`Decimal(14,2)` + `currency`（ISO 4217）；平台原始串入 `rawSnapshot` JSON 备查
 
 ### 4.9 INT unix → `DateTime(0)`
 
@@ -362,11 +362,11 @@ model OrderGroup {
   /// 供应商店铺快照（supplier 域 shop_id；禁外键）
   supplierShopId Int? @map("supplier_shop_id")
   /// 整单砍价总额（原 dg_order.bargainprice holder 列）——组级唯一正本
-  bargainAmount    Decimal  @default(0.00) @map("bargain_amount") @db.Decimal(12, 2)
+  bargainAmount    Decimal  @default(0.00) @map("bargain_amount") @db.Decimal(14, 2)
   /// 砍价是否已返（原 dg_sendorder.bargainstate 的 order 侧对照）
   bargainRefundedAt DateTime? @map("bargain_refunded_at")
   /// 订单行汇总运费快照（原 sendprice 按 tid 汇总）
-  shippingFeeTotal Decimal  @default(0.00) @map("shipping_fee_total") @db.Decimal(12, 2)
+  shippingFeeTotal Decimal  @default(0.00) @map("shipping_fee_total") @db.Decimal(14, 2)
   orders    Order[]
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -409,23 +409,23 @@ model Order {
 
   // ---- 数量与金额（§4.2 双币种分组）----
   quantity    Int     @default(1)
-  /// 对客单价 JPY（旧 goodsprice）
-  unitPrice   Decimal @default(0.00) @map("unit_price") @db.Decimal(12, 2)
-  /// 砍后单价 JPY（旧 goodsprice1；由 OrderGroup.bargainAmount 分摊派生）
-  bargainedUnitPrice Decimal @default(0.00) @map("bargained_unit_price") @db.Decimal(12, 2)
-  /// 对客运费 JPY（旧 sendprice）
-  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(12, 2)
+  /// 对客单价 CNY（旧 goodsprice）
+  unitPrice   Decimal @default(0.00) @map("unit_price") @db.Decimal(14, 2)
+  /// 砍后单价 CNY（旧 goodsprice1；由 OrderGroup.bargainAmount 分摊派生）
+  bargainedUnitPrice Decimal @default(0.00) @map("bargained_unit_price") @db.Decimal(14, 2)
+  /// 对客运费 CNY（旧 sendprice）
+  shippingFee Decimal @default(0.00) @map("shipping_fee") @db.Decimal(14, 2)
   /// 采购单价 CNY（旧 goodsuprice）
-  purchaseUnitPrice Decimal @default(0.00) @map("purchase_unit_price") @db.Decimal(12, 2)
+  purchaseUnitPrice Decimal @default(0.00) @map("purchase_unit_price") @db.Decimal(14, 2)
   /// 采购国内运费 CNY（旧 senduprice）
-  purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(12, 2)
-  /// 验货金额 JPY（旧 inspection）
-  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(12, 2)
+  purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(14, 2)
+  /// 验货金额 CNY（旧 inspection）
+  inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(14, 2)
   /// 下单时实扣金额快照（payOrder 服务端重算结果；正本在 ledger）
-  chargedAmount Decimal @default(0.00) @map("charged_amount") @db.Decimal(12, 2)
-  chargedCurrency String @default("JPY") @map("charged_currency") @db.VarChar(3)
+  chargedAmount Decimal @default(0.00) @map("charged_amount") @db.Decimal(14, 2)
+  chargedCurrency String @default("CNY") @map("charged_currency") @db.VarChar(3)
   /// 服务费抵扣（旧 extend.deducted_service_fee）
-  serviceFeeOffset Decimal @default(0.00) @map("service_fee_offset") @db.Decimal(12, 2)
+  serviceFeeOffset Decimal @default(0.00) @map("service_fee_offset") @db.Decimal(14, 2)
 
   // ---- 物流/到库（§4.5 关系只存一侧；§4.7 后缀显式化）----
   sendOrderId  Int?    @map("send_order_id")   // 旧 sid；只存这一侧

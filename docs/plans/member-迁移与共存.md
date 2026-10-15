@@ -62,7 +62,7 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 | `username` | `uname` | 旧仅普通索引（可重名）→ 新加 UNIQUE，**上线前须查重**（Q4 ✅ 已完成：8 组/16 账号）。**新列排序规则必须显式定为 `utf8mb4_general_ci`**（否则表级默认 `unicode_ci` 会把重名扩到 24 组，见 `docs/plans/03` §五） |
 | `password_hash` | `password` | 旧 CHAR(32)=MD5 无盐。**过渡期双写**：新存 argon2 时，旧列写不下 → 旧列写 `!upgraded!`+短标记占位，并置 `password_algo` 标记；登录时若旧列仍是 MD5 可回退校验 |
 | `email` | `email` | 旧 CHAR(50)，无唯一 |
-| `balance` | `money` | DECIMAL(12,2) ↔ (10,2)，按 2 位对齐；币种旧无 → 新 `balance_currency` 默认 JPY |
+| `balance` | `money` | `Decimal(14,2)` ← 旧 `decimal(10,2)`，**原值直迁不做换算**；★ 旧库面值本身就是 CNY（2026-10-15 Q1 改判），故 `balance_currency` 默认 **CNY** |
 | `float_rate` | `floatrate` | 一致 |
 | `scores` | `scores` | 一致 |
 | `created_at` | `regtime` | **DateTime ↔ INT unix 秒**：写旧表要 `Math.floor(t/1000)` |
@@ -130,7 +130,7 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 
 ## 八、待办
 
-- [x] 拍板 Q3（余额 JPY + `Decimal(12,2)`）、Q4（用户名 UNIQUE，前置查重）
+- [x] 拍板 Q3（余额 JPY + `Decimal(12,2)`；**2026-10-15 改判为 CNY + `Decimal(14,2)`**，理由见 `finance-schema.md` §3.3/Q1）、Q4（用户名 UNIQUE，前置查重）
 - [x] 写迁移 SQL：建 `member_*` 表（T0）→ `packages/db/sql/0001-member-domain-up.sql`（由 schema.prisma 生成，17 表）
 - [x] 写 Q4 前置核查 SQL → `packages/db/sql/precheck-username-duplicate.sql`
 - [x] 执行 Q4 查重（旧库只读）→ 8 组 / 16 账号；业务已拍板消歧 → `docs/plans/02-用户名重名处置.md`

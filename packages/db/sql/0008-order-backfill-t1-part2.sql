@@ -85,7 +85,7 @@ INSERT INTO platform_orders (
 SELECT
   e.id, e.shop_id, e.unique_id, e.platform_order_sn, e.platform_order_status, e.platform_modified_at,
   e.detail, e.order_status, e.is_fulfilled = 1, e.fulfillment_failure_reason,
-  CAST(SUBSTRING_INDEX(e.price, ' ', 1) AS DECIMAL(12, 2)),
+  CAST(SUBSTRING_INDEX(e.price, ' ', 1) AS DECIMAL(14, 2)),
   SUBSTRING_INDEX(e.price, ' ', -1),
   e.shipping_info, e.ordered_at,
   e.created_at, e.updated_at, e.deleted_at
@@ -112,9 +112,9 @@ INSERT INTO platform_order_items (
 )
 SELECT
   i.id, i.order_id, i.sku_id, i.unique_id, i.num,
-  CAST(SUBSTRING_INDEX(i.unit_price, ' ', 1) AS DECIMAL(12, 2)),
+  CAST(SUBSTRING_INDEX(i.unit_price, ' ', 1) AS DECIMAL(14, 2)),
   SUBSTRING_INDEX(i.unit_price, ' ', -1),
-  CAST(SUBSTRING_INDEX(i.total_price, ' ', 1) AS DECIMAL(12, 2)),
+  CAST(SUBSTRING_INDEX(i.total_price, ' ', 1) AS DECIMAL(14, 2)),
   SUBSTRING_INDEX(i.total_price, ' ', -1),
   i.product_snapshot, i.created_at, i.updated_at, i.deleted_at
 FROM v2_ecommerce_order_item i

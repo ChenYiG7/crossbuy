@@ -248,7 +248,7 @@ BEGIN
         'JPY',
         COALESCE(
           CASE WHEN JSON_VALID(o.extend)
-            THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(o.extend AS JSON), '$.deducted_service_fee')) AS DECIMAL(12, 2))
+            THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(CAST(o.extend AS JSON), '$.deducted_service_fee')) AS DECIMAL(14, 2))
           END, 0.00),
         CASE WHEN o.sid REGEXP '^[0-9]+$' THEN CAST(o.sid AS SIGNED) END,
         o.expressno,
