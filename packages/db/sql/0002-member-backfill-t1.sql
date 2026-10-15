@@ -17,12 +17,29 @@
 
 -- ---------------------------------------------------------------------------
 -- 1. 消歧映射（Q4 结果，见 docs/plans/02-用户名重名处置.md）
---    fix   = 需改名的 8 个账号（TRIM 原名 + '_' + uid）
---    merge = 被合并的账号 → 主账号（当前仅 Haru0128: 15274 → 15272）
+--    _t1_username_fix   = 需改名的账号（规则：TRIM(原名) + '_' + uid）
+--    _t1_username_merge = 被合并的账号 → 主账号（当前仅 Haru0128: 15274 → 15272）
+--
+--    ★ 2026-10-15（#3g②）：TEMPORARY → **实体暂存表**，理由有二：
+--      ① 校验脚本 `0003` 是**独立会话**跑的，看不见临时表，只能把映射再抄一遍字面量 →
+--        与正本漂移，且期望值被迫写死生产快照数字（本地演练 4 项无谓 FAIL 的根因）；
+--        改为读映射表后，A2~A5 / B6 / B7 的期望值全部**按当前源实时计算**。
+--      ② 映射本身就是「哪些账号被改名/合并」的**审计留档**，回填后应可复查。
+--    ⚠ 表名以 `_t1_` 前缀标记为回填期暂存物，不属于 Prisma 正本（`0001` 不生成它），
+--      与 order 域 `_t1_valid_order` / `_t1_order_group` 同一惯例。DROP + CREATE 保证
+--      「脚本里的字面量 = 库里生效的映射」，反复执行幂等。
+--    ⚠ `new_username` **故意不写列级 collation**：保持与原临时表一致（继承库默认），
+--      这样 §2 那个 `COALESCE(f.new_username, NULLIF(TRIM(u.uname),''), ...)` 的
+--      mb3/mb4 混排行为与**已演练通过的版本完全相同**。⇒ 任何脚本要拿它和
+--      `member.username`（utf8mb4_general_ci）比较，必须自己
+--      `CAST(... AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci`（`0003` A4/B14 已这么做）。
 -- ---------------------------------------------------------------------------
-DROP TEMPORARY TABLE IF EXISTS _fix;
-CREATE TEMPORARY TABLE _fix (uid INT PRIMARY KEY, new_username VARCHAR(50) NOT NULL);
-INSERT INTO _fix (uid, new_username) VALUES
+DROP TABLE IF EXISTS _t1_username_fix;
+CREATE TABLE _t1_username_fix (
+  uid          INT PRIMARY KEY,
+  new_username VARCHAR(50) NOT NULL
+) ENGINE = InnoDB;
+INSERT INTO _t1_username_fix (uid, new_username) VALUES
   (4110, 'A1a1_4110'),
   (6685, 'crisis0821_6685'),
   (15274, 'Haru0128_15274'),
@@ -32,22 +49,25 @@ INSERT INTO _fix (uid, new_username) VALUES
   (3767, 'PEYANG_3767'),
   (4056, 'shkomatsuzaki_4056');
 
-DROP TEMPORARY TABLE IF EXISTS _merge;
-CREATE TEMPORARY TABLE _merge (uid INT PRIMARY KEY, target_uid INT NOT NULL);
-INSERT INTO _merge (uid, target_uid) VALUES (15274, 15272);
+DROP TABLE IF EXISTS _t1_username_merge;
+CREATE TABLE _t1_username_merge (
+  uid        INT PRIMARY KEY,
+  target_uid INT NOT NULL
+) ENGINE = InnoDB;
+INSERT INTO _t1_username_merge (uid, target_uid) VALUES (15274, 15272);
 
 -- ---------------------------------------------------------------------------
 -- 1b. ★ fail-fast 守卫（2026-10-15 本地演练发现的真缺陷，必须先于 §2 执行）
 --   症状：§2 用 INSERT..ON DUPLICATE KEY UPDATE，而 member.username 是 UNIQUE。
---         未进 _fix 的重名对，第二行的 username 撞车后**不会新插一行**，而是走 ODKU
+--         未进映射表的重名对，第二行的 username 撞车后**不会新插一行**，而是走 ODKU
 --         把**前一个账号那一行整行覆盖**（`balance = u.money` 取的是后一个账号的钱）。
 --         username 撞车恰恰意味着「这是两个不同实体」，ODKU 却按「同一实体重复投递」处理。
---   本地实测（taotaro 副本 7 组重名 vs _fix 只覆盖生产 8 组中的 2 组）：
+--   本地实测（taotaro 副本 7 组重名 vs 映射表只覆盖生产 8 组中的 2 组）：
 --         5 个账号被吞（member 5,016 vs 源 5,021）、2 个余额被清零
 --         （uid 6932 的 100.18 → 0.00、uid 18213 的 19.96 → 0.00），**全程零报错**。
 --   ⇒ 生产风险：Q4 预检（2026-10-13）之后只要有人新注册出重名，T1 就会静默丢账号 + 改余额。
---   规则：**T1 执行前必须重跑 precheck-username-duplicate.sql**，把新出现的重名组补进 _fix，
---         否则本守卫直接中止，绝不让脚本「看起来成功了」。
+--   规则：**T1 执行前必须重跑 precheck-username-duplicate.sql**，把新出现的重名组补进
+--         `_t1_username_fix`，否则本守卫直接中止，绝不让脚本「看起来成功了」。
 -- ---------------------------------------------------------------------------
 --   ★ 碰撞必须按**目标列 member.username 的 collation**（utf8mb4_general_ci，见 0001a）判定，
 --     不能按源列的：源 `dg_users.uname` 是 utf8mb3_general_ci，它会折叠平假名/片假名，
@@ -58,19 +78,24 @@ DELIMITER $$
 CREATE PROCEDURE _guard_username_disambiguated()
 BEGIN
   DECLARE bad INT DEFAULT 0;
-  SELECT COUNT(*) INTO bad FROM (
+  DECLARE sample VARCHAR(512) DEFAULT NULL;
+  SELECT COUNT(*),
+         SUBSTRING(GROUP_CONCAT(dup.target_username ORDER BY dup.target_username SEPARATOR ', '), 1, 200)
+    INTO bad, sample
+  FROM (
     SELECT CAST(COALESCE(f.new_username, NULLIF(TRIM(u.uname), ''), CONCAT('user_', u.uid))
                  AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS target_username
     FROM dg_users u
-    LEFT JOIN _fix f ON f.uid = u.uid
+    LEFT JOIN _t1_username_fix f ON f.uid = u.uid
     GROUP BY target_username
     HAVING COUNT(*) > 1
   ) dup;
   IF bad > 0 THEN
     SET @guard_msg = CONCAT(
       'T1 ABORT: ', bad,
-      ' duplicate target username(s) remain after _fix. Re-run precheck-username-duplicate.sql ',
-      'against the CURRENT source snapshot and extend _fix before backfilling.');
+      ' duplicate target username(s) remain after _t1_username_fix [', COALESCE(sample, '?'),
+      ']. Re-run precheck-username-duplicate.sql against the CURRENT source snapshot ',
+      'and extend the mapping before backfilling.');
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = @guard_msg;
   END IF;
 END$$
@@ -106,7 +131,7 @@ SELECT
   COALESCE(f.new_username, NULLIF(TRIM(u.uname), ''), CONCAT('user_', u.uid)),
   CASE WHEN f.uid IS NOT NULL THEN TRIM(u.uname) END,
   CASE WHEN f.uid IS NOT NULL THEN 1 ELSE 0 END,
-  m.target_uid,
+  g.target_uid,
   u.password,
   'md5',
   u.email,
@@ -171,13 +196,13 @@ SELECT
   u.activekey,
   NOW()
 FROM dg_users u
-LEFT JOIN _fix   f ON f.uid = u.uid
-LEFT JOIN _merge m ON m.uid = u.uid
+LEFT JOIN _t1_username_fix   f ON f.uid = u.uid
+LEFT JOIN _t1_username_merge g ON g.uid = u.uid
 ON DUPLICATE KEY UPDATE
   username                = COALESCE(f.new_username, NULLIF(TRIM(u.uname), ''), CONCAT('user_', u.uid)),
   username_original       = CASE WHEN f.uid IS NOT NULL THEN TRIM(u.uname) END,
   username_auto_renamed   = CASE WHEN f.uid IS NOT NULL THEN 1 ELSE 0 END,
-  merged_into_id          = m.target_uid,
+  merged_into_id          = g.target_uid,
   password_hash           = u.password,
   password_algo           = 'md5',
   email                   = u.email,
@@ -284,6 +309,12 @@ ON DUPLICATE KEY UPDATE
 
 -- ---------------------------------------------------------------------------
 -- 4. member_address ← dg_address（1:1，id = aid）
+--    ★ 2026-10-15（#3g③）：加 `JOIN member` 过滤**外键孤儿**。
+--      旧库允许 `dg_address.uid` 指向已删除会员（本地实测 B12 悬空 2 行），
+--      回填若不滤，`member_address.member_id` 会指向不存在的行——Prisma 侧
+--      `include: { member: true }`（必需关系）在跨域 JOIN 时直接报错。
+--      与 0004 侧表回填的孤儿过滤口径一致（favorite 240 / browse 3389 等同源问题）。
+--      ⇒ 代价：这些地址行随源一起不进新表；T3 旧表降级前如需找回，按 aid 补录即可。
 -- ---------------------------------------------------------------------------
 INSERT INTO member_address (
   id, member_id, consignee, en_name, country, city, zip, tel, address, type,
@@ -295,6 +326,7 @@ SELECT
   a.email, a.bank_info, a.corporate_info, a.def, a.customs_code,
   a.real_time_account, a.corporate_number, a.company_name
 FROM dg_address a
+JOIN member m ON m.id = a.uid
 ON DUPLICATE KEY UPDATE
   member_id        = a.uid,
   consignee        = a.consignee,
@@ -336,4 +368,7 @@ PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 -- 7. 分批建议（大表）
 --    将 §2 / §4 的 SELECT 加 `WHERE u.uid BETWEEN ? AND ?`（每批 5000），
 --    用外部脚本循环调用；每批各自幂等，可断点续跑。
+--    ⚠ §4 现在 `JOIN member`，故它看到的是「§2 已回填到哪」——分批时请按
+--      uid 升序推进，且**全部批次跑完后再复跑一次 §4**（幂等），否则地址会漏。
+--      漏掉的行由 `0003` 的 B13（INFO：被过滤的孤儿地址数）暴露。
 -- ---------------------------------------------------------------------------

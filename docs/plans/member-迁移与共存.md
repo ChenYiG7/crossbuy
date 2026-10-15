@@ -34,6 +34,8 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 ### T1 回填 + 读新写双
 - **回填**：`dg_users` → `member`（**显式带 id**，保证 `member.id == dg_users.uid`），分批 + 幂等 upsert。
 - 同理回填 `dg_address`→`member_address`、`v2_member_webhook*`、`v2_oauth_*`、`v2_open_api_idempotency`、`v2_favorite*`、`v2_user_browse_history`、`user_benefit*`、`user_operation_log`、`v2_area`→`area`。
+- ★ **带 member 必需关系的一律 `JOIN member` 过滤孤儿**（`member_address` 于 2026-10-15 补上，此前会落悬空 `member_id`）。旧库允许子记录挂已删会员，新表若继承悬空，Prisma 必需关系 `include` 直接报错。代价：这些行不进新表 → 校验脚本用 INFO 项报告数量（`0003` B13），T3 旧表降级前按源 id 补录。
+- ★ **重名消歧映射 = 实体暂存表 `_t1_username_fix` / `_t1_username_merge`**（`0002` §1 DROP+CREATE，正本在脚本字面量里、随 git 走；留库作审计）。回填前有 fail-fast 守卫 `_guard_username_disambiguated`：**映射没覆盖到的重名组一律中止**，绝不让 `INSERT..ODKU` 把后一个账号整行盖到前一个账号身上（`member.username` 是 UNIQUE，撞键 = 两个不同实体）。细则见 `docs/plans/03` §9.2/§9.7、TODO **#3g**。
 - **回填后**：`ALTER TABLE member AUTO_INCREMENT = <max(uid)+1>`，避免新记录撞旧 id。
 - **读**：新系统只读 `member_*`。
 - **写**：新系统每个写操作在**同一个 `$transaction`** 内 `upsert member_*` + `upsert 旧表`。
@@ -135,10 +137,11 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 - [x] 写 Q4 前置核查 SQL → `packages/db/sql/precheck-username-duplicate.sql`
 - [x] 执行 Q4 查重（旧库只读）→ 8 组 / 16 账号；业务已拍板消歧 → `docs/plans/02-用户名重名处置.md`
 - [x] 补 `0001a-member-username-collation.sql`（username 定 `utf8mb4_general_ci`）
-- [x] 写回填脚本（幂等 + 显式 id + 消歧映射 + 顶 AUTO_INCREMENT）→ `packages/db/sql/0002-member-backfill-t1.sql`
-- [x] 写一致性校验脚本 → `packages/db/sql/0003-member-backfill-verify.sql`（15 项断言）
+- [x] 写回填脚本（幂等 + 显式 id + 消歧映射 + fail-fast 守卫 + 顶 AUTO_INCREMENT）→ `packages/db/sql/0002-member-backfill-t1.sql`
+- [x] 写一致性校验脚本 → `packages/db/sql/0003-member-backfill-verify.sql`（**21 项**，期望值按当前源实时计算；旧版 15 项里有 4 项把生产快照数字写死，见 `docs/plans/03` §9.4）
 - [x] **本地演练 T0→T1→校验**：15/15 PASS、3 遍幂等、回退 OK → `docs/plans/03-T1本地演练报告.md`
+- [ ] ★ **#3g 硬化后的复跑**（`0002`/`0003` 重写、新增 `0014`）：空库全链 → 两遍幂等 → 故意删映射行验证守卫 → `0014` 逐表行数相等。判定口径见 `packages/db/sql/README.md`「复跑验证命令」；**跑绿前上一条的 15/15 不代表当前脚本**
 - [ ] **★ 生产写权限**：`datapro` 只读 → 需 DBA 用具备 DDL/DML 的账号执行 ①~③
 - [ ] 第一回填批（侧表）：T1 期间双写 `MemberRepository`（双写事务 + 反向同步水位）
-- [ ] 第二批侧表回填（webhook/oauth/favorite/browse_history/benefit/operation_log/area/PAT/idempotency）
+- [x] 第二批侧表回填（webhook/oauth/favorite/browse_history/benefit/operation_log/area/PAT/idempotency）→ `0004`/`0005`，本地 25 项 PASS（TODO #3e）
 - [ ] 双写一致性验收（验收 2）+ T2 切换 checklist（含旧写入口核验、反向同步下线）

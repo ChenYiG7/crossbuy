@@ -10,8 +10,8 @@
 | — | `disambiguate-username-proposal.sql` | 重名账号「保留/改名」建议 | 只读 | 前置 |
 | ① | `0001-member-domain-up.sql` | 建 17 张新表（**由 schema.prisma 生成，勿手改**） | 建表 | T0 |
 | ② | `0001a-member-username-collation.sql` | 把 `member.username` 排序规则定为 `utf8mb4_general_ci`（**手工 SQL**） | ALTER | T0 |
-| ③ | `0002-member-backfill-t1.sql` | 回填 member 域**核心三表** + 顶 AUTO_INCREMENT（幂等） | 写新表 | T1 |
-| ④ | `0003-member-backfill-verify.sql` | 核心三表 15 项一致性断言（必须全 PASS） | 只读 | T1 |
+| ③ | `0002-member-backfill-t1.sql` | 建消歧映射表 `_t1_username_fix`/`_t1_username_merge` + **重名 fail-fast 守卫** + 回填 member 域**核心三表**（`member_address` 已加 `JOIN member` 过滤孤儿）+ 顶 AUTO_INCREMENT（幂等） | 写新表 | T1 |
+| ④ | `0003-member-backfill-verify.sql` | 21 项断言（**期望值全部按当前源 + 映射表实时计算**，禁写死生产快照数字） | 只读 | T1 |
 | ⑤ | `0004-member-backfill-t1-part2.sql` | 回填 **13 张侧表**（webhook/oauth/favorite/browse/benefit/log/area/PAT/idempotency） | 写新表 | T1 |
 | ⑥ | `0005-member-backfill-verify-part2.sql` | 侧表行数 + 外键悬空 + id 保留断言 | 只读 | T1 |
 | ⑦ | `0002-order-domain-up.sql` | 建 **26 张 order 域新表**（由 schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
@@ -25,8 +25,10 @@
 | ⑮ | `0011-send-order-backfill-t1.sql` | 回填核心：`send_orders`（sid 对齐）+ `send_order_status_histories` + `orders.send_order_id` 单侧关联校正 | 写新表 | T1 |
 | ⑯ | `0012-send-order-backfill-t1-part2.sql` | 回填侧表：`send_order_value_added_services` / `invoices`（29,238）+ labels/invoice_events（本地无源表 PREPARE 跳过） | 写新表 | T1 |
 | ⑰ | `0013-send-order-backfill-verify.sql` | 18 项断言（sid 对齐/五费总额/保险独立/砍价/返金/sn 长度/发票/fid/悬空/状态分布/计费重/同捆/totalfee 禁回填） | 只读 | T1 |
+| ⑱ | `0014-member-source-import.sql` | **本地演练专用**：导入 member 域 15 张旧源表（`dg_users`/`dg_address` + 13 张侧表源）到 `crossbuy_dryrun`，含 `biz_code` 补列守卫与行数自检 | 写旧表副本 | 演练 |
 
-> ✅ 全流程已在**本地 MySQL 9.7.2** 用「生产 DDL + 无 PII 合成样本」演练通过（核心三表 15/15 PASS；侧表 25 项全 PASS；3 遍幂等；回退验证 OK），见 `docs/plans/03-T1本地演练报告.md`。
+> ✅ 全流程已在**本地 MySQL 9.7.2** 用「生产 DDL + 无 PII 合成样本」演练通过（member 核心三表 15/15 PASS；侧表 25 项全 PASS；3 遍幂等；回退验证 OK），见 `docs/plans/03-T1本地演练报告.md`。
+> ⚠ **#3g 硬化（2026-10-15）改动了 `0002`/`0003`/`0006` 并新增 `0014`，上述「15/15」是改造前的计数**；新版 `0003` 为 21 项断言（组 A 7 + 组 B 14），改造后的 T1 复跑**尚未执行**（本机 MySQL 需口令，见 TODO #3g 验证清单）。
 >
 > ⚠️ **生产写权限阻塞**：生产账号 `datapro` 仅有 `SELECT, INDEX, LOCK TABLES, SHOW VIEW`（`taotaro.*`），**无 CREATE/INSERT/ALTER/DROP**。①~⑤ 需由 DBA 用具备 DDL/DML 的账号执行。
 
@@ -139,18 +141,30 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 
 **静态验证已做**（临时空库 `crossbuy_ddlcheck`，跑 `0001 → 0001a → 0002 → 0002a → 0003`）：49 表建成、`decimal(14,2)`×65、`decimal(12,8)`×1、`decimal(10,2)`×3（即上表保留项）、`balance_currency`/`charged_currency` 默认值实测 CNY、`member.username` + 4 个 `tid` 仍 `utf8mb4_general_ci`。
 
-**仍欠 T1 数据级复跑**，且有两个前置条件（本机 MySQL 停机后暴露出来的真实缺口）：
+**空库起跑的两个前置缺口**（本机 MySQL 停机后暴露；**2026-10-15 已闭合，见 ⑱**）：
 
-1. ⚠ **member 域旧源表没有导入脚本**：前几轮演练是在 `crossbuy_dryrun` 里**手工**建旧表副本（这也是该库 `dg_users` 比 `taotaro` 多一列 `biz_code` 的来源——`0002` 会读它）。库一旦重建就得先有这份脚本，否则 ③⑤ 无法起跑。→ 待补 `drill-member-source-import.sql`（本地演练专用，命名对齐已有的 `0006`/`0010` 与 `precheck-*.sql` 惯例）。
-2. ⚠ **`0006` 假定目标库里已有 `dg_users`**（它 `TRUNCATE` 后灌数据，不建表）→ 新库需先建 `dg_users` 再跑 ⑨，或把它改成 `CREATE TABLE IF NOT EXISTS ... LIKE taotaro.dg_users`。
+1. ✅ **member 域旧源表没有导入脚本** → 已补 `0014-member-source-import.sql`（15 张表 + 行数自检）。前几轮演练是在 `crossbuy_dryrun` 里**手工**建旧表副本，库一旦重建，③⑤ 就无从起跑。
+2. ✅ **`0006` 曾假定目标库里已有 `dg_users`**（只 `TRUNCATE` 不建表 → 新库跑报 `Table doesn't exist`）→ 已改 `CREATE TABLE IF NOT EXISTS ... LIKE taotaro.dg_users` + 补列守卫，`0006` 可独立起跑。
+
+> ★ **本机 `taotaro` 是旧版 dump**：`dg_users` 只有 **74 列**，生产实为 **75 列**（多 `biz_code`，2026-10-13 按线上 `information_schema` 核对）。`0014`/`0006` 都用 `information_schema` 探测后 `ALTER ... ADD COLUMN biz_code VARCHAR(56) NULL` 补齐，**留 NULL 正好压测 `0002` 的 `COALESCE(NULLIF(...))` 兜底路径**。这两条守卫是「本机 dump 落后于生产」的补丁，**生产不需要**。
 
 ## 2026-10-15 定版后复跑（Q1 CNY + Q8 14,2）：全链绿，并加了一道 fail-fast
 
 - 复跑范围：重建 49 张派生表 → `0006`/`0010` 刷新源 → `0002`/`0004`（member）→ `0007`/`0008`（order）→ `0011`/`0012`（send-order）→ 四份 verify → **第二遍计数与金额完全不变**。金额证据：Σ`member.balance` = Σ`dg_users.money` = 115,263,758.22；Σ`order_groups.bargain_amount` = 364,598.62；五费 3,050,486.56；历史表行数 = 实体数（无翻倍）。详见 `docs/plans/03-T1本地演练报告.md` §九。
-- ★★ **`0002` 新增守卫 `_guard_username_disambiguated`（必留在 §2 之前）**：未进 `_fix` 的重名对会让 `INSERT..ODKU` **把后一个账号的整行盖到前一个账号身上**（本地实测吞掉 5 个账号、清零 2 个余额，零报错）。守卫按**目标列 collation**（`utf8mb4_general_ci`）判碰撞后 `SIGNAL` 中止。⇒ **T1 前必须重跑 `precheck-username-duplicate.sql` 补 `_fix`**；不补就是中止而不是「假成功」。
+- ★★ **`0002` 守卫 `_guard_username_disambiguated`（必留在 §2 之前）**：未进消歧映射的重名对会让 `INSERT..ODKU` **把后一个账号的整行盖到前一个账号身上**（本地实测吞掉 5 个账号、清零 2 个余额，零报错）。守卫按**目标列 collation**（`utf8mb4_general_ci`）判碰撞后 `SIGNAL` 中止，并把撞车名（最多 200 字符）打进报错文本供 DBA 直接定位。⇒ **T1 前必须重跑 `precheck-username-duplicate.sql` 补 `_t1_username_fix`**；不补就是中止而不是「假成功」。
 - ⚠ collation 新坑：源 `dg_users.uname` 是 `utf8mb3_general_ci`（**折叠平假名/片假名**），目标 `member.username` 是 `utf8mb4_general_ci`（**不折叠**）→ 唯一性判断/守卫/断言一律 `CAST(... AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci`，按源 collation 判会误中止。
-- ⚠ 两个已知待办（TODO **#3g**）：① `0003` 的 A1/A3/B6/B7 把**生产快照的具体数字写死成期望值**，换快照必失配 → 应改为按当前源实时计算；② `member_address` 回填**没有 JOIN member 过滤孤儿**（本地 B12 悬空 2 行即 mock 残留），生产会产生悬空行并让 Prisma `include` 报错。
-- ⚠ 空库起跑顺序：源表要先落地。`0006` 只 `TRUNCATE dg_users` **不建表**；member 域旧源表目前**没有导入脚本**（前几轮手工建副本）→ 补 `drill-member-source-import.sql`。
+
+## #3g 硬化（2026-10-15，复跑暴露的三条）
+
+| # | 缺陷 | 修法 | 影响面 |
+|---|---|---|---|
+| ② | `0003` 的 A1/A3/B6/B7 把**生产快照数字**（8 组 / 8 改名 / 1 合并）写死成 expected → 换任何一份源必然无谓 FAIL，「校验绿灯」失去意义 | 期望值**改为按当前源 + 映射表实时计算**；映射由 TEMPORARY 升为实体表 `_t1_username_fix`/`_t1_username_merge`（`0002` §1 建、保留作审计），`0003` 跨会话读它 ⇒ 脚本与校验**读同一份映射**，源变了期望值自动跟着变 | `0002` §1、`0003` 组 A/B 全量重写（新增 A3 映射陈旧、A4 改名规则、A5 合并端悬空、B13 孤儿地址 INFO、B14 映射落库核对） |
+| ③ | `member_address` 回填**没有 `JOIN member` 过滤孤儿**（本地 B12 悬空 2 行）→ 生产会产生悬空 `member_id`，Prisma 必需关系 `include` 直接报错 | `0002` §4 加 `JOIN member m ON m.id = a.uid`；`0003` 的 B2 期望值同步改为「源中非孤儿地址数」，B12 从 INF/WARN 升级为硬 PASS，新增 B13 INFO 暴露被过滤的数量 | 分批时须注意 §4 依赖 §2 进度（见 `0002` §7 新注释）：按 uid 升序推进，全批跑完再复跑一次 §4 |
+| ④ | member 域旧源表**只能手工复现**；`0006` 又假定 `dg_users` 已存在 | 新增 `0014-member-source-import.sql`（15 表 + 行数自检）；`0006` §0 改自愈化（`CREATE TABLE IF NOT EXISTS` + 补列守卫） | 空库可从零复跑：`0001 → 0001a → 0014 → 0002 → 0003 → 0004 → 0005` |
+
+> ★ **升实体表的真正理由不是「方便」**：临时表**只对创建它的会话可见**，而 verify 脚本天然另起会话 → 旧版 `0003` 只能把 8 行映射**再抄一遍字面量**。那就是第二份真相，必然与正本漂移。任何「校验脚本要读回填脚本的输入」的场景，都禁用 TEMPORARY 表承载那份输入。
+>
+> ⚠ `0003` 现在依赖映射表存在：若目标库被重建而没重跑 `0002`，`0003` 会在 A2 报 `table doesn't exist` —— 这是**预期**（等于说「回填还没跑」），别把它当校验脚本的 bug。
 
 ## 执行注意
 
@@ -165,6 +179,32 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 ## 回退
 
 全部为纯新增，回退 = `DROP` 新建的那批表即可，旧表与旧数据不受影响（本地已验证）。
+派生表之外还有两张**回填期暂存表**要一并 DROP：`_t1_username_fix`、`_t1_username_merge`（member），`_t1_valid_order`、`_t1_order_group`（order）——它们不在 `schema.prisma` 里，`0001`/`0002` DDL 不会生成也不会删除。
+
+## 复跑验证命令（改 `0002`/`0003`/`0014` 后必跑）
+
+口令**不进命令行、不进仓库**：用 `-p`（交互提示）或 `MYSQL_PWD` 由操作者本机注入。
+
+```bash
+# 本机 FlyEnv mysql CLI（9.7.2）；客户端默认 gbk，校验脚本必须显式 utf8mb4
+M="/d/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysql"
+DB=crossbuy_dryrun
+D() { "$M" -h 127.0.0.1 -P 3306 -u root -p --default-character-set=utf8mb4 -D "$DB" < "$1"; }
+
+# 空库全链（演练库可从零复现，#3g④ 之后）
+#   建库：CREATE DATABASE crossbuy_dryrun;
+cd packages/db/sql
+D 0001-member-domain-up.sql        # ① 建 17 张新表
+D 0001a-member-username-collation.sql  # ② collation 定版（必须先于回填）
+D 0014-member-source-import.sql    # ⑱ 旧源表落地（含 biz_code 补列守卫）
+D 0002-member-backfill-t1.sql      # ③ 映射表 + 守卫 + 核心三表
+D 0003-member-backfill-verify.sql  # ④ 21 项断言：result 列必须全 PASS/INFO
+D 0004-member-backfill-t1-part2.sql && D 0005-member-backfill-verify-part2.sql  # ⑤⑥ 侧表
+# 幂等判定：③⑤ 各连跑两遍，比对**每一张**目标表计数（历史表最容易漏，见「历史表幂等坑」）
+```
+
+> ⚠ **别把空结果当事实**：`2>/dev/null` 会把 `ERROR 2003 Can't connect` 吞成「0 张表」，
+> 曾据此误判「dryrun 是空库」。取证类查询**要么保留 stderr，要么二次确认**。
 
 ## 相关文档
 

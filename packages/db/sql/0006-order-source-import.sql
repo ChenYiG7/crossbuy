@@ -22,11 +22,21 @@
 -- ============================================================================
 
 -- ---------------------------------------------------------------------------
--- 0. dg_users 刷新：dryrun 现有 6 行模拟数据（uid 1001-2001），TRUNCATE 后导真实
+-- 0. dg_users 刷新：dryrun 里的模拟数据（uid 1001-2001）TRUNCATE 后导真实
 --    （member 回填脚本 0002 幂等，重跑即用真实数据重建 member 表）
---    ⚠ dryrun 的 dg_users 比 taotaro 源多一列 biz_code（member 演练遗留），
---      禁 SELECT * —— 用显式列清单导入，biz_code 留空（0002 的 COALESCE 兜底）
+--    ★ 2026-10-15 自愈化（TODO #3g④ 顺带）：旧版只有 TRUNCATE，**新库直接跑会报
+--      「Table doesn't exist」**（dg_users 本来是靠手工建 / 靠 0014 建）。现改为
+--      CREATE TABLE IF NOT EXISTS + 补列守卫，本脚本可独立起跑。
+--    ⚠ 本机 taotaro 是旧版 dump（74 列），生产 dg_users 实有 75 列（多 biz_code）；
+--      下面 74 列清单**不含 biz_code** → 插入后该列留默认 NULL，由 0002 的 COALESCE 兜底
 -- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS dg_users LIKE taotaro.dg_users;
+SET @s := IF(
+  (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'dg_users' AND COLUMN_NAME = 'biz_code') = 0,
+  'ALTER TABLE dg_users ADD COLUMN biz_code VARCHAR(56) NULL DEFAULT NULL',
+  'SELECT ''biz_code already present: skip ALTER'' AS drill_note');
+PREPARE st FROM @s; EXECUTE st; DEALLOCATE PREPARE st;
 TRUNCATE TABLE dg_users;
 INSERT INTO dg_users (`uid`,`uname`,`password`,`email`,`tname`,`utype`,`sex`,`xz`,`tel`,`zip`,`card`,`address`,`qq`,`msn`,`country`,`city`,`face`,`scores`,`money`,`regip`,`regtime`,`reg_extra`,`validity`,`loginip`,`logintime`,`activekey`,`state`,`memberid`,`remark`,`fb`,`dfflag`,`dffee`,`floatrate`,`csvupflag`,`dfsendaddress`,`dfsendtel`,`dfsendname`,`lastordertime`,`last_balance_changed_at`,`login_limit_warning`,`orderenable`,`stoptime`,`regtype`,`comname`,`comengname`,`commanager`,`commanagereng`,`compost`,`comptel`,`comaddress`,`comaddresseng`,`comzip`,`realtimeaccount`,`line`,`wechat`,`usetype`,`tag`,`prebuyfeq`,`prebuyamt`,`enname`,`monpayamt`,`shopname`,`shopurl`,`combusnum`,`apitoken`,`tokenexpiretime`,`mail_frequency`,`email_subscribe_status`,`cc_emails`,`remember_token`,`stores_free_days`,`stores_warn_days`,`belong_company`,`origin_package_choice`)
 SELECT `uid`,`uname`,`password`,`email`,`tname`,`utype`,`sex`,`xz`,`tel`,`zip`,`card`,`address`,`qq`,`msn`,`country`,`city`,`face`,`scores`,`money`,`regip`,`regtime`,`reg_extra`,`validity`,`loginip`,`logintime`,`activekey`,`state`,`memberid`,`remark`,`fb`,`dfflag`,`dffee`,`floatrate`,`csvupflag`,`dfsendaddress`,`dfsendtel`,`dfsendname`,`lastordertime`,`last_balance_changed_at`,`login_limit_warning`,`orderenable`,`stoptime`,`regtype`,`comname`,`comengname`,`commanager`,`commanagereng`,`compost`,`comptel`,`comaddress`,`comaddresseng`,`comzip`,`realtimeaccount`,`line`,`wechat`,`usetype`,`tag`,`prebuyfeq`,`prebuyamt`,`enname`,`monpayamt`,`shopname`,`shopurl`,`combusnum`,`apitoken`,`tokenexpiretime`,`mail_frequency`,`email_subscribe_status`,`cc_emails`,`remember_token`,`stores_free_days`,`stores_warn_days`,`belong_company`,`origin_package_choice` FROM taotaro.dg_users;
