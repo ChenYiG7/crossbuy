@@ -92,7 +92,7 @@ model Member {
   /// 用户标签
   tag           String? @db.VarChar(255)
 
-  // ---- 资金（正本在 finance.ledger_entry；下列为冗余/快照）----
+  // ---- 资金（正本在 finance.ledger_entries；下列为冗余/快照）----
   /// 账户余额（缓存列，唯一写入口 + 原子守卫维护）
   balance              Decimal?  @default(0.00) @db.Decimal(14, 2)
   /// 余额币种 —— ★ 2026-10-15 Q1 定版：旧库对客全链路（货价/余额/流水/运单费）面值是 CNY，
@@ -507,30 +507,379 @@ model Area {
 }
 
 // ============================================================================
-// finance 域（占位：账本正本，member.balance 的来源）
-// 详情待 finance 域切片时展开（对账批次 / 四方对账 / 冻结）
+// finance 域（2026-10-15，TODO #11）
+//
+// 设计依据：docs/plans/finance-schema.md（dg_record / dg_rechargerecord /
+//   finance_order_cash_flow / dg_huilv 列级精读 + action 全量 21 值词表逆向 +
+//   实测账本链断 7.3% 行 / 55% 会员 + 14 条建模决策）
+//   - ★ Q1 定版（2026-10-15）：账本面值 = **CNY**。旧库对客全链路实测是人民币，
+//     按 JPY 回填 = 静默放大 ~22 倍
+//   - ★ Q8 定版：金额 `Decimal(14,2)`、汇率 `Decimal(12,8)`
+//   - 账户制单式流水（6 类账户），**不做复式科目树**（§4.1）
+//   - `ledger_entries` 是 append-only：故意不给 `updated_at` / `deleted_at`——
+//     更正只能加反向分录，不可变性优先于建表规约统一（§4.5，docs/07 §6.2 的本域特例）
+//   - 唯一写入口 `ledger.post()`：链式不变式 balance_after = balance_before + signed_amount
+//     + 幂等键 `@@unique(account_id, idempotency_key)`（旧库同名列 100% NULL，§3.9）
+//   - ⚠ 原**占位模型** LedgerEntry（DR/CR、无账户、无余额快照、无业务唯一键）已整体替换。
+//     旧表名 `ledger_entry` → 新表名 `ledger_entries`：生产从未建过占位表，但演练库若残留，
+//     请手工 DROP（`0001-member-domain-up.sql` 重生成后不再包含它）
 // ============================================================================
 
-/// 账本流水（append-only，不可变；核心：资金完整性）
-model LedgerEntry {
-  id        BigInt   @id @default(autoincrement())
-  /// 方向：DR 借 / CR 贷
-  direction String   @db.VarChar(2)
-  /// 金额（服务端重算，禁浮点）
-  amount    Decimal  @db.Decimal(14, 2)
-  /// 币种（本系统面值 CNY；外部平台店铺另有 JPY/USD，见 v2_ecommerce_shop.currency）
-  currency  String   @db.VarChar(8)
-  /// 业务单号
-  bizNo     String?  @map("biz_no") @db.VarChar(64)
-  /// 流水类型（枚举词表正本见 contract）
-  flowType  String   @map("flow_type") @db.VarChar(32)
-  /// 关联单 id
-  refId     String?  @map("ref_id") @db.VarChar(64)
-  /// 创建时间（账本不可变，无 updated_at）
-  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+/// 账户行（余额正本挂载点）；唯一写入口 ledger.post() 的守卫对象
+model Account {
+  id     BigInt @id @default(autoincrement())
+  /// MEMBER 会员余额户 / COMPANY 平台收入 / PURCHASE 采购成本 / FREIGHT 运费 /
+  /// CHANNEL_IN_TRANSIT 渠道在途 / ADJUSTMENT 人工调整损益（词表正本在 contract）
+  kind   String @db.VarChar(24)
+  /// kind=MEMBER 时 == member.id（== 旧 dg_users.uid）；其余账户 NULL
+  /// ⚠ MySQL 唯一索引里 NULL 互不相等 → 非会员账户不受 @@unique(kind,memberId) 约束，
+  ///   「一个 kind 只允许一个」要靠应用层或 sentinel 收口（登记 TODO #11c）
+  memberId Int? @map("member_id")
+  /// 面值币种（★ Q1 定版 CNY；禁跨币种加减）
+  currency String @default("CNY") @db.VarChar(8)
+  /// 当前余额（守卫列，禁旁路写：只允许 ledger.post() 同事务原子 UPDATE）
+  balance  Decimal @default(0.00) @db.Decimal(14, 2)
+  /// 期初余额（回填 = 旧 dg_users.money，之后不再变）
+  openingAmount Decimal @default(0.00) @map("opening_amount") @db.Decimal(14, 2)
+  /// ACTIVE / FROZEN（对账不平即冻结，docs/02 §5.3）
+  status        String  @default("ACTIVE") @db.VarChar(16)
+  /// 乐观锁行版本（并发扣款的守卫比对列）
+  rowVersion    Int     @default(0) @map("row_version")
+  /// 旧 dg_users.last_balance_changed_at
+  lastChangedAt DateTime? @map("last_changed_at") @db.DateTime(0)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
 
-  @@index([bizNo])
-  @@map("ledger_entry")
+  @@unique([kind, memberId])
+  @@index([memberId])
+  @@map("accounts")
+}
+
+/// 账本分录（append-only，不可变；更正只能加反向分录）。
+/// 旧源：dg_record（807 万，客户侧）+ finance_order_cash_flow（102 万，采购侧）
+/// + dg_record_old（599 万，已停写归档；是否并入 = Q2 业务可见性问题）
+model LedgerEntry {
+  /// ★ 新分配（非旧 rid）：dg_record 与 dg_record_old 的 rid 各自自增、数值空间重叠，
+  ///   对齐旧 id 必撞号 → 对齐关系改由 (legacySource, legacyId) 承载（§4.12）
+  id            BigInt  @id @default(autoincrement())
+  accountId     BigInt  @map("account_id")
+  /// IN / OUT，与 signedAmount 符号互相校验（旧库实测 82 行违规）
+  direction     String  @db.VarChar(4)
+  /// 带符号金额：IN 正 / OUT 负（旧 money 语义直迁）
+  signedAmount  Decimal @map("signed_amount") @db.Decimal(14, 2)
+  /// 动账前后余额快照（旧 accountmoney 的升级版；post() 内断言链式连续）
+  balanceBefore Decimal @map("balance_before") @db.Decimal(14, 2)
+  balanceAfter  Decimal @map("balance_after") @db.Decimal(14, 2)
+  /// ★ Q1 定版 CNY（对日市场 ≠ 记账用日元）
+  currency      String  @default("CNY") @db.VarChar(8)
+  /// 业务原因词表（正本在 contract；取代旧 action + paytype 的费用侧）
+  flowType      String  @map("flow_type") @db.VarChar(40)
+  /// 渠道（取代旧 paytype 的渠道侧；费用类分录为 NULL）
+  channel       String? @db.VarChar(24)
+  /// ★ 幂等键 {flowType}:{bizType}:{bizId}:{occurrence}（旧库同名列 100% NULL）
+  idempotencyKey String   @map("idempotency_key") @db.VarChar(128)
+  orderId        Int?     @map("order_id")
+  sendOrderId    Int?     @map("send_order_id")
+  rechargeOrderId BigInt?  @map("recharge_order_id")
+
+  // ---- 采购侧（旧 cash_flow 一行四金额 → 拆列；paid_money 是派生值，★ 不落库，§4.8）----
+  /// 对方收款额（旧 price）
+  counterpartAmount Decimal? @map("counterpart_amount") @db.Decimal(14, 2)
+  /// 砍价额（旧 bargain_price）
+  bargainAmount     Decimal? @map("bargain_amount") @db.Decimal(14, 2)
+  /// 采购运费（旧 send_price）
+  freightAmount     Decimal? @map("freight_amount") @db.Decimal(14, 2)
+
+  /// 汇率快照三件套（旧库完全没有，汇率对账的前提）
+  rate            Decimal? @db.Decimal(12, 8)
+  /// HUILV / MANUAL / GATEWAY
+  rateSource      String?  @map("rate_source") @db.VarChar(16)
+  rateRefId       BigInt?  @map("rate_ref_id")
+  /// 当时用的计费规则快照（可回溯「按什么算」）
+  feeRuleSnapshot Json?    @map("fee_rule_snapshot")
+
+  /// 人工/后台动作的操作人（会员自助为 NULL）
+  operatorId      Int?   @map("operator_id")
+  /// ★ action=0 类分录必须挂审批单（旧库只靠随机 sn 连回去，§3.9/§4.4）
+  approvalId      BigInt? @map("approval_id")
+  /// 人工调整原因码（取代旧自由文本 remark 承担语义的做法）
+  adjustReason    String? @map("adjust_reason") @db.VarChar(32)
+  /// 更正分录指向被更正的原分录
+  correctsEntryId BigInt? @map("corrects_entry_id")
+  /// 账户间划转的成对键（双边配平校验）
+  pairKey         String? @map("pair_key") @db.VarChar(64)
+
+  /// 人读文案（旧 remark；★ 禁 HTML、禁承担幂等或汇率语义）
+  label        String?  @db.VarChar(255)
+  /// 旧 `sn` 一列三义（凭证号 / 物流单号 / 空串）→ 拆两列 + JSON 兜其余（§3.9）
+  voucherNo    String?  @map("voucher_no") @db.VarChar(32)
+  logisticsNo  String?  @map("logistics_no") @db.VarChar(64)
+  logisticsNos Json?    @map("logistics_nos")
+  /// 从旧 remark HTML 里剥出来的 URL（§6.4：剥标签只留文本与 URL）
+  bizNos       Json?    @map("biz_nos")
+  /// 回填来源与旧主键（rid 空间重叠靠这两列定位；镜像行也用它去重）
+  legacySource String?  @map("legacy_source") @db.VarChar(32)
+  legacyId     BigInt?  @map("legacy_id")
+  /// 业务时刻（对账按此列；补录时 ≠ createdAt）
+  occurredAt   DateTime @map("occurred_at") @db.DateTime(0)
+  /// 账本不可变：无 updatedAt / deletedAt（反向分录即更正）
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  @@unique([accountId, idempotencyKey])
+  @@unique([legacySource, legacyId])
+  @@index([accountId, flowType, occurredAt]) // 旧 idx_uid_action_addtime 的真实口径
+  @@index([orderId])
+  @@index([sendOrderId])
+  @@index([rechargeOrderId])
+  @@index([pairKey])
+  @@map("ledger_entries")
+}
+
+/// 入金单据（旧源 dg_rechargerecord，59 万）。★ 只装「渠道入金」，费用类/负向调整搬去 ledger
+model RechargeOrder {
+  id       BigInt @id @default(autoincrement()) // == 旧 rid（单据表仍照主键对齐铁律）
+  memberId Int    @map("member_id")             // == 旧 uid
+  /// 原币金额（旧 amount，JPY 面值：dg_rechargerecord.amount 是全库少数真日元列之一）
+  sourceAmount   Decimal @map("source_amount") @db.Decimal(14, 2)
+  sourceCurrency String  @default("JPY") @map("source_currency") @db.VarChar(8)
+  /// 入账金额（旧 money，CNY 面值）
+  creditedAmount Decimal @map("credited_amount") @db.Decimal(14, 2)
+  /// ★ 换算依据（旧库无列，只能 amount/money 反推，且 PayPal/Stripe 反推值含手续费）
+  rate       Decimal @db.Decimal(12, 8)
+  rateSource String  @default("HUILV") @map("rate_source") @db.VarChar(16)
+  /// 渠道（旧 paytype 拆分后的渠道侧）：BANK_TRANSFER / PAYPAL / STRIPE ...
+  channel      String  @db.VarChar(24)
+  channelLabel String? @map("channel_label") @db.VarChar(64) // 旧 payname
+  /// PENDING(1) / AUDITED(3) / COMPLETED(2) / REJECTED(-1)
+  /// ★ 加钱时刻 = 进入 AUDITED（银行）或 COMPLETED（其它），不是「有 successtime」（§3.2）
+  status                 String  @default("PENDING") @db.VarChar(16)
+  gatewayTransactionNo   String? @map("gateway_transaction_no") @db.VarChar(128)
+  submittedByAdminId     Int?    @map("submitted_by_admin_id")
+  auditedByAdminId       Int?    @map("audited_by_admin_id")
+  proofAttachmentUrl     String? @map("proof_attachment_url") @db.VarChar(200)
+  bankName               String? @map("bank_name") @db.VarChar(64)
+  payerTel               String? @map("payer_tel") @db.VarChar(20)
+  /// hho / gouba / NULL=yiwutaro（旧 source：一库多站的分野）
+  sourceSystem String?   @map("source_system") @db.VarChar(32)
+  submittedAt  DateTime? @map("submitted_at") @db.DateTime(0) // 旧 addtime
+  creditedAt   DateTime? @map("credited_at") @db.DateTime(0)  // 旧 successtime
+  /// 加钱分录回填，双向可验（对账第 1 类）
+  ledgerEntryId BigInt?  @map("ledger_entry_id")
+  notes         Json?
+  deletedAt     DateTime? @map("deleted_at") @db.DateTime(0)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  /// ★ 渠道幂等（旧库有列但 PHP 侧 0 引用，实测非 NULL 率待 Q6 复核）
+  @@unique([gatewayTransactionNo])
+  @@index([memberId, status])
+  @@index([status, creditedAt])
+  @@map("recharge_orders")
+}
+
+/// 汇率时间序列（旧源 dg_huilv；★ 旧 float(10,2) 对 0.045 量级只剩 2 位有效数字）
+model ExchangeRate {
+  id    BigInt @id @default(autoincrement())
+  base  String @db.VarChar(8) // JPY
+  quote String @db.VarChar(8) // CNY
+  rate  Decimal @db.Decimal(12, 8)
+  /// MITSUBISHI / YAHOO / DB_CACHE / MANUAL（旧 Currency.php:165-198 的四级降级链）
+  source String @db.VarChar(16)
+  /// 旧硬编码加点（三菱 +0.5 / Yahoo +0.8）规则化
+  spreadApplied Decimal @default(0) @map("spread_applied") @db.Decimal(12, 8)
+  effectiveAt   DateTime @map("effective_at") @db.DateTime(0)
+  createdBy     Int?     @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  @@unique([base, quote, effectiveAt])
+  @@map("exchange_rates")
+}
+
+/// 对账批次（docs/02 §5.3 五类；旧系统 0 张对账表）
+model ReconciliationBatch {
+  id    BigInt @id @default(autoincrement())
+  /// PAYMENT_CHANNEL / BALANCE / SUPPLIER / LOGISTICS / EXCHANGE_RATE
+  type       String   @db.VarChar(24)
+  windowFrom DateTime @map("window_from") @db.DateTime(0)
+  windowTo   DateTime @map("window_to") @db.DateTime(0)
+  /// RUNNING / CLEAN / DIFF_FOUND / FROZEN / RESOLVED
+  status      String   @default("RUNNING") @db.VarChar(16)
+  expectedTotal Decimal? @map("expected_total") @db.Decimal(14, 2)
+  actualTotal   Decimal? @map("actual_total") @db.Decimal(14, 2)
+  diffAmount    Decimal? @map("diff_amount") @db.Decimal(14, 2)
+  diffCount     Int      @default(0) @map("diff_count")
+  handledByAdminId Int?  @map("handled_by_admin_id")
+  finishedAt    DateTime? @map("finished_at") @db.DateTime(0)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  /// 同窗口重跑幂等
+  @@unique([type, windowFrom, windowTo])
+  @@index([type, status])
+  @@map("reconciliation_batches")
+}
+
+/// 对账差异明细（左=期望 / 右=实际；处置可追）
+model ReconciliationDiff {
+  id       BigInt @id @default(autoincrement())
+  batchId  BigInt @map("batch_id")
+  leftKey  String @map("left_key") @db.VarChar(128)
+  rightKey String? @map("right_key") @db.VarChar(128)
+  expectedAmount Decimal @map("expected_amount") @db.Decimal(14, 2)
+  actualAmount   Decimal @map("actual_amount") @db.Decimal(14, 2)
+  diffAmount     Decimal @map("diff_amount") @db.Decimal(14, 2)
+  /// MISSING_ENTRY / DUPLICATED_ENTRY / CHAIN_BROKEN / RATE_DRIFT / AMOUNT_EDITED /
+  /// STATE_SKIPPED ...（★ CHAIN_BROKEN 的存量基线见 §6.4「链断不静默修复」）
+  reasonCode  String @map("reason_code") @db.VarChar(32)
+  /// OPEN / ACCEPTED / CORRECTED / WRITTEN_OFF
+  disposition      String  @default("OPEN") @db.VarChar(16)
+  handledByAdminId Int?    @map("handled_by_admin_id")
+  alertEventId     BigInt? @map("alert_event_id")
+  detail           Json?
+  createdAt        DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  /// 重跑不重复登记
+  @@unique([batchId, leftKey, reasonCode])
+  @@index([disposition, reasonCode])
+  @@map("reconciliation_diffs")
+}
+
+/// 费率规则（收 order 域 Q7：5% / 1.05 / PayPal / Stripe / 汇率加点；dffee 留会员列）
+model FeeRule {
+  id    BigInt @id @default(autoincrement())
+  code  String @db.VarChar(40)
+  value Decimal @db.Decimal(12, 8)
+  /// PERCENT / MULTIPLIER / FIXED / SPREAD
+  mode     String  @db.VarChar(16)
+  currency String? @db.VarChar(8)
+  /// 会员档位（NULL = 全员通用）
+  memberTier    String?  @map("member_tier") @db.VarChar(24)
+  effectiveFrom DateTime @map("effective_from") @db.DateTime(0)
+  updatedBy     Int?     @map("updated_by")
+  note          String?  @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@unique([code, effectiveFrom])
+  @@map("fee_rules")
+}
+
+/// 告警事件（钉钉出口；幂等 + 频控，防每轮对账刷屏）
+model AlertEvent {
+  id     BigInt @id @default(autoincrement())
+  /// LEDGER_CHAIN_BROKEN / RECON_DIFF / NEGATIVE_BALANCE / DUPLICATE_CREDIT / BARGAIN_THRESHOLD ...
+  code     String @db.VarChar(40)
+  /// 去重键：同一差异在多轮对账里只播一次
+  dedupKey String @map("dedup_key") @db.VarChar(128)
+  /// INFO / WARN / CRITICAL
+  severity String  @default("WARN") @db.VarChar(8)
+  payload  Json?
+  /// PENDING / SENT / SUPPRESSED / RESOLVED
+  status     String    @default("PENDING") @db.VarChar(16)
+  sentAt     DateTime? @map("sent_at") @db.DateTime(0)
+  retryCount Int       @default(0) @map("retry_count")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@unique([dedupKey])
+  @@index([status, createdAt])
+  @@map("alert_events")
+}
+
+/// 告警通道（替掉 config/services.php 里「一业务一组硬编码」，§4.13）
+model AlertChannel {
+  id   BigInt @id @default(autoincrement())
+  code String @db.VarChar(40)
+  /// DINGTALK / GENERIC_WEBHOOK / EMAIL
+  kind String @db.VarChar(16)
+  /// ★ 禁明文 webhook/secret 入库：只存凭证入口引用（docs/07 §5.5 AES-GCM）
+  credentialRef String @map("credential_ref") @db.VarChar(128)
+  /// HMAC_SHA256（旧 DingtalkWebhookClient:47-63 的加签）/ NONE
+  signType String? @map("sign_type") @db.VarChar(16)
+  /// 旧封装只支持 MARKDOWN；TEXT 预留
+  msgType  String  @default("MARKDOWN") @map("msg_type") @db.VarChar(16)
+  /// 通道级附加参数（at 手机号、代理等）
+  config   Json?
+  enabled  Boolean @default(true)
+  note     String? @db.VarChar(255)
+  deletedAt DateTime? @map("deleted_at") @db.DateTime(0)
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@unique([code])
+  @@map("alert_channels")
+}
+
+/// 告警规则（code → 通道 + 阈值 + 静默窗口；一个 code 可指两个出口，§4.13）
+model AlertRule {
+  id        BigInt @id @default(autoincrement())
+  /// 与 alert_events.code 同词表
+  code      String @db.VarChar(40)
+  channelId BigInt @map("channel_id")
+  /// INFO / WARN / CRITICAL
+  severity      String  @default("WARN") @db.VarChar(8)
+  /// 单值阈值（如砍价占比 0.3）；复杂条件进 thresholdJson
+  thresholdValue Decimal? @map("threshold_value") @db.Decimal(14, 2)
+  thresholdJson  Json?    @map("threshold_json")
+  /// 静默窗口（秒）：同 dedupKey 在窗口内不再播
+  silenceWindowSec Int     @default(3600) @map("silence_window_sec")
+  /// 替代旧 Console/Kernel 的 cron 表达式（超时订单每 30 分钟那条）
+  scheduleCron String?   @map("schedule_cron") @db.VarChar(64)
+  /// 分块推送大小（旧 chunk=100）
+  chunkSize    Int       @default(100) @map("chunk_size")
+  enabled      Boolean   @default(true)
+  note         String?   @db.VarChar(255)
+  deletedAt    DateTime? @map("deleted_at") @db.DateTime(0)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  /// 同一 code 指多个出口 = 多条记录（Grid 红字 + 钉钉推送并存）
+  @@unique([code, channelId])
+  @@index([channelId, enabled])
+  @@map("alert_rules")
+}
+
+/// 旧→新镜像水位（§6.2：T1 期间 dg_record 由旧系统独占记账，新侧只做投影）
+model LegacySyncWatermark {
+  id     BigInt @id @default(autoincrement())
+  /// 被镜像的旧表名（本域只有 dg_record 需要持续镜像）
+  sourceTable  String @map("source_table") @db.VarChar(64)
+  /// 与 ledger_entries.legacy_source 同词表（DG_RECORD / DG_RECORD_OLD / CASH_FLOW）
+  legacySource String @map("legacy_source") @db.VarChar(32)
+  /// 上次成功的旧主键（★ 按 rid 单调推进，比 addtime 可靠：实测同秒多行 + 存在补录）
+  lastLegacyId  BigInt    @default(0) @map("last_legacy_id")
+  lastWindowEnd DateTime? @map("last_window_end") @db.DateTime(0)
+  /// 左叠条数（重跑兜边界，等价于拉单三板斧的「左叠 5 分钟」在 id 轴上的形态）
+  overlapCount  Int       @default(200) @map("overlap_count")
+  /// 上轮扫到但被 member 过滤的孤儿行数（对账用）
+  skippedRows   BigInt    @default(0) @map("skipped_rows")
+  lagRows       BigInt    @default(0) @map("lag_rows")
+  /// ACTIVE / PAUSED / BLOCKED（BLOCKED = 连续失败超阈值，禁继续镜像以免掩盖问题）
+  status        String    @default("ACTIVE") @db.VarChar(16)
+  lastRunAt     DateTime? @map("last_run_at") @db.DateTime(0)
+  lastSuccessAt DateTime? @map("last_success_at") @db.DateTime(0)
+  lastError     String?   @map("last_error") @db.VarChar(500)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
+
+  @@unique([sourceTable])
+  @@index([status, lastRunAt])
+  @@map("legacy_sync_watermarks")
+}
+
+/// 一分录 ↔ 多订单（取代 261 万行无唯一键的 relation_order_and_finance_order_cash_flow）
+model LedgerEntryOrder {
+  id        BigInt @id @default(autoincrement())
+  entryId   BigInt @map("entry_id")
+  orderId   Int    @map("order_id")
+  /// 采购侧金额在本单上的分摊值（旧表把 4 个金额塞一行，此处按需拆到单）
+  allocatedAmount Decimal? @map("allocated_amount") @db.Decimal(14, 2)
+  createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  @@unique([entryId, orderId])
+  @@index([orderId])
+  @@map("ledger_entry_orders")
 }
 
 // ============================================================================
@@ -642,7 +991,7 @@ model Order {
   purchaseShippingFee Decimal @default(0.00) @map("purchase_shipping_fee") @db.Decimal(14, 2)
   /// 验货金额 CNY（旧 inspection）
   inspectionFee Decimal @default(0.00) @map("inspection_fee") @db.Decimal(14, 2)
-  /// 下单时实扣金额快照（payOrder 服务端重算结果；正本在 finance.ledger_entry）
+  /// 下单时实扣金额快照（payOrder 服务端重算结果；正本在 finance.ledger_entries）
   chargedAmount   Decimal @default(0.00) @map("charged_amount") @db.Decimal(14, 2)
   chargedCurrency String  @default("CNY") @map("charged_currency") @db.VarChar(3)
   /// 服务费抵扣（旧 extend.deducted_service_fee 显式化）

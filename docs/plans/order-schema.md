@@ -23,7 +23,7 @@
 |---|---|---|
 | member | `dg_users` / `dg_address` | Order 只存 `memberId`，禁冗余 uname/memberid（见 §4.10） |
 | send-order | `dg_sendorder` + `v2_send_order_*` | 运单是**另一个聚合根**；Order 只存 `sendOrderId`（单向） |
-| finance | `dg_record` / `finance_order_cash_flow` / `dg_rechargerecord` | 余额正本在 `ledger_entry`；order 域的每一次扣费/返金都是 finance 事件 |
+| finance | `dg_record` / `finance_order_cash_flow` / `dg_rechargerecord` | 余额正本在 `ledger_entries`；order 域的每一次扣费/返金都是 finance 事件 |
 | WMS | `dg_stores` / `dg_shelf*` / `dg_order_split` 的库存扣减 | 库存 = `dg_order.goodsnum` 是旧系统硬伤；新系统库存台账归 WMS，order 只留 `dfStoreMode` 标记与拆分记录 |
 | logistics | `v2_logistic_domestic` | 到库物流记录；Order 经关系表关联（多对多） |
 | ticket | `v2_ticket` | 售后工单；经 `ticketable` 多态关联 Order（契约层禁暴露 `*_type`） |
@@ -79,7 +79,7 @@
 |---|---|
 | `dg_fapiao`（发票，446 万行） | 建议归 **send-order 域**（sid 维度）；order 域只在下单/改单时提供金额快照（Q3 待确认） |
 | `dg_stores` / `dg_shelf*` | 归 **WMS**（独立项目）；`oids/outoids` 逗号分隔字符串改关系表 |
-| `dg_record` / `finance_order_cash_flow` / `dg_rechargerecord` | 归 **finance**（`ledger_entry` + 对账批次） |
+| `dg_record` / `finance_order_cash_flow` / `dg_rechargerecord` | 归 **finance**（`ledger_entries` + 对账批次） |
 | `relation_order_and_finance_order_cash_flow`（261 万行） | 归 finance：ledger_entry 直接带 `orderId`，禁多对多中间表 |
 | `relation_order_and_operation_record`（2216 万行） | 归 admin 域操作日志；新系统日志表带 `orderId` 索引即可 |
 | `deprecated_dg_order_copy` 等 | ❌ 排除 |
@@ -280,7 +280,7 @@
 ### 4.3 服务端重算：每一次资金变动都是 ledger 事件
 
 - `payOrder()` 的 5% 服务费、`dffee`、`AMTLIMITFEE=1.05`、1.05 即时结算乘数 —— **全部从模型层硬编码搬到服务端计费服务**（入参：订单快照 + 会员身份；出参：金额 + 计费明细）
-- 新系统 order 域**不碰余额**：扣费/返金一律产生 finance 事件（`ledger_entry`），order 只落 `*_at` 状态与 `chargedAmount` 快照
+- 新系统 order 域**不碰余额**：扣费/返金一律产生 finance 事件（`ledger_entries`），order 只落 `*_at` 状态与 `chargedAmount` 快照
 - `deducted_service_fee`（extend 里的服务费抵扣）→ 显式列 `serviceFeeOffset`
 - 旧「即时返金 + 已邮寄返金」两段式口径保留为业务规则，但**每段各写一条 ledger**，禁在 order 上做加减
 

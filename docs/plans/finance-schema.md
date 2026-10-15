@@ -468,7 +468,7 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 
 > 规约依据：docs/07 §6.2（每表 `id/created_at/updated_at`、逻辑删除 `deleted`、禁外键、业务唯一键必建）；列名 snake_case 靠 `@map`。
 > 本域特例：`ledger_entries` 是 append-only，**故意不给 `updated_at` / `deleted`**（不可变性优先于规约统一），理由写进模型注释。
-> ⚠ 现有 `LedgerEntry` 占位模型（`schema.prisma:513-532`：DR/CR + `Decimal(12,4)` + 无 account + 无余额快照 + 无业务唯一键）**由本节整体替换**，不是增量补列。
+> ⚠ 现有 `LedgerEntry` 占位模型（DR/CR + 无 account + 无余额快照 + 无业务唯一键）**由本节整体替换**，不是增量补列。✅ 已替换（2026-10-15，落地见 §5.1）。
 
 ```prisma
 /// 账户行（余额正本挂载点）。本域唯一写入口 ledger.post() 的守卫对象
@@ -724,6 +724,21 @@ model LedgerEntryOrder {
 
 草案共 **9 个模型**。另有三张表的字段级留待实施时补：§4.13 的 `alert_channels` / `alert_rules`（钉钉机器人配置与规则表，替掉 `config/services.php` 里唯一一组硬编码），§6.2 的 `legacy_sync_watermarks`（镜像水位：源表 / `last_legacy_id` / `last_window_end` / 状态）。
 
+### 5.1 ★ 实施落地记录（2026-10-15，`schema.prisma` finance 段 = **12 模型**）
+
+上面 9 个模型 + 三张待补表已一并落地，DDL 增量脚本 `packages/db/sql/0015-finance-domain-up.sql`（`prisma migrate diff` 生成，12 表、`decimal(14,2)`×18、`decimal(12,8)`×5、13 个 UNIQUE）。**与草案的 6 处 delta**（都是实施时必须定的口径，回写本节以免后来人以为草案即成品）：
+
+| # | 草案 | 落地 | 理由 |
+|---|---|---|---|
+| 1 | `LedgerEntry.currency` 无默认 | `@default("CNY")` | Q1 定版后所有面值列一律带 CNY 默认（与 `member.balanceCurrency`、`orders.chargedCurrency` 同构），禁「插入时忘了带币种」 |
+| 2 | `RechargeOrder.deleted Boolean` | `deletedAt DateTime?` | 前三域 49 模型的既有惯例是 `deleted_at`（NULL = 未删，全仓 `deleted Boolean` 出现 0 次），本域不新开第二种软删形态；`docs/07 §6.2` 的措辞已同步订正 |
+| 3 | 草案未列 `bizNos` | `LedgerEntry.bizNos Json?` | §6.4 要求「剥标签后 URL 进 bizNos」，草案漏了这个落点列 |
+| 4 | 草案 `@@index` 缺 `recharge_order_id` | 补 | `recharge_orders.ledger_entry_id` 只给单向，按单查分录需要反向索引 |
+| 5 | `Account` 唯一键 | 保持 `@@unique(kind, memberId)`，⚠ 非会员账户不受约束 | MySQL 唯一索引里 **NULL 互不相等** → COMPANY/PURCHASE 这类 `memberId IS NULL` 的账户可以插多条「同 kind」。收口方式（sentinel 0 / `(kind,currency)` 唯一 / 应用层单写者）需拍板 → 登记 TODO **#11c**，本轮不擅自改语义 |
+| 6 | 三张待补表只有名字 | 字段级设计已完成 | `alert_channels`（`credential_ref` **只存凭证入口引用，禁明文 webhook/secret 入库**，docs/07 §5.5）、`alert_rules`（`@@unique(code, channelId)` 支持「一个 code 两个出口」）、`legacy_sync_watermarks`（`@@unique(source_table)` + `last_legacy_id` 按 rid 单调 + `overlap_count` 左叠 200） |
+
+占位模型的处置：原 `LedgerEntry`（表名 `ledger_entry`，DR/CR + `Decimal` 无账户 + 无余额快照 + 无业务唯一键）已整体替换，**`0001-member-domain-up.sql` 重生成后不再含它**（16 表）。生产从未建过占位表；演练库若残留，手工 `DROP TABLE ledger_entry` 即可。
+
 草案外待定：`dg_payid` 归 member 还是本域 `AccountGroup`（§八 Q5）；`finance_order_cash_flow.utype` 落 `LedgerEntry.memberKind` 还是留在 order 侧（§八 Q5）；`dg_record_old` 是否并入分录（§八 Q2 已定性「停写归档」，但并入与否是**业务可见性**问题——后台 `finance/user-bills-old` 路由还在给运营看，不并入就得保留旧表只读投影）。
 
 ## 六、过渡期共存策略（沿用 Q7：新表正本 + 同库事务双写）
@@ -757,7 +772,7 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 ### 6.4 回填与「不修数据」原则
 
 - 807 万行热表：按 rid 分片 + 短事务 + 短连接（同 order 域 `dg_order` 策略）；`uid` 孤儿行按 member 域铁律 `JOIN member` 过滤（本地切片实测 1,684 uid 中仅 676 在 `dg_users` 副本内，**生产孤儿率需复核**）。
-- 主键对齐：`ledger_entries.id = dg_record.rid`，`recharge_orders.id = dg_rechargerecord.rid`，`exchange_rates` 按 `dg_huilv` 时间序列重建。
+- 主键对齐：**`ledger_entries.id` 是新分配的，≠ `dg_record.rid`**（★ 2026-10-15 实施时订正本条：原写「= rid」与 §3.9/§4.12 的 rid 空间重叠结论自相矛盾）。对齐关系统一由 `(legacy_source, legacy_id)` 唯一键承载。单据表仍照铁律对齐：`recharge_orders.id == dg_rechargerecord.rid`；`exchange_rates` 按 `dg_huilv` 时间序列重建（`id` 新分配，旧 hid 记入 legacy 两列）。
 - ★ **链断不静默修复**：`balance_after = accountmoney`（原值），`balance_before = balance_after - signed_amount`（推导值）。推导结果与前一条不相等时，**保留原样并登记到 `reconciliation_diffs(reason_code='CHAIN_BROKEN')`**，作为上线前的「已知历史缺陷基线」，禁 UPDATE 旧库（红线 10）。
 - `action=0` 的 18,359 行自由文本按关键词粗分（实测可分出的有：`銀行振込, レート：`、`余额转移`、NULL、其它），无法归类的映射 `flow_type=LEGACY_UNCLASSIFIED` 并**计入期初调整科目**，不伪装成具名事件。
 - 旧 `remark` 含 HTML 的行（`action=1/4` 模板内嵌 `<a href>`）：迁 `label` 前**剥标签、只留文本与 URL**，URL 进 `bizNos`。
@@ -798,9 +813,9 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 
 1. ~~先解 Q1（币种口径）~~ ✅ **已拍板（2026-10-15）：账本面值 = CNY**；Q8 同步定版 **金额 `Decimal(14,2)` / 汇率 `Decimal(12,8)`** → 唯一阻塞项解除。★ **但必须先做 §4.14 的清扫（TODO #11b）再落 finance 段**：三域已落地的 61 处 `Decimal(12,2)`、`balanceCurrency default("JPY")`、6 处「JPY」注释不扫，新账本就建在错误口径之上。剩 Q13（WorldFirst 是否在产）不阻塞建表、只阻塞对账算法选型。
 2. ~~收口 `action` 词表与余额写入点清单~~ ✅ **已完成**（§3.9：词表全量 21 值 + 写入点 + `accountmoney` 成因 + 幂等实况；§4.7 冻结确证；§4.8 `change_type` 确证）→ 剩 Q7 三个残余值需生产复核。
-3. **生产只读通道复核清单**（本地是尾切片，datapro 可做）：① `SELECT action, COUNT(*) FROM dg_record GROUP BY action`（全量，验 Q7）；② `idempotency_key` 非 NULL 率（预期 0%）；③ `dg_record` 全量链断率（尾切片实测 7.3%，需知全量口径）；④ `dg_record_old` 时间跨度与是否仍在涨；⑤ `v2_worldfirst_*` 四表存在性与行数；⑥ `gateway_transaction_no` 非 NULL 率（区分 Stripe 是否上线）。
-4. 落 `schema.prisma` finance 段（§五 **9 模型** + 待补 3 表：`alert_channels`/`alert_rules`/`legacy_sync_watermarks`；**整体替换 `LedgerEntry` 占位模型**）→ `0014-finance-domain-up.sql`（增量 diff 生成，禁手改 DDL）。
-5. T1 回填脚本 `0015~0018`（源导入 / 分录主体 / 单据与汇率 / 校验）+ 本地演练。**本域新增断言类型**（前三域没有的）：
+3. **生产只读通道复核清单**（本地是尾切片，datapro 可做）：① `SELECT action, COUNT(*) FROM dg_record GROUP BY action`（全量，验 Q7）；② `idempotency_key` 非 NULL 率（预期 0%）；③ `dg_record` 全量链断率（尾切片实测 7.3%，需知全量口径）；④ `dg_record_old` 时间跨度与是否仍在涨；⑤ `v2_worldfirst_*` 四表存在性与行数；⑥ `gateway_transaction_no` 非 NULL 率（区分 Stripe 是否上线）；⑦ ★ **新表名重名核查**：`SELECT table_name FROM information_schema.tables WHERE table_schema='taotaro' AND table_name IN ('accounts','ledger_entries','recharge_orders','exchange_rates','reconciliation_batches','reconciliation_diffs','fee_rules','alert_events','alert_channels','alert_rules','legacy_sync_watermarks','ledger_entry_orders')`。**这 12 个名字没做过重名校核**——`docs/plans/00` 是按 6 个前缀（`dg_`/`v2_`/`admin_`/`sys_`/`deprecated_`/`relation_`）分组的盘点，而本域全部是**无前缀名**，盘点证明不了「不存在同名裸表」；前三域的新表都带 `member`/`order`/`send_order` 前缀，是从没踩到过这个问题，不是查过。
+4. ✅ **已落地（2026-10-15）**：`schema.prisma` finance 段 = **12 模型**（§五 9 个 + 待补 3 表字段级设计完成）+ 占位 `LedgerEntry` 整体替换 + 四份 DDL 重新基线生成 → **`0015-finance-domain-up.sql`**（12 表，增量 diff，禁手改）。⚠ 编号说明：原计划写 `0014-finance-domain-up.sql`，但 0014 已被 `0014-member-source-import.sql`（#3g④）占用 ⇒ 按「全局只增不复用」改为 0015。`0001` 重生成后 16 表（不再含占位 `ledger_entry`），`0002`/`0003` 重生成后**逐字节不变**（证明基线移动没引入漂移）。落地 delta 见 §5.1。
+5. **T1 回填脚本 `0016~0019`**（源导入 / 分录主体 / 单据与汇率 / 校验）+ 本地演练。**★ 前置：#3g 的复跑先跑绿**（新版 `0002`/`0003`/`0014` 还没执行过一次，别在未验证的基线上再叠一个域）。本域新增断言类型（前三域没有的）：
    - 链式不变式 `balance_after = balance_before + signed_amount` 逐环计数，期望「断链数 = 已知历史基线」而非 0（回填禁修数据，§6.4）；
    - 方向-符号一致性断言（新表内期望 0 违规）；
    - **派生恒等式断言**：并入采购流水时 `counterpart_amount − bargain_amount + freight_amount` 与分录金额配平（旧表实测 100% 成立，§4.8，是最便宜的正确性哨兵）；

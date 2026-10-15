@@ -31,5 +31,5 @@
 | `05-order-group-评审与拍板.md`（Q5 OrderGroup 显式化） | ✅ 完成（实测 99.58% 持值行在组内最大 oid；SUM 汇总口径无关，已拍板） | #10 |
 | `send-order-schema.md`（send-order 域 schema 设计） | 🔶 草案（6 实体映射 + 8 态状态机 + totalfee 五费统一公式）；**Q3 已拍板归本域**、七条未决问题收口、schema 6 模型 + 0003 DDL + 0010~0013 回填已落地（本地演练 18 断言 PASS） | #10 |
 | `06-send-order-评审与拍板.md`（Q3 发票归属 + Q1/Q2/Q5/Q6/Q7/Q10 收口） | ✅ 完成（本地实测：sid 是关联枢纽、子运单独立计费、sn 是 # 多单号最长 363） | #10 |
-| `finance-schema.md`（finance 域 schema 设计） | 🔶 草案（4 表列级精读 + `action` 全量词表逆向 + 账本链断实测 7.3%/55% + 14 建模决策 + 9 模型草案 + Q1~Q14）；**Q1 已拍板 = CNY**、**Q8 已拍板 = `Decimal(14,2)`/汇率 `(12,8)`** → 下一步做 §4.14 清扫（#11b）再落 schema | #11、#11b、#3b、#11a |
+| `finance-schema.md`（finance 域 schema 设计） | 🔶 底稿 + **schema 已落地**（4 表列级精读 + `action` 全量词表逆向 + 账本链断实测 7.3%/55% + 14 建模决策 + Q1~Q14）；**Q1 = CNY**、**Q8 = 金额 `Decimal(14,2)`/汇率 `(12,8)`** 已拍板；✅ #11b 清扫完成、✅ **12 模型落 `schema.prisma`**（占位 `LedgerEntry` 整体替换，delta 回写 §5.1）+ `0015-finance-domain-up.sql`；→ 剩 `0016~0019` 回填（前置 #3g 复跑）、新表名重名核查（#11c）、contract + `ledger.post()` + 对账 Job | #11、#11b、#11c、#3b、#11a |
 | （supplier / cms / ticket 域） | ⏳ 待产出 | #12 |

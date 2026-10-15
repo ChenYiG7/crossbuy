@@ -67,7 +67,7 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架 |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架 |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 三域新表正本（member+order+send-order **49 模型**，金额 `Decimal(14,2)`/面值 CNY，#11b 已定版并重生成 DDL）+ T0/T1 脚本；⚠ **#3g 硬化后（映射升实体表、`0003` 21 项实时期望、新增 `0014`）尚未复跑**——四步判定见 `packages/db/sql/README.md`，跑绿前 #3d 不可交 DBA；finance 段待建（`docs/plans/finance-schema.md`） |
+| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 四域新表正本（member+finance+order+send-order **60 模型**，金额 `Decimal(14,2)`/面值 CNY）：#11b 定版 + finance 段 12 表已落地（`0015-finance-domain-up.sql`）；⚠ **#3g 硬化后（映射升实体表、`0003` 21 项实时期望、新增 `0014`）尚未复跑**，四步判定见 `packages/db/sql/README.md`；⚠ finance 12 张是首批**无前缀**表名，T0 前须重名核查（TODO #11c）；跑绿前 #3d 不可交 DBA |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
 | `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |

@@ -12,7 +12,7 @@
 **member 域负责**：会员身份、认证、地址、平台账号绑定、收藏/浏览、权益、开放 API 的会员侧（webhook 配置 + 幂等键）、会员操作审计。
 
 **member 域不负责**（跨域，通过 contract 调用，禁直接建库关联）：
-- 余额的**记账**（归 finance：`ledger_entry`）——member 只持有余额**冗余列**
+- 余额的**记账**（归 finance：`ledger_entries`）——member 只持有余额**冗余列**
 - 平台订单/店铺（归 order：`v2_ecommerce_shop` 是 order 域的 `Shop`）
 - 采买子账号的**用**（`v2_platform_sub_account` 供 order 下单使用；member 域只做「账号池」的增删改查）
 

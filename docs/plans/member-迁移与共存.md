@@ -133,7 +133,7 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 ## 八、待办
 
 - [x] 拍板 Q3（余额 JPY + `Decimal(12,2)`；**2026-10-15 改判为 CNY + `Decimal(14,2)`**，理由见 `finance-schema.md` §3.3/Q1）、Q4（用户名 UNIQUE，前置查重）
-- [x] 写迁移 SQL：建 `member_*` 表（T0）→ `packages/db/sql/0001-member-domain-up.sql`（由 schema.prisma 生成，17 表）
+- [x] 写迁移 SQL：建 `member_*` 表（T0）→ `packages/db/sql/0001-member-domain-up.sql`（由 schema.prisma 生成，**16 表**；2026-10-15 finance 段落地后，原占位表 `ledger_entry` 已移出本段，见 `finance-schema.md` §5.1）
 - [x] 写 Q4 前置核查 SQL → `packages/db/sql/precheck-username-duplicate.sql`
 - [x] 执行 Q4 查重（旧库只读）→ 8 组 / 16 账号；业务已拍板消歧 → `docs/plans/02-用户名重名处置.md`
 - [x] 补 `0001a-member-username-collation.sql`（username 定 `utf8mb4_general_ci`）

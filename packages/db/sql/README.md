@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | — | `precheck-username-duplicate.sql` | `dg_users.uname` 重名核查 | 只读 | 前置 |
 | — | `disambiguate-username-proposal.sql` | 重名账号「保留/改名」建议 | 只读 | 前置 |
-| ① | `0001-member-domain-up.sql` | 建 17 张新表（**由 schema.prisma 生成，勿手改**） | 建表 | T0 |
+| ① | `0001-member-domain-up.sql` | 建 **16** 张 member 新表（**由 schema.prisma 生成，勿手改**；原占位表 `ledger_entry` 已移出本段，见 ⑲） | 建表 | T0 |
 | ② | `0001a-member-username-collation.sql` | 把 `member.username` 排序规则定为 `utf8mb4_general_ci`（**手工 SQL**） | ALTER | T0 |
 | ③ | `0002-member-backfill-t1.sql` | 建消歧映射表 `_t1_username_fix`/`_t1_username_merge` + **重名 fail-fast 守卫** + 回填 member 域**核心三表**（`member_address` 已加 `JOIN member` 过滤孤儿）+ 顶 AUTO_INCREMENT（幂等） | 写新表 | T1 |
 | ④ | `0003-member-backfill-verify.sql` | 21 项断言（**期望值全部按当前源 + 映射表实时计算**，禁写死生产快照数字） | 只读 | T1 |
@@ -26,11 +26,15 @@
 | ⑯ | `0012-send-order-backfill-t1-part2.sql` | 回填侧表：`send_order_value_added_services` / `invoices`（29,238）+ labels/invoice_events（本地无源表 PREPARE 跳过） | 写新表 | T1 |
 | ⑰ | `0013-send-order-backfill-verify.sql` | 18 项断言（sid 对齐/五费总额/保险独立/砍价/返金/sn 长度/发票/fid/悬空/状态分布/计费重/同捆/totalfee 禁回填） | 只读 | T1 |
 | ⑱ | `0014-member-source-import.sql` | **本地演练专用**：导入 member 域 15 张旧源表（`dg_users`/`dg_address` + 13 张侧表源）到 `crossbuy_dryrun`，含 `biz_code` 补列守卫与行数自检 | 写旧表副本 | 演练 |
+| ⑲ | `0015-finance-domain-up.sql` | 建 **12 张 finance 域新表**（accounts / ledger_entries / recharge_orders / exchange_rates / reconciliation_batches / reconciliation_diffs / fee_rules / alert_events / alert_channels / alert_rules / legacy_sync_watermarks / ledger_entry_orders；schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
 
 > ✅ 全流程已在**本地 MySQL 9.7.2** 用「生产 DDL + 无 PII 合成样本」演练通过（member 核心三表 15/15 PASS；侧表 25 项全 PASS；3 遍幂等；回退验证 OK），见 `docs/plans/03-T1本地演练报告.md`。
 > ⚠ **#3g 硬化（2026-10-15）改动了 `0002`/`0003`/`0006` 并新增 `0014`，上述「15/15」是改造前的计数**；新版 `0003` 为 21 项断言（组 A 7 + 组 B 14），改造后的 T1 复跑**尚未执行**（本机 MySQL 需口令，见 TODO #3g 验证清单）。
 >
-> ⚠️ **生产写权限阻塞**：生产账号 `datapro` 仅有 `SELECT, INDEX, LOCK TABLES, SHOW VIEW`（`taotaro.*`），**无 CREATE/INSERT/ALTER/DROP**。①~⑤ 需由 DBA 用具备 DDL/DML 的账号执行。
+> ⚠️ **生产写权限阻塞**：生产账号 `datapro` 仅有 `SELECT, INDEX, LOCK TABLES, SHOW VIEW`（`taotaro.*`），**无 CREATE/INSERT/ALTER/DROP**。
+> **T0 建表全链**（DBA 执行，顺序即表号序）：① `0001-member` → ② `0001a` → ⑲ `0015-finance` → ⑦ `0002-order` → ⑧ `0002a` → ⑬ `0003-send-order`（共 60 表）。
+> **T1 回填**：③④⑤⑥（member）→ ⑩⑪⑫（order）→ ⑮⑯⑰（send-order）；finance 段回填 `0016~0019` **尚未编写**。
+> ⚠ ⑲ 落库前先跑 `finance-schema.md` §九-⑦ 的**新表名重名核查**（finance 是首批无前缀表名，未核过）。
 
 ## 第二批侧表回填要点（⑤ `0004`）
 
@@ -42,20 +46,37 @@
 
 实测回填量（源 → 目标）：`benefit_config` 2→2 · `member_benefit` 718→715 · `member_operation_log` 3086→3018 · `personal_access_token` 106368→105808 · `oauth_login` 1→0 · `oauth_taobao_global` 1→1 · `favorite` 183753→183513 · `favorite_category` 20→20 · `browse_history` 210051→206662 · `area` 1940→1940 · `member_webhook`/`delivery`/`open_api_idempotency` 0→0。
 
-## 0001 的来源与再生成
+## 四段 DDL 的再生成（2026-10-15 基线行号，finance 段插入后已变更）
 
-`0001-member-domain-up.sql` 从**正本** `prisma/schema.prisma` 生成，保证零漂移：
+四份建表脚本都从**正本** `prisma/schema.prisma` 增量 diff 生成，保证零漂移。⚠ **`--to-schema-datamodel` 不能直接指整份 schema**——那会一次生成 60 张表；必须按域截基线（截点 = 上一段最后一个 `}` 之后的空行）：
+
+| 段 | 文件 | from | to | 表数 |
+|---|---|---|---|---|
+| member | `0001-member-domain-up.sql` | `--from-empty` | `head -508` | **16**（★ 原占位表 `ledger_entry` 已移出，见下） |
+| finance | `0015-finance-domain-up.sql` | `head -508` | `head -884` | 12 |
+| order | `0002-order-domain-up.sql` | `head -884` | `head -1763` | 26 |
+| send-order | `0003-send-order-domain-up.sql` | `head -1763` | 整份 `prisma/schema.prisma` | 6 |
 
 ```bash
 cd packages/db
-DATABASE_URL="mysql://u:p@localhost:3306/db" \
-  ../../node_modules/.bin/prisma migrate diff \
-  --from-empty --to-schema-datamodel prisma/schema.prisma --script \
-  > sql/0001-member-domain-up.sql
+export DATABASE_URL="mysql://u:p@localhost:3306/db"   # 两侧都是 datamodel，不会真连库
+head -508  prisma/schema.prisma > /tmp/b1.prisma      # member
+head -884  prisma/schema.prisma > /tmp/b2.prisma      # +finance
+head -1763 prisma/schema.prisma > /tmp/b3.prisma      # +order
+P=node_modules/.bin/prisma
+$P migrate diff --from-empty --to-schema-datamodel /tmp/b1.prisma --script > sql/0001-member-domain-up.sql
+$P migrate diff --from-schema-datamodel /tmp/b1.prisma --to-schema-datamodel /tmp/b2.prisma --script > sql/0015-finance-domain-up.sql
+$P migrate diff --from-schema-datamodel /tmp/b2.prisma --to-schema-datamodel /tmp/b3.prisma --script > sql/0002-order-domain-up.sql
+$P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel prisma/schema.prisma --script > sql/0003-send-order-domain-up.sql
 ```
 
-> ⚠️ **改 schema 后必须重新生成**，禁手改本文件。正本是 schema.prisma。
-> `0001a` 是**例外**：Prisma 不支持列级 collation，故为手工 SQL，不属于「手改生成的 DDL」。
+> ⚠️ **改 schema 后必须重新生成**，禁手改这些文件。行号会随段落移动而失效——**每次重生成前先 `grep -n '^// \(member\|finance\|order\|send-order\) 域' prisma/schema.prisma` 重新取截点**，并核对 `grep -c 'CREATE TABLE'` 与表数一致（本轮实测 16/12/26/6 = 60）。
+> ✅ 2026-10-15 实测：插入 finance 段并重基线后，`0002-order`/`0003-send-order` 两份 DDL **逐字节不变**（`git diff` 为空）——这是「基线移动不引入漂移」的判据。
+> `0001a` / `0002a` 是**例外**：Prisma 不支持列级 collation，故为手工 SQL，不属于「手改生成的 DDL」。finance 段无列级 collation 需求 → 无 0015a。
+>
+> **占位表 `ledger_entry` 的处置**：member 段原有的 `LedgerEntry` 占位模型已被 finance 段的 `ledger_entries` 整体取代，重生成后 `0001` 不再包含它（15 行 diff 全为删除）。**生产从未建过占位表**；演练库若残留，手工 `DROP TABLE ledger_entry`。生成脚本里没有 DROP，别指望它自愈。
+>
+> ⚠ **finance 段写回填脚本时的 collation 预告**：本域表沿用表级默认 `utf8mb4_unicode_ci`，而旧源列多是 `utf8mb3_general_ci`（`dg_record.remark`/`sn`/`payname`）。凡与旧表 JOIN 或比较字符串，**必须先 `CAST(... AS CHAR CHARACTER SET utf8mb4) COLLATE <目标列 collation>`**，否则 ERROR 1267（order 域 `_t1_valid_order.tid` 已经踩过一次，见「order 域回填要点」第 3 条）。本域字符串列都是 ASCII 词表/单号，**没有** `member.username` 那种「必须与旧库折叠语义一致」的业务需求，故无 0015a；别照搬 0001a 去改 collation。
 
 ## order 域回填要点（⑩ `0007` / ⑪ `0008`）
 
@@ -69,19 +90,9 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 
 ## order 域 0002 DDL 的再生成
 
-`0002-order-domain-up.sql` 是**增量** diff（只含 order 段，不动 member 表）：
+见上文「四段 DDL 的再生成」：`from = head -884`（member+finance）、`to = head -1763`，26 表。
 
-```bash
-cd packages/db
-git show HEAD:packages/db/prisma/schema.prisma > /tmp/schema-before.prisma   # 改前版本
-DATABASE_URL="mysql://u:p@localhost:3306/db" \
-  node_modules/.bin/prisma migrate diff \
-  --from-schema-datamodel /tmp/schema-before.prisma \
-  --to-schema-datamodel prisma/schema.prisma --script \
-  > sql/0002-order-domain-up.sql
-```
-
-> ⚠️ 改 schema 后必须重新生成，禁手改。`0002a` 同 `0001a` 是例外（列级 collation 只能 raw SQL）。
+> ⚠ 旧版这里写的是 `git show HEAD:prisma/schema.prisma` 作 from——**「插入新段」的场景下它会连新段一起算进 diff**，故改用截行基线。`0002a` 同 `0001a` 是例外（tid 家族列级 collation 只能 raw SQL）。
 
 ## send-order 域回填要点（⑮ `0011` / ⑯ `0012`）
 
@@ -96,19 +107,7 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 
 ## 0003 DDL 的再生成
 
-`0003-send-order-domain-up.sql` 是**增量** diff（只含 send-order 段，不动既有表——`orders.send_order_id` 已在 0002 预留，diff 无 ALTER）：
-
-```bash
-cd packages/db
-head -<send-order 段起始行-1> prisma/schema.prisma > /tmp/schema-before.prisma  # 截掉新段作基准
-DATABASE_URL="mysql://u:p@localhost:3306/db" \
-  node_modules/.bin/prisma migrate diff \
-  --from-schema-datamodel /tmp/schema-before.prisma \
-  --to-schema-datamodel prisma/schema.prisma --script \
-  > sql/0003-send-order-domain-up.sql
-```
-
-> ⚠️ 改 schema 后必须重新生成，禁手改。send-order 段无列级 collation 需求（tid 家族不在本域），故无 0003a。
+见上文「四段 DDL 的再生成」：`from = head -1763`（member+finance+order）、`to = 整份 schema`，6 表。`orders.send_order_id` 已在 0002 预留，故 diff 无 ALTER；send-order 段无列级 collation 需求（tid 家族不在本域），故无 0003a。
 
 ## 历史表幂等坑（0007/0011 通用，2026-10-15 修正）
 
@@ -168,7 +167,8 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 
 ## 执行注意
 
-1. **只对新表**：DDL 只建 `member*`、`favorite*`、`oauth_*`、`open_api_idempotency`、`browse_history`、`benefit*`、`area`、`ledger_entry`——全部新表名，**与旧库 174 张无重名**（已核查）。
+1. **只对新表**：DDL 只建 `member*`、`favorite*`、`oauth_*`、`open_api_idempotency`、`browse_history`、`benefit*`、`area`，以及 finance 段的 `accounts`/`ledger_entries`/`ledger_entry_orders`/`recharge_orders`/`exchange_rates`/`reconciliation_*`/`fee_rules`/`alert_*`/`legacy_sync_watermarks`——**与旧库 174 张无重名**（member/order/send-order 三域已核查）。
+   ⚠ **finance 这 12 张是本项目首批「无前缀」表名**，还没核过名：`docs/plans/00` 的盘点按 `dg_`/`v2_`/`admin_`/`sys_`/`deprecated_`/`relation_` 六个前缀分组，证明不了「不存在同名裸表」（前三域带域前缀，天然不会撞）。⇒ T0 落库前必须先跑 `finance-schema.md` §九-⑦ 的 `information_schema` 核查，命中即改名（`accounts` 风险最高）。
 2. **不改旧表**：对 `dg_users`/`dg_address`/`v2_*` **不做任何变更**。
 3. **collation 必须先定（②）**：否则 `member.username` 会继承表级默认 `utf8mb4_unicode_ci`，重名口径从 8 组变 **24 组**，回填会失败（多出的 16 组含**不同人**）。详见 `docs/plans/03` §五。
 4. **AUTO_INCREMENT 需顶高**（已内置于 ③）：回填后设为 `max(uid)+1`，否则新记录撞旧 id。注意 MySQL **不允许** `ALTER TABLE ... AUTO_INCREMENT = (子查询)`，脚本用 `PREPARE` 绕过。

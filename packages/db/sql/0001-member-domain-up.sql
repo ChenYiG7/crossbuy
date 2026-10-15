@@ -343,18 +343,3 @@ CREATE TABLE `area` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
--- CreateTable
-CREATE TABLE `ledger_entry` (
-    `id` BIGINT NOT NULL AUTO_INCREMENT,
-    `direction` VARCHAR(2) NOT NULL,
-    `amount` DECIMAL(14, 2) NOT NULL,
-    `currency` VARCHAR(8) NOT NULL,
-    `biz_no` VARCHAR(64) NULL,
-    `flow_type` VARCHAR(32) NOT NULL,
-    `ref_id` VARCHAR(64) NULL,
-    `created_at` DATETIME(0) NOT NULL DEFAULT CURRENT_TIMESTAMP(0),
-
-    INDEX `ledger_entry_biz_no_idx`(`biz_no`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-

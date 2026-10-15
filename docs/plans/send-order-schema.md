@@ -22,7 +22,7 @@
 |---|---|---|
 | order | `dg_order` | 订单行；**关系只存 `orders.sendOrderId` 一侧**（order-schema.md §4.5 已定），禁 `dg_sendorder.oids` 双写 |
 | member | `dg_users` / `dg_address` | SendOrder 只存 `memberId`；收件人信息是运单**快照**（历史事实，保留） |
-| finance | `dg_record` / `dg_rechargerecord` | 扣费/返金一律 finance 事件（`ledger_entry`）；send-order 只落状态与金额快照 |
+| finance | `dg_record` / `dg_rechargerecord` | 扣费/返金一律 finance 事件（`ledger_entries`）；send-order 只落状态与金额快照 |
 | logistics | `dg_airbill`（10 万行） | 航空运单轨迹；SendOrder 经 `airbills` 反查（`sendid`），归 logistics 域 |
 | WMS | `dg_shelves` / `dg_stores` | 货架/仓储；已邮寄时 `sid=0` 释放货架是 WMS 动作 |
 | email | `dg_mail` / `EmailTaskRecord` | 已邮寄通知邮件（`MAIL_TYPE_DF_SENDORDER_SHIPPED`） |
@@ -234,7 +234,7 @@ totalfee = 国际运费(freight) + 增值费(serverfee) + 报关费(customsfee) 
 - 新系统 `send_orders` **不存 totalfee 快照列**（或只存 `chargedTotalFee` 审计列，禁作业务读值）——所有业务读值走服务端 `calculateTotalFee()`（公式内嵌在计费服务，费率配置化归 finance 域，Q7 order 域同款）
 - 公式：`freight + serverfee + customsfee + remotefee + domesticShippingFee`（domestic 兜底规则原样保留：运单 sendprice>0 用之，否则 Σ 订单 sendprice>0 排除无效态排除转运）
 - `Insurancefee` 独立列（**禁并入 totalfee**——FinanceStatistic 单独相加的口径保留为对账规则）
-- 扣费/返金一律 finance 事件（`ledger_entry`），send-order 只落 `chargedAt` 与金额快照
+- 扣费/返金一律 finance 事件（`ledger_entries`），send-order 只落 `chargedAt` 与金额快照
 - 发票场景的例外口径（sendprice 取发票子项汇总）作为**显式方法参数**保留，禁隐式分叉
 
 ### 4.4 状态机 cas + 显式迁移表 + 状态历史
