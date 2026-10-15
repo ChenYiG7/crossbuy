@@ -37,6 +37,48 @@ CREATE TEMPORARY TABLE _merge (uid INT PRIMARY KEY, target_uid INT NOT NULL);
 INSERT INTO _merge (uid, target_uid) VALUES (15274, 15272);
 
 -- ---------------------------------------------------------------------------
+-- 1b. ★ fail-fast 守卫（2026-10-15 本地演练发现的真缺陷，必须先于 §2 执行）
+--   症状：§2 用 INSERT..ON DUPLICATE KEY UPDATE，而 member.username 是 UNIQUE。
+--         未进 _fix 的重名对，第二行的 username 撞车后**不会新插一行**，而是走 ODKU
+--         把**前一个账号那一行整行覆盖**（`balance = u.money` 取的是后一个账号的钱）。
+--         username 撞车恰恰意味着「这是两个不同实体」，ODKU 却按「同一实体重复投递」处理。
+--   本地实测（taotaro 副本 7 组重名 vs _fix 只覆盖生产 8 组中的 2 组）：
+--         5 个账号被吞（member 5,016 vs 源 5,021）、2 个余额被清零
+--         （uid 6932 的 100.18 → 0.00、uid 18213 的 19.96 → 0.00），**全程零报错**。
+--   ⇒ 生产风险：Q4 预检（2026-10-13）之后只要有人新注册出重名，T1 就会静默丢账号 + 改余额。
+--   规则：**T1 执行前必须重跑 precheck-username-duplicate.sql**，把新出现的重名组补进 _fix，
+--         否则本守卫直接中止，绝不让脚本「看起来成功了」。
+-- ---------------------------------------------------------------------------
+--   ★ 碰撞必须按**目标列 member.username 的 collation**（utf8mb4_general_ci，见 0001a）判定，
+--     不能按源列的：源 `dg_users.uname` 是 utf8mb3_general_ci，它会折叠平假名/片假名，
+--     而 utf8mb4_general_ci 不折叠（实测 'なおたろう' = 'ナオタロウ'：mb3/unicode 为 1，mb4_general 为 0）。
+--     按源 collation 判会**误中止**（本快照两组假名/片假名账号在目标索引下其实不冲突）。
+DROP PROCEDURE IF EXISTS _guard_username_disambiguated;
+DELIMITER $$
+CREATE PROCEDURE _guard_username_disambiguated()
+BEGIN
+  DECLARE bad INT DEFAULT 0;
+  SELECT COUNT(*) INTO bad FROM (
+    SELECT CAST(COALESCE(f.new_username, NULLIF(TRIM(u.uname), ''), CONCAT('user_', u.uid))
+                 AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci AS target_username
+    FROM dg_users u
+    LEFT JOIN _fix f ON f.uid = u.uid
+    GROUP BY target_username
+    HAVING COUNT(*) > 1
+  ) dup;
+  IF bad > 0 THEN
+    SET @guard_msg = CONCAT(
+      'T1 ABORT: ', bad,
+      ' duplicate target username(s) remain after _fix. Re-run precheck-username-duplicate.sql ',
+      'against the CURRENT source snapshot and extend _fix before backfilling.');
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = @guard_msg;
+  END IF;
+END$$
+DELIMITER ;
+CALL _guard_username_disambiguated();
+DROP PROCEDURE _guard_username_disambiguated;
+
+-- ---------------------------------------------------------------------------
 -- 2. member ← dg_users
 --    时间：·INT unix 秒 → DATETIME，用 FROM_UNIXTIME(NULLIF(...,0))，
 --          空/0 回落 '1970-01-01 00:00:01'（created_at 为 NOT NULL）

@@ -144,6 +144,14 @@ DATABASE_URL="mysql://u:p@localhost:3306/db" \
 1. ⚠ **member 域旧源表没有导入脚本**：前几轮演练是在 `crossbuy_dryrun` 里**手工**建旧表副本（这也是该库 `dg_users` 比 `taotaro` 多一列 `biz_code` 的来源——`0002` 会读它）。库一旦重建就得先有这份脚本，否则 ③⑤ 无法起跑。→ 待补 `drill-member-source-import.sql`（本地演练专用，命名对齐已有的 `0006`/`0010` 与 `precheck-*.sql` 惯例）。
 2. ⚠ **`0006` 假定目标库里已有 `dg_users`**（它 `TRUNCATE` 后灌数据，不建表）→ 新库需先建 `dg_users` 再跑 ⑨，或把它改成 `CREATE TABLE IF NOT EXISTS ... LIKE taotaro.dg_users`。
 
+## 2026-10-15 定版后复跑（Q1 CNY + Q8 14,2）：全链绿，并加了一道 fail-fast
+
+- 复跑范围：重建 49 张派生表 → `0006`/`0010` 刷新源 → `0002`/`0004`（member）→ `0007`/`0008`（order）→ `0011`/`0012`（send-order）→ 四份 verify → **第二遍计数与金额完全不变**。金额证据：Σ`member.balance` = Σ`dg_users.money` = 115,263,758.22；Σ`order_groups.bargain_amount` = 364,598.62；五费 3,050,486.56；历史表行数 = 实体数（无翻倍）。详见 `docs/plans/03-T1本地演练报告.md` §九。
+- ★★ **`0002` 新增守卫 `_guard_username_disambiguated`（必留在 §2 之前）**：未进 `_fix` 的重名对会让 `INSERT..ODKU` **把后一个账号的整行盖到前一个账号身上**（本地实测吞掉 5 个账号、清零 2 个余额，零报错）。守卫按**目标列 collation**（`utf8mb4_general_ci`）判碰撞后 `SIGNAL` 中止。⇒ **T1 前必须重跑 `precheck-username-duplicate.sql` 补 `_fix`**；不补就是中止而不是「假成功」。
+- ⚠ collation 新坑：源 `dg_users.uname` 是 `utf8mb3_general_ci`（**折叠平假名/片假名**），目标 `member.username` 是 `utf8mb4_general_ci`（**不折叠**）→ 唯一性判断/守卫/断言一律 `CAST(... AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_general_ci`，按源 collation 判会误中止。
+- ⚠ 两个已知待办（TODO **#3g**）：① `0003` 的 A1/A3/B6/B7 把**生产快照的具体数字写死成期望值**，换快照必失配 → 应改为按当前源实时计算；② `member_address` 回填**没有 JOIN member 过滤孤儿**（本地 B12 悬空 2 行即 mock 残留），生产会产生悬空行并让 Prisma `include` 报错。
+- ⚠ 空库起跑顺序：源表要先落地。`0006` 只 `TRUNCATE dg_users` **不建表**；member 域旧源表目前**没有导入脚本**（前几轮手工建副本）→ 补 `drill-member-source-import.sql`。
+
 ## 执行注意
 
 1. **只对新表**：DDL 只建 `member*`、`favorite*`、`oauth_*`、`open_api_idempotency`、`browse_history`、`benefit*`、`area`、`ledger_entry`——全部新表名，**与旧库 174 张无重名**（已核查）。

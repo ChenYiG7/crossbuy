@@ -458,7 +458,7 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 | 计划书订正 | `member-schema.md` §3.1/§六/§七（含「日本市场主币 JPY」的错误推断段落重写）、`member-迁移与共存.md:65/133`、`order-schema.md` §4.2 全段 + §五 4 处注释 + `chargedCurrency` 默认值、`send-order-schema.md` 金额组 6 条 + 7 处注释 |
 | DDL 重生成 | 按段基线截断法重建：`head -535`（member+finance 占位）/ `head -1413`（+order）→ 三次 `prisma migrate diff` 生成 `0001`(17 表) / `0002`(26 表) / `0003`(6 表)，**表数与结构同先前一致**，只有精度与默认值变化 |
 | **静态验证** | 新建空库 `crossbuy_ddlcheck` 跑完整链 `0001 → 0001a → 0002 → 0002a → 0003`：**49 表建成**；`decimal(14,2)` 65 处 / `decimal(12,8)` 1 处 / `decimal(10,2)` 3 处（即上面有意保留的非金额列）；`member.balance_currency` 与 `orders.charged_currency` 默认值实测 `CNY`；`member.username` + 4 个 `tid` 列 `utf8mb4_general_ci` 未被重生成冲掉。`pnpm db:generate` ✓、`pnpm typecheck` 16/16 ✓、`pnpm test`（contract smoke）15/15 ✓。校验后已 drop 该临时库 |
-| ⚠ **仍欠** | **T1 回填全链的复跑**（本机 FlyEnv MySQL 现已停机，连接失败——`crossbuy_dryrun` 的实际存况待库起来后确认）。库起来后要补两个真实缺口：① **member 域旧源表没有导入脚本**——前几轮是手工建副本（这就是它比 `taotaro` 多一列 `biz_code` 的原因，而 `0002` 会读该列），需补 `drill-member-source-import.sql`；② **`0006` 假定目标库已有 `dg_users`**（只 `TRUNCATE` 不建表）。细节见 `packages/db/sql/README.md` |
+| ✅ **复跑已完成**（2026-10-15） | `crossbuy_dryrun` 重建 49 张派生表 → `0006`/`0010` 刷源 → 三段回填 → 四份 verify → **第二遍计数与金额不变**：Σbalance = Σ`dg_users.money` = 115,263,758.22、砍价 364,598.62、五费 3,050,486.56、历史表行数=实体数、非 CNY 行 0。★ **复跑的最大收获不是「绿」，而是挖出一个 `INSERT..ODKU` 静默吞账号 + 清余额的缺陷**（5 个账号、2 笔余额），已加 fail-fast 守卫——证据与结论见 `03-T1本地演练报告.md` §九 | 对本域的警示：`@@unique([accountId, idempotencyKey])` 的 ODKU 只在「同一实体重复投递」时才是对的；凡是**业务键可能属于不同实体**的 UNIQUE（如 username），撞键必须中止而不是 upsert 覆盖 |
 
 ★ **时机窗口**：`0001/0002/0003` 三份 DDL 都还**没落生产**（#3d 等 DBA 写权限）→ 现在改只需 `prisma migrate diff` 重生成 + 本地演练重跑；一旦生产建表，同样的改动就是 ALTER + 三域回填重跑。清扫必须**赶在 T0 落库前**。
 
