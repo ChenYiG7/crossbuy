@@ -4,21 +4,24 @@
 
 ## 信息源优先级（冲突时按此裁决）
 
-`本文件 > docs/07 开发规范守则 > TODO.md > docs/01~06 > packages/*/源码注释 > 代码`
+`本文件 > docs/04 重写架构方案（2026-10-16 起总纲） > docs/07 开发规范守则 > TODO.md > docs/01~03、06 > packages/*/源码注释 > 代码`
 
 ## 必读区（做某类事前必读）
 
 | 要做的事 | 先读 |
 |---|---|
 | 接手任何任务 | 本文件 + `TODO.md`（红线与坑） |
+| 规划整体架构 / 分期 / 迁移与数据策略 | **`docs/04-重写架构方案.md`（现行总纲，03/06 与其冲突处以 04 为准）** |
 | 写任何代码 | `docs/07-开发规范守则.md`（唯一写入口/幂等/金额/状态机/防腐层） |
-| 设计表结构 | `docs/07` §schema 规约 + `packages/db/prisma/schema.prisma` |
+| 设计表结构 | `docs/07` §schema 规约 + `packages/db/prisma/redesign/schema.prisma`（R2 新表正本）；R1 复现期旧表结构看 `packages/db/prisma/schema.prisma`（introspect 产物） |
 | 参考旧系统业务 | `docs/00-原项目参考指南.md`（旧系统在哪、怎么读、雷区） |
-| 规划一个域 | `docs/06-开发计划.md`（分阶段路线） |
+| 规划一个域 / 排里程碑 | `docs/06-开发计划.md`（R1 执行版：M0~M5 + 域绞杀 DoD + 常设纪律 + prompts） |
 
 ## 项目是什么
 
 面向**日本市场**的**中国商品代购平台**（`yiwutaro.com`）的全栈重写。原系统 `D:/Work/project/haiou/`（Laravel + Astro/Deno）生产运行中，**只读参考，绝不修改**。过渡期新旧共用同一 MySQL。
+
+**现行总纲（2026-10-16 定，`docs/04`）**：R1 = 功能复现——**数据库不动**（直接读写旧表），旧系统三个项目（backend/frontend/mzk-frontend）一起用全 TS 重做，GraphQL→REST，按域绞杀 PHP；60 模型新表方案封存为 R2 资产；R3 = 认证中心 + 系统拆分（模块边界现在按拆分形态设计）。
 
 ## 技术栈定版表（定版 2026-10-12）
 
@@ -31,6 +34,7 @@
 | 队列 | BullMQ + Redis | ^5.34 | `apps/worker`，替代 58 个 Job |
 | 构建 | pnpm + Turborepo | pnpm 9 / turbo 2 | monorepo |
 | 校验 | zod | ^3.24 | 契约 + 服务端校验共用 |
+| 机器面 API | Fastify + zod（**apps/api，2026-10-16 新增**） | ^5.x | 只承载 open API + webhook（签名/IP 白名单）；见 docs/04 §2 |
 | 金额 | decimal.js（`utils` 单入口） | ^10.4 | 禁 JS 浮点算钱。**2026-10-15 定版**：金额列 `Decimal(14,2)`、汇率 `Decimal(12,8)`、**账本面值币种 = CNY**（旧库对客全链路实测是人民币；对日市场 ≠ 记账用日元，见 docs/plans/finance-schema.md §3.3） |
 
 ## 构建与运行（复制粘贴用）
@@ -67,7 +71,8 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架 |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架 |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 四域新表正本（member+finance+order+send-order **60 模型**，金额 `Decimal(14,2)`/面值 CNY）：#11b 定版 + finance 段 12 表落地（`0015`）；✅ **#3g 硬化后已于 2026-10-16 空库全链跑绿**（`docs/plans/03` §十：60 表零警告 / `0003` 17 PASS 0 FAIL / 守卫破坏测试拦停 / 两遍幂等）；✅ **finance 段回填 `0016~0018` 同日跑绿**（03 §十一：**994,279 分录** / 31 项断言 29 PASS 0 FAIL 2 INFO / 两遍金额全等 / 词表破坏测试拦停 / 顺带抓出 10 个真缺陷已修，含汇率方向反判 = `base=CNY,quote=JPY`）；⚠ 交 DBA 前三条时序前置 = T1 当天重跑 `precheck` 补映射 + 生产复跑新表名重名核查（本机 dump 只覆盖 160/174，见 #11c）+ **同库禁并发跑 `0017`**（§6.5） |
+| `apps/api` | 机器面 API（open API + webhook，Fastify） | 🔴 docs/04 新增，待脚手架 |
+| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟢 **R1 活跃 schema = legacy introspect**（2026-10-16 M0.1：`prisma/schema.prisma` 拉本机 dump **160 表**，零外键扁平模型；`pull:legacy` 命令含数字前缀撞名修复；⚠ 生产 174 表重拉待跳板机密码，缺 14 表 + `dg_users` 列漂移，provenance 见 `docs/plans/07` §三）+ **R2 封存资产** = `prisma/redesign/schema.prisma` 60 模型（member+finance+order+send-order，金额 `Decimal(14,2)`/面值 CNY，#11b 定版 + finance 12 表 `0015`；✅ #3g 空库全链跑绿 03 §十 + `0016~0018` 回填跑绿 03 §十一 994,279 分录）；**双 generator 双 client**（`src/generated/{legacy,redesign}`，`client.ts` 导出 `legacyPrisma`/`redesignPrisma`）均纳入 db:generate + typecheck + 运行时冒烟；`sql/0001~0018` 同批封存，T0/T1 生产执行暂缓 |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
 | `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |

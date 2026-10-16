@@ -7,11 +7,15 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "build": "prisma generate && tsc -p tsconfig.json",
+    "generate": "prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/redesign/schema.prisma",
+    "generate:legacy": "prisma generate --schema prisma/schema.prisma",
+    "generate:redesign": "prisma generate --schema prisma/redesign/schema.prisma",
+    "pull:legacy": "prisma db pull --schema prisma/schema.prisma && node scripts/fixup-legacy-model-names.mjs",
+    "build": "pnpm generate && tsc -p tsconfig.json",
+    "pretypecheck": "pnpm generate",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "echo \"(no tests yet)\"",
-    "generate": "prisma generate",
     "migrate": "prisma migrate dev",
     "studio": "prisma studio"
   },

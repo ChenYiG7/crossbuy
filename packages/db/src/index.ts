@@ -1,1 +1,1 @@
-export { prisma } from './client';
+export { legacyPrisma, redesignPrisma } from './client';

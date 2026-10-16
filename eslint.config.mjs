@@ -10,6 +10,7 @@ export default tseslint.config(
       '**/.turbo/**',
       '**/next-env.d.ts',
       '**/packages/db/generated/**',
+      '**/packages/db/src/generated/**', // Prisma client 生成产物（legacy + redesign），非手写代码
     ],
   },
   js.configs.recommended,

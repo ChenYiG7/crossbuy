@@ -33,3 +33,4 @@ Thumbs.db
 
 # prisma
 packages/db/generated/
+packages/db/src/generated/

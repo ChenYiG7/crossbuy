@@ -1,17 +1,21 @@
 // ============================================================================
-// Prisma schema —— 本文件是数据库结构的「正本」。
+// Prisma schema —— ★ R2 封存资产（60 模型新表设计），2026-10-16 策略转向后
+// **不再是活跃 schema**。活跃 schema = 上一级的 `schema.prisma`（legacy introspect）。
 //
-// 纪律（docs/07-开发规范守则）：
+// 定位（docs/04-重写架构方案 §5.1）：
+//   - R1 复现期数据库不动，直接读写旧表；本文件 = R2「数据库重构期」的启用资产。
+//   - 仍纳入日常 `pnpm db:generate` + `pnpm typecheck`（保鲜，防封存腐烂）。
+//   - T0/T1 生产执行暂缓；`sql/0001~0018` 回填/校验脚本同批封存（docs/plans/03）。
+//
+// 设计纪律（docs/07-开发规范守则）：
 //   - 金额一律 Decimal，禁 float/double；且余额正本在 ledger，不在此表
 //   - 状态/枚举列用 Int/String + /// 注释写明含义（词表正本在 packages/contract）
 //   - 业务唯一键必须建（幂等的根本）
 //   - 禁外键与级联（引用完整性归应用层）→ relationMode = "prisma"
 //   - 列名一律 snake_case（Prisma 默认用字段名当列名 → 每个多词字段须 @map）
 //
-// 当前内容 = 【member 域 + order 域 + send-order 域新表正本】
+// 内容 = 【member 域 + order 域 + send-order 域 + finance 域新表正本】
 //   - 决策（Q7，2026-10-13）：**新表为唯一正本**，不继承旧表结构。
-//   - 过渡期旧表（dg_users 等）由「同库同事务双写」保持可用，见
-//     docs/plans/member-迁移与共存.md。
 //   - 本文件表名/列名均为新设计的干净命名（无 v2_ / dg_ 前缀）。
 //   - 字段级来源与转换规则见 docs/plans/01-v2表字段精读.md 与 member-迁移与共存.md。
 //   - order 域设计依据 docs/plans/order-schema.md；Q5（OrderGroup 显式化）已拍板，
@@ -20,10 +24,12 @@
 //     七条未决问题已收口，见 docs/plans/06-send-order-评审与拍板.md。
 //     ⚠ 跨域引用（orders.send_order_id → send_orders.id）只存标量列 + 索引，
 //       禁建 Prisma relation（域间禁横向依赖，docs/07 铁律 5）。
+//   - finance 域设计依据 docs/plans/finance-schema.md；面值 CNY、Decimal(14,2)。
 // ============================================================================
 
 generator client {
   provider = "prisma-client-js"
+  output   = "../../src/generated/redesign" // 相对本 schema 文件解析；与 legacy client 物理隔离，防串用
 }
 
 datasource db {
