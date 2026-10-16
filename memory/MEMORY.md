@@ -37,6 +37,8 @@
 四域新表 **60 模型**（member 16 / finance 12 / order 26 / send-order 6），DDL 四段 `0001`→`0015`→`0002`→`0003`，脚本 `packages/db/sql/0001~0018`。member 域 T0/T1/校验**空库全链跑绿**（`docs/plans/03` §十：60 表零警告 / `0003` 17 PASS 0 FAIL / 守卫破坏测试拦停 / 两遍幂等）；order/send-order 回填演练通过；finance 段 `0016~0018` 回填/校验同日跑绿（994,279 分录 / 29 PASS 0 FAIL / 两遍金额全等）。
 **交 DBA 前两条时序前置**：① T1 当天重跑 `precheck-username-duplicate.sql`，把新重名组补进 `_t1_username_fix`（正本是 `0002` §1 的字面量，改字面量并提交；手工插表会被下次执行抹掉）；② 生产侧复跑新表名重名核查（本机只覆盖 160/174）。T0 顺序：`0001 → 0001a → 0015 → 0002 → 0002a → 0003`。
 
+**M0 基建进度（2026-10-16 当日追加，R1 启动）**：✅ **M0.1** legacy introspect 落地——活跃 schema `packages/db/prisma/schema.prisma` = 本机 dump **160 表**（生产 174 重拉待跳板机密码：缺 14 表 + `dg_users` 74/75 列漂移，provenance 在 `docs/plans/07` §三）；60 模型封存 `prisma/redesign/`；**双 generator 双 client** `src/generated/{legacy,redesign}`（`legacyPrisma`/`redesignPrisma` 单例，冒烟双过）；`pnpm --filter @crossbuy/db pull:legacy` = pull + 数字前缀撞名修复（幂等）。✅ **M0.2/0.3**：11 域包 `packages/domains/*` + `packages/notify` 由 `scripts/scaffold-domains.mjs` 生成（禁手写同构样板）；repository = 唯一可 import `@crossbuy/db` 处；auth = Principal + TokenVerifier 抽象；**ESLint 边界规则**（DB 白名单 / 域间禁 import / contract 纯净）+ `scripts/boundary-probe.mjs` 破坏验证 5/5。⏳ 剩余：apps/api（Fastify）脚手架、174 表属主逐张映射（07 §三/§四）、vendor 冷备、部署管线、Vitest 基线。typecheck 28/28、build 22/22、lint 28/28。
+
 ## ★ 血泪坑（按代价排序）
 1. **ODKU 只适用于「撞键 = 同一实体重复投递」**：业务属性型唯一键（如 username）撞键 = 两个实体，ODKU 会**静默整行覆盖**（实测吞 5 账号、清零 2 笔余额、零报错）⇒ 必须 fail-fast `SIGNAL` 中止；且唯一性判断要按**目标列** collation。
 2. **校验脚本会造假绿**：`ROW_COUNT()` 在 `DEALLOCATE PREPARE` 后取会被重置为 0（审计 15 表全报 0 行）；`grep -c FAIL` 会把 SQL 字面量数进去。⇒ 用结果列精确统计（`awk -F'\t' '{print $NF}' | sort | uniq -c`），任何「0/空/无结果」都要第二独立来源交叉核对（`2>/dev/null` 也能把 `ERROR 2003` 吞成「0 行」）。**「跑绿」≠「守卫有效」**——守卫要主动破坏一次看它 `rc=1` 点名中止。
