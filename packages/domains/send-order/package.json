@@ -1,0 +1,25 @@
+{
+  "name": "@crossbuy/domain-send-order",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "echo \"(no tests yet)\""
+  },
+  "dependencies": {
+    "@crossbuy/auth": "workspace:*",
+    "@crossbuy/contract": "workspace:*",
+    "@crossbuy/db": "workspace:*",
+    "@crossbuy/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}

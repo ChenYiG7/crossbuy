@@ -75,7 +75,9 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟢 **R1 活跃 schema = legacy introspect**（2026-10-16 M0.1：`prisma/schema.prisma` 拉本机 dump **160 表**，零外键扁平模型；`pull:legacy` 命令含数字前缀撞名修复；⚠ 生产 174 表重拉待跳板机密码，缺 14 表 + `dg_users` 列漂移，provenance 见 `docs/plans/07` §三）+ **R2 封存资产** = `prisma/redesign/schema.prisma` 60 模型（member+finance+order+send-order，金额 `Decimal(14,2)`/面值 CNY，#11b 定版 + finance 12 表 `0015`；✅ #3g 空库全链跑绿 03 §十 + `0016~0018` 回填跑绿 03 §十一 994,279 分录）；**双 generator 双 client**（`src/generated/{legacy,redesign}`，`client.ts` 导出 `legacyPrisma`/`redesignPrisma`）均纳入 db:generate + typecheck + 运行时冒烟；`sql/0001~0018` 同批封存，T0/T1 生产执行暂缓 |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
-| `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |
+| `packages/domains/*` | 11 域包（member/order/purchase/send-order/logistics/platform/finance/ticket/content/openapi/wms-gateway）：service 接口 + repository 防腐层（`scripts/scaffold-domains.mjs` 生成，禁手写同构样板） | 🟢 M0.2 骨架落地（每域 errors/repository/service 三件套；repository = 唯一可 import @crossbuy/db 的位置，ESLint 边界规则强制 + `scripts/boundary-probe.mjs` 破坏验证 5/5） |
+| `packages/notify` | 通知渠道抽象（email/dingtalk/Mns，基础设施非域） | 🟢 接口面（实现随域铺开） |
+| `packages/auth` | 会话类型 + **Principal/TokenVerifier 抽象**（M0.3：域服务只认 Principal，三端各自实现 verifier，R3 抽认证中心零改动） | 🟢 类型 + 抽象 |
 | `packages/ui` | 设计 token（shadcn 待接） | 🟡 仅 token |
 | `packages/config` | env 校验 + 共享配置 | 🟢 已建 |
 

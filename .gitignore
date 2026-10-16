@@ -34,3 +34,6 @@ Thumbs.db
 # prisma
 packages/db/generated/
 packages/db/src/generated/
+
+# 边界守卫破坏验证探针（scripts/boundary-probe.mjs 临时生成，用完即删）
+**/__probe_*.ts
