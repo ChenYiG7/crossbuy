@@ -1,0 +1,29 @@
+// ============================================================================
+// Prisma schema —— ★ R1 活跃 schema = 旧库 introspect（2026-10-16，docs/04 §2）
+//
+// 定位：
+//   - R1 复现期「数据库不动」：本文件 = 生产旧库（PolarDB taotaro）的结构快照，
+//     域代码通过 repository 防腐层直接读写这些旧表（dg_users / dg_order / v2_* …）。
+//   - 60 模型新表设计已封存为 R2 资产 → prisma/redesign/schema.prisma（勿混用两个 client）。
+//   - 本文件**允许被 `prisma db pull` 整体重写**（introspect 产物；pull 连本头部一起冲掉——
+//     恢复靠 scripts/post-pull-fixup.mjs 自动重贴，**禁手补**，手补会在下次 pull 再丢）。
+//     表属主域/语义注释登记在 docs/plans/07-表属主映射.md，不写在这里。
+//
+// 数据源（2026-10-16 生产重拉：跳板机隧道 + gouba007 账号，MySQL 8.0.18）：
+//   - 生产 `taotaro` = **180 个对象 = 179 base 表 + 1 视图**；本文件 = 179 个模型。
+//   - ⚠ `dg_mail1` 在生产是**视图**（本机 dump 把它物化成了表）⇒ 无 Prisma 模型，
+//     要用它只能 raw SQL——用前先查 docs/plans/07 属主映射。
+//   - 21 张 `deprecated_*` 备份表按原样入模（忠实快照；域代码不许碰，R2 清理）。
+//   - 与 docs/plans/00「174 表」清单差 6 张：生产已增至 180 ⇒ **以生产为准**
+//     （00 是 2026-10-13 快照，清单滞后于生产）。
+//   - 本机 dump（160 表）曾造成 `dg_users` 74 vs 75 列漂移 + 40 张表缺失
+//     （v2_worldfirst_* 五张 / dg_record_old / dg_inquiry_order 族 / member webhook 族等），
+//     生产重拉后全部消除；dump 独有的 20 张（0908_* 备份、value_added_service 族、
+//     *_copy1 族等）证实是本地伪表或生产已删表，不出现在本文件是正确行为。
+//
+// 纪律（docs/07-开发规范守则）：
+//   - introspect 产物表名/列名保持旧库原样（dg_/v2_ 前缀 + 旧拼写），禁「顺手清理」——
+//     复现期业务行为 1:1，怪癖登记 docs/plans/08-R2优化清单.md。
+//   - PrismaClient 只允许出现在 packages/domains/*/repository（防腐层唯一触点）。
+//   - relationMode = "prisma"：旧库零外键（Laravel 惯例），引用完整性归应用层。
+// ============================================================================

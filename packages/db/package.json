@@ -10,7 +10,7 @@
     "generate": "prisma generate --schema prisma/schema.prisma && prisma generate --schema prisma/redesign/schema.prisma",
     "generate:legacy": "prisma generate --schema prisma/schema.prisma",
     "generate:redesign": "prisma generate --schema prisma/redesign/schema.prisma",
-    "pull:legacy": "prisma db pull --schema prisma/schema.prisma && node scripts/fixup-legacy-model-names.mjs",
+    "pull:legacy": "prisma db pull --schema prisma/schema.prisma && node scripts/post-pull-fixup.mjs",
     "build": "pnpm generate && tsc -p tsconfig.json",
     "pretypecheck": "pnpm generate",
     "typecheck": "tsc --noEmit",

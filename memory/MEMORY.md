@@ -37,7 +37,7 @@
 四域新表 **60 模型**（member 16 / finance 12 / order 26 / send-order 6），DDL 四段 `0001`→`0015`→`0002`→`0003`，脚本 `packages/db/sql/0001~0018`。member 域 T0/T1/校验**空库全链跑绿**（`docs/plans/03` §十：60 表零警告 / `0003` 17 PASS 0 FAIL / 守卫破坏测试拦停 / 两遍幂等）；order/send-order 回填演练通过；finance 段 `0016~0018` 回填/校验同日跑绿（994,279 分录 / 29 PASS 0 FAIL / 两遍金额全等）。
 **交 DBA 前两条时序前置**：① T1 当天重跑 `precheck-username-duplicate.sql`，把新重名组补进 `_t1_username_fix`（正本是 `0002` §1 的字面量，改字面量并提交；手工插表会被下次执行抹掉）；② 生产侧复跑新表名重名核查（本机只覆盖 160/174）。T0 顺序：`0001 → 0001a → 0015 → 0002 → 0002a → 0003`。
 
-**M0 基建进度（2026-10-16 当日追加，R1 启动）**：✅ **M0.1** legacy introspect 落地——活跃 schema `packages/db/prisma/schema.prisma` = 本机 dump **160 表**（生产 174 重拉待跳板机密码：缺 14 表 + `dg_users` 74/75 列漂移，provenance 在 `docs/plans/07` §三）；60 模型封存 `prisma/redesign/`；**双 generator 双 client** `src/generated/{legacy,redesign}`（`legacyPrisma`/`redesignPrisma` 单例，冒烟双过）；`pnpm --filter @crossbuy/db pull:legacy` = pull + 数字前缀撞名修复（幂等）。✅ **M0.2/0.3**：11 域包 `packages/domains/*` + `packages/notify` 由 `scripts/scaffold-domains.mjs` 生成（禁手写同构样板）；repository = 唯一可 import `@crossbuy/db` 处；auth = Principal + TokenVerifier 抽象；**ESLint 边界规则**（DB 白名单 / 域间禁 import / contract 纯净）+ `scripts/boundary-probe.mjs` 破坏验证 5/5。⏳ 剩余：apps/api（Fastify）脚手架、174 表属主逐张映射（07 §三/§四）、vendor 冷备、部署管线、Vitest 基线。typecheck 28/28、build 22/22、lint 28/28。
+**M0 基建进度（2026-10-16 当日追加，R1 启动）**：✅ **M0.1** legacy introspect 落地——活跃 schema `packages/db/prisma/schema.prisma` = **生产 PolarDB `taotaro`（MySQL 8.0.18）179 模型**（跳板机隧道 + gouba007 只读；`dg_mail1` 是视图无模型；21 张 deprecated 原样入模；生产 `dg_users` 75 列/22,628 行，dump 仅 5,021）；60 模型封存 `prisma/redesign/`；**双 generator 双 client** `src/generated/{legacy,redesign}`（`legacyPrisma`/`redesignPrisma` 单例，冒烟双过）；`pull:legacy` = pull + `post-pull-fixup.mjs`（数字前缀撞名修复 + **头部自愈**——`db pull` 会冲掉头部，正本 `prisma/legacy-header.txt`）。✅ **M0.2/0.3**：11 域包 `packages/domains/*` + `packages/notify` 由 `scripts/scaffold-domains.mjs` 生成（禁手写同构样板）；repository = 唯一可 import `@crossbuy/db` 处；auth = Principal + TokenVerifier 抽象；**ESLint 边界规则**（DB 白名单 / 域间禁 import / contract 纯净）+ `scripts/boundary-probe.mjs` 破坏验证 5/5。⏳ 剩余：apps/api（Fastify）脚手架、180 表属主逐张映射（07 §三/§四；注意盘点 174 已滞后于生产 180）、vendor 冷备、部署管线、Vitest 基线。typecheck 28/28、build 22/22、lint 28/28。
 
 ## ★ 血泪坑（按代价排序）
 1. **ODKU 只适用于「撞键 = 同一实体重复投递」**：业务属性型唯一键（如 username）撞键 = 两个实体，ODKU 会**静默整行覆盖**（实测吞 5 账号、清零 2 笔余额、零报错）⇒ 必须 fail-fast `SIGNAL` 中止；且唯一性判断要按**目标列** collation。
@@ -49,7 +49,7 @@
 7. 已演练通过的列定义别顺手改（给暂存表加 COLLATE 会让 mb3/mb4 混排路径偏离已验证版本）。
 
 ## 旧系统继承的结论（重写必须规避）
-- **旧系统零对账**：`app/` 里没有任何「Σ流水=余额」校验；实测 `dg_record` 链断 **7.3%（36,482 环）/ 55% 会员**，断点 98.6% 在下单扣款，但期末余额 673/676 相符 ⇒ 只保最终余额、不保可追溯 ⇒ 新系统对账必须**逐环校验**。唯一真对账实现 = WorldFirst（`v2_worldfirst_*` 四表本地与 dump 都不存在，是否在产待核）。
+- **旧系统零对账**：`app/` 里没有任何「Σ流水=余额」校验；实测 `dg_record` 链断 **7.3%（36,482 环）/ 55% 会员**，断点 98.6% 在下单扣款，但期末余额 673/676 相符 ⇒ 只保最终余额、不保可追溯 ⇒ 新系统对账必须**逐环校验**。~~唯一真对账实现 = WorldFirst（`v2_worldfirst_*` 四表本地与 dump 都不存在，是否在产待核）~~ ⇒ **2026-10-16 生产实测结案：五表真实存在但全部 0 行**（trade_order / collection_statement / statement_recharge / notify / attachment）——空壳死表，对账从零建、无历史包袱（#11e⑥/Q13 关闭）。
 - 旧「幂等列」不可信：`dg_record.idempotency_key` 是 DBA 手工加列（实测全 NULL、全仓零读写）；在用的 `sn` 生成含随机数；判重全是「先查后插」文本匹配 ⇒ 新系统幂等 = 唯一键 + 命令侧算 key + 非 NULL 率断言。
 - 后门/裸奔：`skip_price_check`、`BatchUpdateOrder` 改价、`dg_rechargerecord` 后台可改 money/state/汇率反算、`dg_huilv` 全字段可手改、PayPal 回调仅 2 秒 `Cache::lock`、月费/仓储费 Job 无锁可扣成负、**充值「初审通过即入账」（银行流水核对在后）**。
 - 领域硬伤：`bargainprice` 在 Order/SendOrder 语义不同、`goodsprice` vs `goodsprice1`、各域 status 独立状态机不可跨域假设。
