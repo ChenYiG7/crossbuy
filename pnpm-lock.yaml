@@ -237,6 +237,9 @@ importers:
       '@crossbuy/contract':
         specifier: workspace:*
         version: link:../contract
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../utils
       zod:
         specifier: 'catalog:'
         version: 3.25.76
@@ -280,6 +283,257 @@ importers:
       prisma:
         specifier: 'catalog:'
         version: 6.19.3(typescript@5.9.3)
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/content:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/finance:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/logistics:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/member:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/openapi:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/order:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/platform:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/purchase:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/send-order:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/ticket:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/domains/wms-gateway:
+    dependencies:
+      '@crossbuy/auth':
+        specifier: workspace:*
+        version: link:../../auth
+      '@crossbuy/contract':
+        specifier: workspace:*
+        version: link:../../contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@crossbuy/utils':
+        specifier: workspace:*
+        version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/notify:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
       typescript:
         specifier: 'catalog:'
         version: 5.9.3
