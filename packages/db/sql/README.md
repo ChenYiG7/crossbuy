@@ -27,13 +27,16 @@
 | ⑰ | `0013-send-order-backfill-verify.sql` | 18 项断言（sid 对齐/五费总额/保险独立/砍价/返金/sn 长度/发票/fid/悬空/状态分布/计费重/同捆/totalfee 禁回填） | 只读 | T1 |
 | ⑱ | `0014-member-source-import.sql` | **本地演练专用**：导入 member 域 15 张旧源表到演练库；**逐表择优取源**（`taotaro` → `crossbuy_dryrun`）+ `_drill_import_log` 审计 + `biz_code` 补列 + **禁在源库里跑**守卫 + 三项自检 | 写旧表副本 | 演练 |
 | ⑲ | `0015-finance-domain-up.sql` | 建 **12 张 finance 域新表**（accounts / ledger_entries / recharge_orders / exchange_rates / reconciliation_batches / reconciliation_diffs / fee_rules / alert_events / alert_channels / alert_rules / legacy_sync_watermarks / ledger_entry_orders；schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
+| ⑳ | `0016-finance-source-import.sql` | **本地演练专用**：导入 finance 域 5 张旧源（`dg_record` 502,167 / `dg_rechargerecord` 34,918 / `finance_order_cash_flow` 884,653 / `relation_*_cash_flow` 2,282,843 / `dg_huilv` 76,623）；`dg_record_old` 与 `v2_worldfirst_*` 本机**不存在** ⇒ 审计里记 SKIP，不是脚本缺陷 |
+| ㉑ | `0017-finance-backfill-t1.sql` | 回填核心：`_t1_flow_type_map`（21 个 action + 兜底 + 采购 change_type）→ `accounts`（MEMBER + 5 平台户）→ `ledger_entries`（`dg_record` 批 5 万 / `cash_flow` 批 5 万）→ `recharge_orders`（只装正向）→ `ledger_entry_orders` → `exchange_rates`（同时刻取 `MAX(hid)`）→ 16 条历史缺陷基线登记。**非并发安全**（§1 会 DROP 重建 `_t1_*`） |
+| ㉒ | `0018-finance-backfill-verify.sql` | 31 项只读断言（E7+F12+G10+H2）：E 组行/金额双侧配平、F 组不变式与词表覆盖（含幂等键词表一致性）、G 组单据/汇率/**链断基线双侧独立算**、H 组尾切片下只能当 INFO 的两条 |
 
 > ✅ 全流程已在**本地 MySQL 9.7.2** 用「生产 DDL + 无 PII 合成样本」演练通过（member 核心三表 15/15 PASS；侧表 25 项全 PASS；3 遍幂等；回退验证 OK），见 `docs/plans/03-T1本地演练报告.md`。
 > ✅ **#3g 硬化后的复跑已完成（2026-10-16，空库 `crossbuy_t1v` 从零跑全链）**：T0 四段 60 表零警告、`0003` **17 PASS + 4 INFO + 0 FAIL**、`0005` 24 项 PASS、order `0009` / send-order `0013` 关键金额与源分毫不差、守卫两种破坏手法都被拦停、两遍计数与 Σbalance 不变。证据与踩到的新坑见 `docs/plans/03` **§十**。
 >
 > ⚠️ **生产写权限阻塞**：生产账号 `datapro` 仅有 `SELECT, INDEX, LOCK TABLES, SHOW VIEW`（`taotaro.*`），**无 CREATE/INSERT/ALTER/DROP**。
 > **T0 建表全链**（DBA 执行，顺序即表号序）：① `0001-member` → ② `0001a` → ⑲ `0015-finance` → ⑦ `0002-order` → ⑧ `0002a` → ⑬ `0003-send-order`（共 60 表）。
-> **T1 回填**：③④⑤⑥（member）→ ⑩⑪⑫（order）→ ⑮⑯⑰（send-order）；finance 段回填 `0016~0019` **尚未编写**。
+> **T1 回填**：③④⑤⑥（member）→ ⑩⑪⑫（order）→ ⑮⑯⑰（send-order）→ ㉑ `0017`（finance 分录+单据+汇率）→ ㉒ `0018`（finance 校验）。
 > ⚠ ⑲ 落库前先跑 `finance-schema.md` §九-⑦ 的**新表名重名核查**（finance 是首批无前缀表名，未核过）。
 
 ## 第二批侧表回填要点（⑤ `0004`）
@@ -48,27 +51,40 @@
 
 ## 四段 DDL 的再生成（2026-10-15 基线行号，finance 段插入后已变更）
 
-四份建表脚本都从**正本** `prisma/schema.prisma` 增量 diff 生成，保证零漂移。⚠ **`--to-schema-datamodel` 不能直接指整份 schema**——那会一次生成 60 张表；必须按域截基线（截点 = 上一段最后一个 `}` 之后的空行）：
+四份建表脚本都从**正本** `prisma/schema.prisma` 增量 diff 生成，保证零漂移。⚠ **`--to-schema-datamodel` 不能直接指整份 schema**——那会一次生成 60 张表；必须按域截基线。
 
-| 段 | 文件 | from | to | 表数 |
+★ **截点用「段首行号 − 2」算，不要手抄行号**（2026-10-16 教训：schema 每加一行注释，下面所有截点全体右移；抄死的行号会让某一段少截/多截一张表，而 diff 照样「成功」生成）。段首 = `// <域> 域` 那行，−1 是分隔线 `// ===`，−2 是它上面的空行：
+
+| 段 | 文件 | from | to | 表数（2026-10-16 实测） |
 |---|---|---|---|---|
-| member | `0001-member-domain-up.sql` | `--from-empty` | `head -508` | **16**（★ 原占位表 `ledger_entry` 已移出，见下） |
-| finance | `0015-finance-domain-up.sql` | `head -508` | `head -884` | 12 |
-| order | `0002-order-domain-up.sql` | `head -884` | `head -1763` | 26 |
-| send-order | `0003-send-order-domain-up.sql` | `head -1763` | 整份 `prisma/schema.prisma` | 6 |
+| member | `0001-member-domain-up.sql` | `--from-empty` | 段首 510 − 2 = **508** | **16**（★ 原占位表 `ledger_entry` 已移出，见下） |
+| finance | `0015-finance-domain-up.sql` | 508 | 段首 909 − 2 = **907** | 12（28 模型累计） |
+| order | `0002-order-domain-up.sql` | 907 | 段首 1788 − 2 = **1786** | 26（54 模型累计） |
+| send-order | `0003-send-order-domain-up.sql` | 1786 | 整份 `prisma/schema.prisma` | 6（整份 60） |
 
 ```bash
 cd packages/db
 export DATABASE_URL="mysql://u:p@localhost:3306/db"   # 两侧都是 datamodel，不会真连库
-head -508  prisma/schema.prisma > /tmp/b1.prisma      # member
-head -884  prisma/schema.prisma > /tmp/b2.prisma      # +finance
-head -1763 prisma/schema.prisma > /tmp/b3.prisma      # +order
+# 自动算截点（跑前先看一眼输出对不对：16 / 28 / 54）
+Hf=$(grep -n '^// finance 域' prisma/schema.prisma | cut -d: -f1)
+Ho=$(grep -n '^// order 域'   prisma/schema.prisma | cut -d: -f1)
+Hs=$(grep -n '^// send-order 域' prisma/schema.prisma | cut -d: -f1)
+head -$((Hf-2)) prisma/schema.prisma > /tmp/b1.prisma   # member
+head -$((Ho-2)) prisma/schema.prisma > /tmp/b2.prisma   # +finance
+head -$((Hs-2)) prisma/schema.prisma > /tmp/b3.prisma   # +order
+grep -c '^model ' /tmp/b1.prisma /tmp/b2.prisma /tmp/b3.prisma
 P=node_modules/.bin/prisma
 $P migrate diff --from-empty --to-schema-datamodel /tmp/b1.prisma --script > sql/0001-member-domain-up.sql
 $P migrate diff --from-schema-datamodel /tmp/b1.prisma --to-schema-datamodel /tmp/b2.prisma --script > sql/0015-finance-domain-up.sql
 $P migrate diff --from-schema-datamodel /tmp/b2.prisma --to-schema-datamodel /tmp/b3.prisma --script > sql/0002-order-domain-up.sql
 $P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel prisma/schema.prisma --script > sql/0003-send-order-domain-up.sql
 ```
+
+> ⚠ **这四条 `migrate diff` 必须逐条写死执行，禁止塞进 `for` 循环用位置参数取文件名。**
+>   2026-10-16 我把「from/to/输出」拼成一个字符串再 `set -- $m` 拆，`$5` 在第三、四轮取到了
+>   `prisma/schema.prisma` 本身，重定向直接**把正本 schema 截成 0 字节**（`git checkout --` 才救回来）。
+>   同理，`> 文件` 的截断发生在命令执行**之前**，prisma 报错也不会还原它。
+>   凡覆盖式重定向，先把目标文件名写成字面量、再逐条核对 `wc -c`。
 
 > ⚠️ **改 schema 后必须重新生成**，禁手改这些文件。行号会随段落移动而失效——**每次重生成前先 `grep -n '^// \(member\|finance\|order\|send-order\) 域' prisma/schema.prisma` 重新取截点**，并核对 `grep -c 'CREATE TABLE'` 与表数一致（本轮实测 16/12/26/6 = 60）。
 > ✅ 2026-10-15 实测：插入 finance 段并重基线后，`0002-order`/`0003-send-order` 两份 DDL **逐字节不变**（`git diff` 为空）——这是「基线移动不引入漂移」的判据。

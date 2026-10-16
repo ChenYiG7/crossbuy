@@ -614,11 +614,19 @@ model LedgerEntry {
   /// 人读文案（旧 remark；★ 禁 HTML、禁承担幂等或汇率语义）
   label        String?  @db.VarChar(255)
   /// 旧 `sn` 一列三义（凭证号 / 物流单号 / 空串）→ 拆两列 + JSON 兜其余（§3.9）
-  voucherNo    String?  @map("voucher_no") @db.VarChar(32)
+  /// ⚠ 2026-10-16 实测长度：action=0/9/11/14-20 最长 17；**action=10（仓储费）最长 44**；
+  ///   action=3（国际运费）整段最长 237、含 `#` 439 行、首段（# 前）最长 27
+  ///   ⇒ voucher 64、logistics_no 64 装得下首段，全量分段进 logisticsNos（32 会截断仓储费单号）
+  voucherNo    String?  @map("voucher_no") @db.VarChar(64)
   logisticsNo  String?  @map("logistics_no") @db.VarChar(64)
   logisticsNos Json?    @map("logistics_nos")
   /// 从旧 remark HTML 里剥出来的 URL（§6.4：剥标签只留文本与 URL）
   bizNos       Json?    @map("biz_nos")
+  /// 旧行里在新模型**没有对应列**的剩余字段留档：
+  ///   dg_record.extend（本地实测 353 行非 NULL）/ dg_record.vip（死列）/ dg_record.ordflag /
+  ///   finance_order_cash_flow.uid + utype（Q5 未决，采购侧分录不挂会员户，但旧值必须留可对账）
+  /// ★ 与 send-order 域 `legacy_extra` 同一处置：留档 ≠ 建模，等对应 Q 拍板后再升列
+  legacyExtra  Json?    @map("legacy_extra")
   /// 回填来源与旧主键（rid 空间重叠靠这两列定位；镜像行也用它去重）
   legacySource String?  @map("legacy_source") @db.VarChar(32)
   legacyId     BigInt?  @map("legacy_id")
@@ -634,6 +642,9 @@ model LedgerEntry {
   @@index([sendOrderId])
   @@index([rechargeOrderId])
   @@index([pairKey])
+  /// ★ 旧库「单据 ↔ 分录」只有 sn 这一根绳（§3.9），回填与运维都要按凭证号反查分录；
+  ///   没这条索引时 0017 §5 的回链子查询在 99 万行上逐行全扫（2026-10-16 实测卡死过一次）
+  @@index([voucherNo])
   @@map("ledger_entries")
 }
 
@@ -647,7 +658,11 @@ model RechargeOrder {
   /// 入账金额（旧 money，CNY 面值）
   creditedAmount Decimal @map("credited_amount") @db.Decimal(14, 2)
   /// ★ 换算依据（旧库无列，只能 amount/money 反推，且 PayPal/Stripe 反推值含手续费）
-  rate       Decimal @db.Decimal(12, 8)
+  /// ⚠ 2026-10-16 实测：`dg_rechargerecord` 有 10,521 行 amount=0 且 money>0（后台手建 /
+  ///   手动扣款，`ManualCharge.php:41-58` 就是 amount=0）→ 比率反推不出来。
+  ///   **允许 NULL，禁写 0 冒充汇率**——写 0 会让「按 rate 重算金额」的服务端逻辑
+  ///   静默算出 0 元入账（docs/07 §2「金额不可信」的反面教材）
+  rate       Decimal? @db.Decimal(12, 8)
   rateSource String  @default("HUILV") @map("rate_source") @db.VarChar(16)
   /// 渠道（旧 paytype 拆分后的渠道侧）：BANK_TRANSFER / PAYPAL / STRIPE ...
   channel      String  @db.VarChar(24)
@@ -679,11 +694,17 @@ model RechargeOrder {
   @@map("recharge_orders")
 }
 
-/// 汇率时间序列（旧源 dg_huilv；★ 旧 float(10,2) 对 0.045 量级只剩 2 位有效数字）
+/// 汇率时间序列（旧源 dg_huilv）
+/// ★ 2026-10-16 实测订正方向：`huilv` 值域 **15.46 ~ 24.07**（2019→2026 逐年抬升），
+///   是「1 CNY = X JPY」，**不是** 0.045 量级的 JPY→CNY ⇒ base=CNY / quote=JPY。
+///   （计划书 §3.3 原写「float(10,2) 对 0.045 量级只剩 2 位有效数字」是推断，与实测不符：
+///    精度损失发生在**取倒数落账**那一步，不是存储本身；`(12,8)` 的定版依然成立）
+/// ⚠ 旧表 76,623 行里同一 (年,月,日,时,分) 最多 95 条（去重后 55,732 个时刻）→
+///   回填必须按时刻取末条（MAX(hid)），并把折叠条数登记进对账基线，不能靠 ODKU 静默吞
 model ExchangeRate {
   id    BigInt @id @default(autoincrement())
-  base  String @db.VarChar(8) // JPY
-  quote String @db.VarChar(8) // CNY
+  base  String @db.VarChar(8) // CNY
+  quote String @db.VarChar(8) // JPY
   rate  Decimal @db.Decimal(12, 8)
   /// MITSUBISHI / YAHOO / DB_CACHE / MANUAL（旧 Currency.php:165-198 的四级降级链）
   source String @db.VarChar(16)

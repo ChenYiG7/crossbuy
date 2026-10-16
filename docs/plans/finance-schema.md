@@ -127,7 +127,7 @@
 | PayPal 回调 | IPN `/api/webhooks/paypal_notify` → 1→2 + 加钱（`PaypalController.php:111-134`） | state→2 | ★ **`Cache::lock('paypal-webhook-{sn}-{status}', 2)` + 「state==2 则 return」= 先查后改、无事务、无唯一键 → 锁 2 秒过期即可重复加钱**（`PaypalController.php:49-52,97-106`） |
 | Stripe | 外部服务写 `gateway_transaction_no` UNIQUE + `FOR UPDATE` 设计（`docs/business/stripe-recharge-integration.md:405`，状态 **drafting**，PHP 侧未找到写入点） | — | 唯一键（正解） |
 
-**`paytype` 混装两个维度**（入金渠道 vs 费用原因）是旧模型最深的结构问题：`3 商品購入 / 4 国際運賃 / 5 国内運賃 / 7 家賃 / 12 撮影 / 13 保険料` 是**费用项**，`0 銀行振込 / 2 Paypal / 15 Stripe` 是**渠道**；`inboundPayTypes()` 白名单（`RechargeRecord.php:98-106`）就是为了让代码能分辨——实测 `paytype` 11/12/13/14/3/4/5/7/8/9/10 的 `money` 合计为**负数**（11 段 -4,427,426.16）。→ 新系统必须拆成 `channel` + `reason` 两列，且把「负向调整」从充值表里搬走，否则**支付渠道对账的分母里混着人工调整，永远对不平**。
+**`paytype` 混装两个维度**（入金渠道 vs 费用原因）是旧模型最深的结构问题：`3 商品購入 / 4 国際運賃 / 5 国内運賃 / 7 家賃 / 12 撮影 / 13 保険料` 是**费用项**，`0 銀行振込 / 2 Paypal / 15 Stripe` 是**渠道**；`inboundPayTypes()` 白名单（`RechargeRecord.php:98-106`）就是为了让代码能分辨——实测 `paytype` 11/12/13/14/3/4/5/7/8/9/10 的 `money` 合计为**负数**（11 段 -4,427,426.16）。**★ 2026-10-16 精确实数**：`state=2` 且 `money<0` 共 **11,182 行**（remark 形如「YBQ14217阿部輝様‐OEM、検品代50元、担当：何」——是费用代扣，不是入金），且这 11,182 行**全部**能在 `dg_record` 按 `sn` 找到对应行（JOIN 后 11,186 行，多出的 4 行是 `sn` 重复）⇒ **钱只记在 `dg_record` 一处**，`dg_rechargerecord` 是单据。所以 T1 里 `recharge_orders` 只装正向单、分录一律来自 `dg_record`，两头都建分录必然双计。→ 新系统必须拆成 `channel` + `reason` 两列，且把「负向调整」从充值表里搬走，否则**支付渠道对账的分母里混着人工调整，永远对不平**。
 
 **后台「改写金额」后门清单**（对账差异来源，§五 `ReconciliationDiff` 的 reason 词表）：
 
@@ -148,6 +148,8 @@
 2. 运单费同量级：`dg_sendorder.totalfee` 均值 774.54、`freight` 均值 460.54，与 `action=3` 扣款均值 -659 同一量级（JPY 计价会是数万）。
 3. 充值单据自带换算：`amount`（JPY 原币）÷ 汇率 = `money`（CNY 入账），PayPal 实测 `amount=315,000 → money=14,095.64`（隐含 22.34）；流水文案直接写日文「**元**チャージ」（`uid=14228` 的 `action=9` 行 money 与单据 money **分毫不差**）。
 
+**★ 2026-10-16 复跑补证：`dg_rechargerecord.currency` 不是单值**（本机 34,918 行）：`NULL` 28,362 / `jpy` 5,855 / **`MYR` 701**。三组 `Σmoney/Σamount` = 0.0356 / 0.0459 / **0.0458** —— 前两组是日元量级（NULL 即按日元算），**第三组的比值和日元组几乎相同**：马币按 1 MYR ≈ 1.5 CNY 算，0.0458 差了 30 倍以上 ⇒ 旧系统对 `MYR` 单**大概率直接套了日元汇率**（或 `amount` 记的压根不是马币面值）。这是 #11a「资金安全缺陷」清单里新的第 7 条，回填不修数据、按 `rate_source='LEGACY_DERIVED'` 原样落库并登记 `RATE_DRIFT`。同时定版：`sourceCurrency` **不许硬编码 JPY**，取 `UPPER(COALESCE(NULLIF(currency,''),'JPY'))`。
+
 **唯一是 JPY 的两处**：`dg_rechargerecord.amount`（原币入金）、`dg_users.monpayamt`（注释「月额会员每月扣费**日元**」，默认 30000）→ 说明**月额会员扣费这条链路必然有一次换算**，而换算结果同样进 CNY 余额。
 
 **汇率基础设施**（确证）：
@@ -166,7 +168,8 @@
 
 1. ★ **`member-schema.md` Q3「余额 = JPY + Decimal(12,2)」判错，已改判（2026-10-15 拍板，§八 Q1）**：回填若按 JPY 写入而源数据是 CNY，余额静默放大 ~22 倍；「另建 JPY 账本 + 换算回填」的替代方案被否，因为它让新旧余额不同单位、**同库同事务双写无法比对**（member-迁移与共存.md §4.3 的读新写双会立刻穿帮）。→ 新系统 `accounts.currency` 默认 **CNY**，JPY 只作原币入金与展示层换算。
 2. **`order-schema.md` §五注释「对客单价 JPY（旧 goodsprice）」是错的**（`goodsprice` 与 `goodsuprice`「商品采购价」`taotaro.sql` 同列组，两者都是 CNY；对客 vs 采购成本才是它的真实维度）。按 docs/07 §6.3 三方防漂移，注释必须订正，否则后续域继续抄错。
-3. **汇率对账（docs/02 §5.3 第 5 类）在旧库无任何可比对原料** → 新 ledger 必须自带 `rate` + `rate_source` + `rate_snapshot_at` 三列，且 `dg_huilv` 的 float(10,2) 精度（1 JPY 才 0.04 元，两位小数根本存不住）**必须升 Decimal(12,8)**。
+3. **汇率对账（docs/02 §5.3 第 5 类）在旧库无任何可比对原料** → 新 ledger 必须自带 `rate` + `rate_source` + `rate_snapshot_at` 三列，且 `dg_huilv.huilv` 的 `float` **必须升 `Decimal(12,8)`**。
+   > ⚠ **2026-10-16 实测订正本条的理由**（结论不变、论据换了）：`huilv` 实际值域 **15.46 ~ 24.07**（2019→2026 逐年抬升，76,623 行 / 55,732 个时刻），存的是「**1 CNY = X JPY**」，不是 0.045 量级的 JPY→CNY。所以精度损失不在「存储只剩 2 位」，而在**取倒数落账**那一步（1/23.4 的二进制浮点误差直接进 `money`）；升 `Decimal(12,8)` 依然必要，但方向反过来才说得通。
 
 ### 3.4 `finance_order_cash_flow`——采购侧资金流水（102 万行）
 
@@ -354,7 +357,8 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 ### 4.6 币种与汇率（由 §3.3 的实锤驱动，本域最大改动）
 
 - 所有金额列带 `currency`；`ledger_entries` 带 `rate`（换算率）、`rate_source`（`HUILV` / `MANUAL` / `GATEWAY`）、`rate_ref_id`（指向 `exchange_rates.id`）三列——**换算是账本事件的一部分，不是文本备注**。
-- `exchange_rates`（源 `dg_huilv`）：`base`/`quote`/`rate Decimal(12,8)`/`effective_at`/`source`/`added_by`。旧 `float(10,2)` 对 JPY→CNY（0.045 量级）**只剩 2 位有效数字**，是 §3.3「比值只有 0.0456/0.0477 两档」的直接成因。
+- `exchange_rates`（源 `dg_huilv`）：`base`/`quote`/`rate Decimal(12,8)`/`effective_at`/`source`/`added_by`。★ **方向按实测定为 `base=CNY` / `quote=JPY`**（值域 15.46~24.07，见 §3.3 订正）。
+- ⚠ 旧表 `GROUP BY (nian,yue,ri,shi,fen)` 后是 **55,732 个时刻 / 76,623 行**（同一分钟最多 95 条）→ `@@unique([base,quote,effective_at])` 必然撞，回填**只能有一条取胜**：定版取 **`MAX(hid)` 那条**（后写覆盖先写，与旧库读取顺序一致），折叠掉的 20,891 行登记成 `reconciliation_diffs(DUPLICATED_ENTRY)`，**不许靠 ODKU 静默吞**。
 - **`dg_users.floatrate` 判死列**（确证：全仓仅后台详情读它，无任何计算读取）→ 新系统**不迁**（`member-schema.md` / `schema.prisma:103` 的 `floatRate` 须移除或改名 `legacyFloatRate` 仅作审计，见 §八 Q3）。真实浮动加点（+0.5 / +0.8）归 §4.10 `FeeRule`。
 
 ### 4.7 不做冻结/预扣（已确证旧系统无此概念）
@@ -483,7 +487,9 @@ model Account {
   currency      String   @default("CNY") @db.VarChar(8)
   /// 当前余额（守卫列，禁旁路写）
   balance       Decimal  @default(0.00) @db.Decimal(14, 2)
-  /// 期初余额（回填 = 旧 dg_users.money，之后不再变）
+  /// 期初余额 ★ 2026-10-16 改判：= 该户**首条分录的 balance_before**（无分录者才 = 当前余额）。
+  ///   原文写「回填 = 旧 dg_users.money」是错的——`money` 是**当前**余额，拿它当期初会让
+  ///   `期初 + Σ分录 ≠ 余额` 恒不成立；`money` 只配当 `balance`（0002 已断言 = member.balance）
   openingAmount Decimal  @default(0.00) @map("opening_amount") @db.Decimal(14, 2)
   /// ACTIVE / FROZEN（对账不平即冻结，docs/02 §5.3）
   status        String   @default("ACTIVE") @db.VarChar(16)
@@ -543,7 +549,7 @@ model LedgerEntry {
   /// 人读文案（旧 remark；★ 禁 HTML、禁承担幂等或汇率语义）
   label           String?  @db.VarChar(255)
   /// 旧 `sn` 一列三义（凭证号 / 物流单号 / 空串），拆两列（§3.9）
-  voucherNo       String?  @map("voucher_no") @db.VarChar(32)
+  voucherNo       String?  @map("voucher_no") @db.VarChar(64)  // ★ 实测 action=10（仓储费）sn 最长 44，32 会截
   logisticsNo     String?  @map("logistics_no") @db.VarChar(64)
   /// 多包裹/多单号场景（旧 dg_sendorder.sn 是 # 连接的 varchar(2550)，同 send-order 域 snExtra 处置）
   logisticsNos    Json?    @map("logistics_nos")
@@ -603,7 +609,8 @@ model RechargeOrder {
   @@map("recharge_orders")
 }
 
-/// 汇率时间序列（旧源 dg_huilv；★ 旧 float(10,2) 对 0.045 量级只剩 2 位有效数字）
+/// 汇率时间序列（旧源 dg_huilv）
+/// ★ 2026-10-16 实测：值域 15.46~24.07 ⇒ **base=CNY / quote=JPY**；同一分钟最多 95 条 ⇒ 回填取 MAX(hid)
 model ExchangeRate {
   id            BigInt   @id @default(autoincrement())
   base          String   @db.VarChar(8)  // JPY
@@ -777,6 +784,16 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 - `action=0` 的 18,359 行自由文本按关键词粗分（实测可分出的有：`銀行振込, レート：`、`余额转移`、NULL、其它），无法归类的映射 `flow_type=LEGACY_UNCLASSIFIED` 并**计入期初调整科目**，不伪装成具名事件。
 - 旧 `remark` 含 HTML 的行（`action=1/4` 模板内嵌 `<a href>`）：迁 `label` 前**剥标签、只留文本与 URL**，URL 进 `bizNos`。
 
+### 6.5 回填的三条硬规矩（2026-10-16 演练踩出来的，写在这儿防第二个人踩）
+
+1. **幂等键只允许一个词表**：`LEGACY:{legacy_source}:{legacy_id}`。
+   `0017` 初稿给采购侧写的是 `LEGACY:CASH_FLOW:{id}`，而 `legacy_source` 写 `FINANCE_ORDER_CASH_FLOW` —— 同一来源两套 token，被 `0018` 的 F5 当场判出 **884,653 行 FAIL**。
+   配套：`idempotency_key` 要进 ODKU 的更新列，否则改了键格式重跑永远不自愈（旧行留着错键，断言会一直红）。
+2. **同一时刻只能有一个回填实例跑同一个库**。`0017` §1 会 `DROP` 重建 `_t1_flow_type_map` 等暂存表，第二个实例正在过程里读它就报 `ER_NO_SUCH_TABLE`。
+   2026-10-16 我自己挂了两个后台任务同时跑，第一遍因此在第 5 批中断——**症状像脚本 bug，实为并发**。生产 T1 由 DBA 单实例执行，本条同样适用。
+3. **一份数据只允许一条「谁赢」的规则**。`dg_huilv` 同一分钟最多 95 条，`0017` 的 INSERT 当时用 `MAX(huilv)`、ODKU 用 `MAX(hid)` 那条，`0018` 的断言又用第三种写法 → 重跑后 4 行被判「回填与源不符」。
+   定版：**取 `MAX(hid)` 那条**（后写覆盖先写），INSERT / ODKU / 断言三处共用同一条 SQL 形态。
+
 ## 七、与 contract 的边界
 
 `packages/contract/src/domains/finance.ts`（本域唯一契约出口，遵守 §2：只依赖 zod，禁 ORM 类型）：
@@ -816,7 +833,8 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 3. **生产只读通道复核清单**（本地是尾切片，datapro 可做）：① `SELECT action, COUNT(*) FROM dg_record GROUP BY action`（全量，验 Q7）；② `idempotency_key` 非 NULL 率（预期 0%）；③ `dg_record` 全量链断率（尾切片实测 7.3%，需知全量口径）；④ `dg_record_old` 时间跨度与是否仍在涨；⑤ `v2_worldfirst_*` 四表存在性与行数；⑥ `gateway_transaction_no` 非 NULL 率（区分 Stripe 是否上线）；⑦ ★ **新表名重名核查**：`SELECT table_name FROM information_schema.tables WHERE table_schema='taotaro' AND table_name IN ('accounts','ledger_entries','recharge_orders','exchange_rates','reconciliation_batches','reconciliation_diffs','fee_rules','alert_events','alert_channels','alert_rules','legacy_sync_watermarks','ledger_entry_orders')`。**这 12 个名字没做过重名校核**——`docs/plans/00` 是按 6 个前缀（`dg_`/`v2_`/`admin_`/`sys_`/`deprecated_`/`relation_`）分组的盘点，而本域全部是**无前缀名**，盘点证明不了「不存在同名裸表」；前三域的新表都带 `member`/`order`/`send_order` 前缀，是从没踩到过这个问题，不是查过。
    > ✅ **2026-10-16 本机已查**：`taotaro`（本机 160 张）中这 12 个名字**命中 0**，连单数 `ledger_entry` 都不存在；本机 13 张无前缀旧表（`finance_order_cash_flow` / `user_operation_log` / `migrations` / `system_setting` / `t_purchase_*` / `oa_notify*` / `email_task_record` / `failed_jobs` / `0908_*`）也不撞 ⇒ **表名不改**。⚠ 本机 dump 比 `docs/plans/00` 记的 174 张**少 14 张**（`deprecated_` 族本机为 0）⇒ 本条只覆盖 160/174，**生产 T0 前 DBA 仍须复跑同一条查询**。
 4. ✅ **已落地（2026-10-15）**：`schema.prisma` finance 段 = **12 模型**（§五 9 个 + 待补 3 表字段级设计完成）+ 占位 `LedgerEntry` 整体替换 + 四份 DDL 重新基线生成 → **`0015-finance-domain-up.sql`**（12 表，增量 diff，禁手改）。⚠ 编号说明：原计划写 `0014-finance-domain-up.sql`，但 0014 已被 `0014-member-source-import.sql`（#3g④）占用 ⇒ 按「全局只增不复用」改为 0015。`0001` 重生成后 16 表（不再含占位 `ledger_entry`），`0002`/`0003` 重生成后**逐字节不变**（证明基线移动没引入漂移）。落地 delta 见 §5.1。
-5. **T1 回填脚本 `0016~0019`**（源导入 / 分录主体 / 单据与汇率 / 校验）+ 本地演练。**★ 前置 #3g 已于 2026-10-16 空库全链跑绿**（证据 `docs/plans/03` §十：T0 四段 60 表零警告 / `0003` 17 PASS + 4 INFO + 0 FAIL / `0005` 24 项 PASS / 守卫两种破坏手法都拦停 / 两遍计数与 Σbalance 不变）⇒ 本域回填可以起跑；另需先跑 §九-⑦①~⑥ 的生产只读复核。**本域新增断言类型**（前三域没有的）：
+5. ✅ **T1 回填脚本已落地并本地演练**（2026-10-16）：`0016-finance-source-import.sql`（演练源导入）/ `0017-finance-backfill-t1.sql`（**分录 + 单据 + 汇率 + 基线登记**）/ `0018-finance-backfill-verify.sql`（32 项只读断言）。★ **原计划的 `0019` 取消**：把「单据与汇率」从 `0017` 里拆出去会让 §9 的历史缺陷基线拿不到完整分录集（链断数、幂等键、金额配平都必须在同一事务序列内算），拆文件的收益只剩排版，代价是断言失真。`legacy_sync_watermarks` 留给 T1.5 镜像阶段（§6.2），`fee_rules` 是**新系统配置**不是旧数据，不在回填里播种。**★ 前置 #3g 已于 2026-10-16 空库全链跑绿**（证据 `docs/plans/03` §十：T0 四段 60 表零警告 / `0003` 17 PASS + 4 INFO + 0 FAIL / `0005` 24 项 PASS / 守卫两种破坏手法都拦停 / 两遍计数与 Σbalance 不变）⇒ 本域回填可以起跑；另需先跑 §九-⑦①~⑥ 的生产只读复核。
+   > ✅ **2026-10-16 本机演练已跑绿**（证据 `docs/plans/03` **§十一**）：`0016` 搬 378 万行 / `0017` 建 **994,279 条分录**（客户侧 Σ **11,388,096.56** = 源、采购侧 Σ **429,587,866.13** = 源）/ `0018` **29 PASS + 0 FAIL + 2 INFO** / 两遍计数与金额全等 / 删一条 flow_type 映射后 F1=342 行立刻 FAIL。★ 演练顺带抓出 **10 个真缺陷**（汇率方向反判、`rate NOT NULL` 与 10,521 行 amount=0 冲突、`voucher_no` 32→64、缺 `legacy_extra`、幂等键两套 token、INSERT/ODKU 取胜规则不一致、缺 `voucher_no` 索引、脚本非并发安全、`openingAmount` 语义错），逐条已修并记在 §6.5 与 03 §11.3。**本域新增断言类型**（前三域没有的）：
    - 链式不变式 `balance_after = balance_before + signed_amount` 逐环计数，期望「断链数 = 已知历史基线」而非 0（回填禁修数据，§6.4）；
    - 方向-符号一致性断言（新表内期望 0 违规）；
    - **派生恒等式断言**：并入采购流水时 `counterpart_amount − bargain_amount + freight_amount` 与分录金额配平（旧表实测 100% 成立，§4.8，是最便宜的正确性哨兵）；
