@@ -675,7 +675,7 @@ model dg_favorite {
   goodssite   String?  @db.VarChar(50)
   siteurl     String?  @db.VarChar(255)
   addtime     Int?
-  type        Boolean? @default(true)
+  type Int? @db.TinyInt @default(1)
   marktext    String?  @db.VarChar(100)
 
   @@index([uname], map: "nameindex")
@@ -1086,8 +1086,8 @@ model dg_pm {
   subject   String   @db.VarChar(60)
   sendtime  Int?
   writetime Int?
-  hasview   Boolean?
-  isadmin   Boolean? @default(false)
+  hasview Int? @db.TinyInt
+  isadmin Int? @db.TinyInt @default(0)
   message   String?  @db.Text
 }
 
@@ -1139,7 +1139,7 @@ model dg_record {
   addtime         Int?
   sn              String?   @db.VarChar(500)
   oid             Int?
-  ordflag         Boolean?  @default(true)
+  ordflag Int? @db.TinyInt @default(1)
   vip             Int?      @default(0) @db.TinyInt
   deleted_at      DateTime? @db.DateTime(0)
   extend          Json?
@@ -1232,8 +1232,8 @@ model dg_sendorder {
   storage                Decimal   @default(0.00) @db.Decimal(10, 2)
   havefapiao             Int?      @default(0) @db.SmallInt
   mailremark             String?   @db.VarChar(1024)
-  otype                  Boolean?  @default(true)
-  dfsendflag             Boolean?  @default(false)
+  otype Int? @db.TinyInt @default(1)
+  dfsendflag Int? @db.TinyInt @default(0)
   dfremarkcn             String?   @db.VarChar(512)
   enname                 String?   @db.VarChar(30)
   dflwh                  String?   @db.VarChar(30)
@@ -1245,7 +1245,7 @@ model dg_sendorder {
   packageid              Int?
   prostate               Int?      @db.TinyInt
   prostatetime           Int?
-  passtype               Boolean?  @default(false)
+  passtype Int? @db.TinyInt @default(0)
   bargainprice           Decimal?  @default(0.00) @db.Decimal(10, 2)
   bargainstate           Int?      @default(0) @db.TinyInt
   totalpackages          Int?      @default(0)
@@ -1560,19 +1560,19 @@ model dg_users {
   memberid                String?   @db.VarChar(30)
   remark                  String?   @db.Text
   fb                      String?   @db.VarChar(11)
-  dfflag                  Boolean?  @default(false)
+  dfflag Int? @db.TinyInt @default(0)
   dffee                   Decimal?  @default(10.00) @db.Decimal(10, 2)
   floatrate               Decimal?  @default(0.05) @db.Decimal(10, 2)
-  csvupflag               Boolean?  @default(false)
+  csvupflag Int? @db.TinyInt @default(0)
   dfsendaddress           String?   @db.VarChar(200)
   dfsendtel               String?   @db.VarChar(50)
   dfsendname              String?   @db.VarChar(50)
   lastordertime           Int?
   last_balance_changed_at DateTime? @db.DateTime(0)
   login_limit_warning     Int?      @default(0) @db.TinyInt
-  orderenable             Boolean?  @default(true)
+  orderenable Int? @db.TinyInt @default(1)
   stoptime                Int?
-  regtype                 Boolean?
+  regtype Int? @db.TinyInt
   comname                 String?   @db.VarChar(50)
   comengname              String?   @db.VarChar(50)
   commanager              String?   @db.VarChar(50)
@@ -1585,7 +1585,7 @@ model dg_users {
   realtimeaccount         String?   @db.VarChar(255)
   line                    String?   @db.VarChar(30)
   wechat                  String?   @db.VarChar(30)
-  usetype                 Boolean?
+  usetype Int? @db.TinyInt
   tag                     String?   @db.VarChar(255)
   prebuyfeq               String?   @db.VarChar(60)
   prebuyamt               String?   @db.VarChar(60)
@@ -1724,7 +1724,7 @@ model oa_notify_record {
   id        BigInt    @id @default(autoincrement())
   notify_id BigInt?
   user_id   BigInt?
-  is_read   Boolean?  @default(false)
+  is_read Int? @db.TinyInt @default(0)
   read_date DateTime? @db.Date
 
   @@index([notify_id], map: "oa_notify_record_notify_id")
@@ -2113,7 +2113,7 @@ model v2_ecommerce_order {
   platform_modified_at       DateTime? @db.DateTime(0)
   detail                     Json?
   order_status               Int       @default(1) @db.TinyInt
-  is_fulfilled               Boolean   @default(false)
+  is_fulfilled Int @db.TinyInt @default(0)
   fulfillment_failure_reason String?   @db.VarChar(1000)
   price                      String    @default("") @db.VarChar(50)
   shipping_info              Json?
@@ -2199,7 +2199,7 @@ model v2_ecommerce_shop {
   last_verified_status  Int       @default(0) @db.TinyInt
   last_verified_message String?   @db.VarChar(500)
   use_store             Int       @default(0) @db.TinyInt
-  auto_sync_orders      Boolean   @default(false)
+  auto_sync_orders Int @db.TinyInt @default(0)
   last_sync_at          DateTime? @db.Timestamp(0)
   created_at            DateTime? @default(now()) @db.Timestamp(0)
   updated_at            DateTime? @default(now()) @db.Timestamp(0)
@@ -2237,7 +2237,7 @@ model v2_favorite_category {
   id         Int       @id @default(autoincrement()) @db.UnsignedInt
   uid        Int       @db.UnsignedInt
   name       String    @default("") @db.VarChar(255)
-  type       Boolean?  @default(false)
+  type Int? @db.TinyInt @default(0)
   sort       Int?      @default(0) @db.UnsignedTinyInt
   created_at DateTime  @db.DateTime(0)
   updated_at DateTime? @db.DateTime(0)
@@ -2267,7 +2267,7 @@ model v2_freight_calculators {
   algorithm_snippet              String?   @db.Text
   test_data                      Json?
   description                    String?   @db.Text
-  is_active                      Boolean   @default(true)
+  is_active Int @db.TinyInt @default(1)
   sort                           Int       @default(0)
   show_in_client                 Int       @default(1) @db.TinyInt
   volume_factor                  Decimal?  @db.Decimal(12, 2)
@@ -2541,8 +2541,8 @@ model v2_ticket_activity {
   operator_uid  Int?      @default(0)
   operator_role Int       @db.TinyInt
   content       Json?
-  is_internal   Boolean?  @default(false)
-  is_read       Boolean   @default(false)
+  is_internal Int? @db.TinyInt @default(0)
+  is_read Int @db.TinyInt @default(0)
   created_at    DateTime  @default(now()) @db.DateTime(0)
   deleted_at    DateTime? @db.DateTime(0)
 
@@ -2951,7 +2951,7 @@ model deprecated_dg_record_copy {
   addtime      Int?
   sn           String?  @db.VarChar(500)
   oid          Int?
-  ordflag      Boolean? @default(true)
+  ordflag Int? @db.TinyInt @default(1)
 }
 
 /// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
@@ -2997,8 +2997,8 @@ model deprecated_dg_sendorder_copy {
   storage      Decimal  @default(0.00) @db.Decimal(10, 2)
   havefapiao   Int?     @default(0) @db.SmallInt
   mailremark   String?  @db.VarChar(512)
-  otype        Boolean? @default(true)
-  dfsendflag   Boolean? @default(false)
+  otype Int? @db.TinyInt @default(1)
+  dfsendflag Int? @db.TinyInt @default(0)
   dfremarkcn   String?  @db.VarChar(512)
   enname       String?  @db.VarChar(30)
   dflwh        String?  @db.VarChar(30)
@@ -3050,8 +3050,8 @@ model deprecated_dg_sendorder_copy1 {
   storage       Decimal  @default(0.00) @db.Decimal(10, 2)
   havefapiao    Int?     @default(0) @db.SmallInt
   mailremark    String?  @db.VarChar(512)
-  otype         Boolean? @default(true)
-  dfsendflag    Boolean? @default(false)
+  otype Int? @db.TinyInt @default(1)
+  dfsendflag Int? @db.TinyInt @default(0)
   dfremarkcn    String?  @db.VarChar(512)
   enname        String?  @db.VarChar(30)
   dflwh         String?  @db.VarChar(30)
@@ -3063,7 +3063,7 @@ model deprecated_dg_sendorder_copy1 {
   packageid     Int?
   prostate      Int?     @db.TinyInt
   prostatetime  Int?
-  passtype      Boolean? @default(false)
+  passtype Int? @db.TinyInt @default(0)
   bargainprice  Decimal? @default(0.00) @db.Decimal(10, 2)
   bargainstate  Int?     @default(0) @db.TinyInt
   totalpackages Int?     @default(0)
@@ -3176,7 +3176,7 @@ model deprecated_dg_users_copy {
   memberid  String?  @db.VarChar(25)
   remark    String?  @db.Text
   fb        String?  @db.VarChar(11)
-  dfflag    Boolean? @default(false)
+  dfflag Int? @db.TinyInt @default(0)
   dffee     Decimal? @default(15.00) @db.Decimal(10, 2)
   floatrate Decimal? @default(0.05) @db.Decimal(10, 2)
 
@@ -3214,17 +3214,17 @@ model deprecated_dg_users_copy1 {
   memberid      String?  @db.VarChar(25)
   remark        String?  @db.Text
   fb            String?  @db.VarChar(11)
-  dfflag        Boolean? @default(false)
+  dfflag Int? @db.TinyInt @default(0)
   dffee         Decimal? @default(15.00) @db.Decimal(10, 2)
   floatrate     Decimal? @default(0.05) @db.Decimal(10, 2)
-  csvupflag     Boolean? @default(false)
+  csvupflag Int? @db.TinyInt @default(0)
   dfsendaddress String?  @db.VarChar(200)
   dfsendtel     String?  @db.VarChar(50)
   dfsendname    String?  @db.VarChar(50)
   lastordertime Int?
-  orderenable   Boolean? @default(true)
+  orderenable Int? @db.TinyInt @default(1)
   stoptime      Int?
-  regtype       Boolean?
+  regtype Int? @db.TinyInt
   comname       String?  @db.VarChar(50)
   comengname    String?  @db.VarChar(50)
   commanager    String?  @db.VarChar(50)
@@ -3235,7 +3235,7 @@ model deprecated_dg_users_copy1 {
   comaddresseng String?  @db.VarChar(255)
   line          String?  @db.VarChar(30)
   wechat        String?  @db.VarChar(30)
-  usetype       Boolean?
+  usetype Int? @db.TinyInt
   prebuyfeq     String?  @db.VarChar(60)
   prebuyamt     String?  @db.VarChar(60)
   enname        String?  @db.VarChar(60)
@@ -3281,7 +3281,7 @@ model deprecated_v2_freight_calculators {
   algorithm_snippet String?   @db.Text
   test_data         Json?
   description       String?   @db.Text
-  is_active         Boolean   @default(true)
+  is_active Int @db.TinyInt @default(1)
   created_at        DateTime? @db.Timestamp(0)
   updated_at        DateTime? @db.Timestamp(0)
 }
@@ -3295,7 +3295,7 @@ model deprecated_v2_freight_calculators_v2 {
   algorithm_snippet String?   @db.Text
   test_data         Json?
   description       String?   @db.Text
-  is_active         Boolean   @default(true)
+  is_active Int @db.TinyInt @default(1)
   created_at        DateTime? @db.Timestamp(0)
   updated_at        DateTime? @db.Timestamp(0)
   freight_mapping   Json?
@@ -3312,7 +3312,7 @@ model dg_inquiry_order {
   quotation_file_url String?  @db.VarChar(500)
   item_count         Int      @default(0) @db.UnsignedInt
   quoted_item_count  Int      @default(0) @db.UnsignedInt
-  is_deleted         Boolean  @default(false)
+  is_deleted Int @db.TinyInt @default(0)
   created_at         DateTime @default(now()) @db.DateTime(0)
   updated_at         DateTime @default(now()) @db.DateTime(0)
 
@@ -3341,7 +3341,7 @@ model dg_inquiry_order_item {
   product_site          String?  @db.VarChar(100)
   uid                   BigInt   @db.UnsignedBigInt
   uname                 String   @db.VarChar(100)
-  is_deleted            Boolean  @default(false)
+  is_deleted Int @db.TinyInt @default(0)
   created_at            DateTime @default(now()) @db.DateTime(0)
   updated_at            DateTime @default(now()) @db.DateTime(0)
 
@@ -3363,7 +3363,7 @@ model dg_record_old {
   addtime      Int?
   sn           String?   @db.VarChar(500)
   oid          Int?
-  ordflag      Boolean?  @default(true)
+  ordflag Int? @db.TinyInt @default(1)
   deleted_at   DateTime? @db.DateTime(0)
 
   @@index([addtime], map: "index_addtime")
@@ -3430,7 +3430,7 @@ model v2_member_webhook {
   uid                   Int       @unique(map: "v2_member_webhook_uid_unique") @db.UnsignedInt
   url                   String    @db.VarChar(500)
   secret                String    @db.Text
-  enabled               Boolean   @default(true)
+  enabled Int @db.TinyInt @default(1)
   balance_low_threshold Decimal?  @db.Decimal(12, 2)
   created_at            DateTime? @db.Timestamp(0)
   updated_at            DateTime? @db.Timestamp(0)

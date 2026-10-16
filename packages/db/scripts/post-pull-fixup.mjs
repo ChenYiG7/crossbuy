@@ -51,7 +51,32 @@ src = src.replace(MODEL_RE, (block, modelName, body) => {
   );
 });
 
-// ---- ② 头部恢复（pull 会冲掉；幂等：已在则不重复贴） ----
+// ---- ② tinyint(1) 保真修复（★ P0，静默数据损坏） ----
+// MySQL 的 TINYINT(1) 只是「显示宽度 1」，**实际能存 -128..127**；而 Prisma 一律把
+// tinyint(1) introspect 成 `Boolean` ⇒ 非 0/1 值在读写时被静默塌成 true/false。
+// 生产实测（2026-10-17）中招的列：
+//   dg_users.usetype        0..5（643/5,021 会员是非 0/1 值）—— 会员「帐号用途」枚举
+//   dg_record.ordflag       0..3（807 万行余额流水）
+//   dg_sendorder.otype      1..3（运单类型）
+//   dg_favorite.type        1..3（收藏类型）
+// 处置：**全部 tinyint(1) 一律降为 `Int @db.TinyInt`**（保真优先）。理由：无法在
+// introspect 阶段区分「真布尔」与「用 tinyint 装的枚举」，而失真不可接受；
+// 需要布尔语义的列在 contract/域层自行转换（0/1 仍可按真假用）。
+// 纯静态改写，不连数据库，故可在任何环境重跑。
+let boolFixed = 0;
+src = src.replace(
+  /^([ \t]+)([A-Za-z_][A-Za-z0-9_]*)[ \t]+Boolean(\??)([ \t]*)(.*)$/gm,
+  (_m, indent, field, opt, _sp, rest) => {
+    if (rest.includes('@db.TinyInt')) return _m; // 幂等：已修过
+    boolFixed += 1;
+    const tail = rest
+      .replace(/@default\(false\)/g, '@default(0)')
+      .replace(/@default\(true\)/g, '@default(1)');
+    return `${indent}${field} Int${opt} @db.TinyInt${tail ? ' ' + tail : ''}`;
+  },
+);
+
+// ---- ③ 头部恢复（pull 会冲掉；幂等：已在则不重复贴） ----
 // 注意：头部首行是 `// ====` 分隔线，标记行在第 2 行 ⇒ 必须用 includes 判存在，
 // 用 startsWith 会把「已贴过头」误判成「没贴」而重复贴（2026-10-16 实测踩过）。
 let headerRestored = false;
@@ -68,5 +93,5 @@ if (existsSync(headerPath)) {
 
 writeFileSync(schemaPath, src);
 console.log(
-  `[post-pull] renamed=${renamed} header_restored=${headerRestored} → ${schemaPath}`,
+  `[post-pull] renamed=${renamed} bool_fixed=${boolFixed} header_restored=${headerRestored} → ${schemaPath}`,
 );
