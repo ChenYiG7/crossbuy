@@ -1,3 +1,7 @@
+import { memberProfileUpdateSchema } from '@crossbuy/contract';
+import type { Principal } from '@crossbuy/auth';
+import { err, ok, type Result } from '@crossbuy/utils';
+import type { MemberError } from './errors';
 import type { MemberRepository } from './repository';
 
 /**
@@ -12,10 +16,43 @@ import type { MemberRepository } from './repository';
 export interface MemberService {
   /** 服务注册判别键（R3 服务注册表用） */
   readonly domain: 'member';
+
+  /**
+   * 更新会员资料（旧 `EditUserInfo` 的服务层等价物）。
+   * 入参先过 zod 契约：越界枚举（regType=3 / sex=2 / useType=9 / originPackageChoice=2）
+   * 属**可预期失败** ⇒ 返回 Result 错误，不抛异常（docs/07）。
+   */
+  updateProfile(
+    principal: Principal,
+    patch: unknown,
+  ): Promise<Result<void, MemberError>>;
 }
 
 export class MemberServiceImpl implements MemberService {
   readonly domain = 'member' as const;
 
   constructor(protected readonly repository: MemberRepository) {}
+
+  async updateProfile(
+    principal: Principal,
+    patch: unknown,
+  ): Promise<Result<void, MemberError>> {
+    const parsed = memberProfileUpdateSchema.safeParse(patch);
+    if (!parsed.success) {
+      // 首个 issue 的 path 就是违规字段名（旧系统按字段返回 validation key）
+      const field = parsed.error.issues[0]?.path.join('.') ?? 'patch';
+      return err({
+        code: 'MEMBER_PROFILE_INVALID',
+        message: `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`,
+      });
+    }
+
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
+    }
+
+    await this.repository.updateProfile(uid, parsed.data);
+    return ok(undefined);
+  }
 }
