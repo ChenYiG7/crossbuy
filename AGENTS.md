@@ -32,6 +32,8 @@
 - 引入与同步：`node scripts/import-claude-skills.mjs`（上游 `~/.claude/skills/` 更新后重跑即可）。
 - ★ **项目专属补丁的正本在该脚本的 `PROJECT_PATCHES`**（如 TDD 的「生成器优先 vs TDD 只约束
   手写业务规则」边界）。**不要直接改 `.workbuddy/skills/` 下的文件**——下次重跑会被整目录覆写冲掉。
+- 目录位置固定在 `.workbuddy/skills/`（工具链路径，**不可为躲 .gitignore 而搬家**）；
+  `.gitignore` 整体忽略 `.workbuddy/` 但放行 `skills/` 与 `memory/`，详见 README §仓库卫生。
 - 与 `docs/07` 冲突时以 docs/07 为准。
 - ⚠ 本环境的技能列表来自插件缓存，项目级技能**需重启会话**才会出现在可调用列表；列表里
   刷不出来时，按上表直接读对应 `SKILL.md` 文件，效力相同。

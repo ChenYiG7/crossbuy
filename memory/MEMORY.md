@@ -41,6 +41,8 @@
 
 **技能（`.workbuddy/skills/`，2026-10-17 自 Claude Code superpowers 生态引入适配）**：6 个 = verification-before-completion（声称完成/提交前必加载）、systematic-debugging（提修复方案前找根因）、test-driven-development（写手写业务规则前）、writing-plans（写多步计划）+ executing-plans（执行）+ finishing-a-development-branch（收尾）。用法表在 **AGENTS.md「技能」小节**；`node scripts/import-claude-skills.mjs` 重跑同步。★ **项目专属补丁的正本是该脚本的 `PROJECT_PATCHES`**——改技能内容改脚本，**绝不直接改 `.workbuddy/skills/` 下的文件**（import 脚本整目录覆写会静默冲掉，2026-10-17 实测冲掉过 TDD 的「生成器优先 vs TDD 只约束手写业务规则」裁定）。⚠ 本会话技能列表来自插件缓存，**项目级技能需重启会话才进可调用列表**（实测 Skill 工具报 not found），刷不出来时直接读 SKILL.md 即可。
 
+**仓库卫生约定（用户要求，2026-10-17）**：`.gitignore` **整体忽略 `.workbuddy/*`**（`.genie` 应用文件 / 临时脚本 / 会话快照一律不入库），但**放行 `.workbuddy/memory/` 与 `.workbuddy/skills/`** 两个子目录。★ 这两个路径是**工具链固定**的（记忆系统写 `.workbuddy/memory/YYYY-MM-DD.md`、项目级技能读 `.workbuddy/skills/`）⇒ **不可为躲 .gitignore 把它们搬出 .workbuddy**，搬家等于让工具读不到。改 .gitignore 后必须用 `git check-ignore -v` 双向验证（该留的 KEEP / 该忽略的 IGNORED）+ 真造垃圾文件看 `git status` 看不见。详见 README §仓库卫生。
+
 **工具链红线（2026-10-17 定）**：★ **Prisma 产物 `src/generated/**` 写在源码树**，turbo 缓存命中会跳过生成却仍报成功 ⇒ `generate` 必须进依赖图且 `cache:false`，由 `packages/db/turbo.json`（`extends:["//"]`）让 db 的 build/typecheck 都 `dependsOn:["^build","generate"]`（db 在最上游，`^build` 对它为空，故 build 过 ≠ typecheck 过——实测 build 23/23 绿而 typecheck 报 TS2307）；db 的 build 脚本内**不再**调 generate（省 7s×2），保留 `prebuild`/`pretypecheck` 给绕过 turbo 的 pnpm 直接调用兜底（**turbo 直接 exec 脚本内容，生命周期钩子不触发**，所以不重复）。★ **package.json 是严格 JSON 禁 `//` 注释**（turbo.json / tsconfig.json 支持 jsonc 是特例），加了会让 pnpm 报 `ELIFECYCLE` 且错误信息指向注释文字本身，极难定位。
 
 ## ★ 血泪坑（按代价排序）
