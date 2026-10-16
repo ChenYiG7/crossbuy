@@ -17,6 +17,25 @@
 | 参考旧系统业务 | `docs/00-原项目参考指南.md`（旧系统在哪、怎么读、雷区） |
 | 规划一个域 / 排里程碑 | `docs/06-开发计划.md`（R1 执行版：M0~M5 + 域绞杀 DoD + 常设纪律 + prompts） |
 
+## 技能（`.workbuddy/skills/`，2026-10-17 自 Claude Code superpowers 生态引入）
+
+共 6 个，**命中场景必须先加载再动手**：
+
+| 场景 | 加载 |
+|---|---|
+| 即将声称「完成/修好了/通过」、提交或推送前 | `verification-before-completion` |
+| 任何 bug / 测试失败 / 意外行为（**提修复方案前**） | `systematic-debugging` |
+| 写手写业务规则（金额 / 状态机 cas / 幂等 upsert / 账本）前 | `test-driven-development` |
+| 写一个多步任务的实现计划 | `writing-plans`（执行时 `executing-plans`） |
+| 收尾：验证通过后的合并 / PR / 清理 | `finishing-a-development-branch` |
+
+- 引入与同步：`node scripts/import-claude-skills.mjs`（上游 `~/.claude/skills/` 更新后重跑即可）。
+- ★ **项目专属补丁的正本在该脚本的 `PROJECT_PATCHES`**（如 TDD 的「生成器优先 vs TDD 只约束
+  手写业务规则」边界）。**不要直接改 `.workbuddy/skills/` 下的文件**——下次重跑会被整目录覆写冲掉。
+- 与 `docs/07` 冲突时以 docs/07 为准。
+- ⚠ 本环境的技能列表来自插件缓存，项目级技能**需重启会话**才会出现在可调用列表；列表里
+  刷不出来时，按上表直接读对应 `SKILL.md` 文件，效力相同。
+
 ## 项目是什么
 
 面向**日本市场**的**中国商品代购平台**（`yiwutaro.com`）的全栈重写。原系统 `D:/Work/project/haiou/`（Laravel + Astro/Deno）生产运行中，**只读参考，绝不修改**。过渡期新旧共用同一 MySQL。

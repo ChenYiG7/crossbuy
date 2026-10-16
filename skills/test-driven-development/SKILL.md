@@ -3,6 +3,18 @@ name: test-driven-development
 description: Use when implementing any feature or bugfix, before writing implementation code
 ---
 
+> ## crossbuy 落地适配（2026-10-17 引入时改写，由脚本生成勿手改）
+>
+> 本技能源自 Claude Code 的 superpowers 生态（`~/.claude/skills/`），引入时按本仓实况改写：
+>
+> - `superpowers:*` 前缀已剥除 —— 本仓无该生态，跨技能引用直接指向 `.workbuddy/skills/` 下同名技能
+> - `TodoWrite` → 本环境的任务工具（`TaskCreate` / `TaskUpdate`）
+> - **删去 `using-git-worktrees` 依赖与「禁止在 main 上开工」条款** —— 本仓是 main 单主干直推（用户已授权），不设 worktree
+> - `brainstorming` 环节 → 本项目用 `docs/04-重写架构方案.md` + `docs/06-开发计划.md` 计划体系
+> - 与 `docs/07-开发规范守则.md` 冲突时，**以 docs/07 为准**
+>
+> 转换规则与重跑方式见 `scripts/import-claude-skills.mjs`（上游更新后 `node scripts/import-claude-skills.mjs` 即可重新同步）
+
 # Test-Driven Development (TDD)
 
 ## Overview
