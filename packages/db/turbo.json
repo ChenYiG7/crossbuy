@@ -1,0 +1,20 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "extends": ["//"],
+  "tasks": {
+    // 本包独有：Prisma 产物（src/generated/**）是 tsc 的输入，必须先于 build/typecheck 存在。
+    //
+    // 根配置里 typecheck/build 只依赖 "^build"（上游包），而 db 在最上游没有上游，
+    // 于是 db 的 typecheck 会在没 generate 过时直接 tsc → TS2307 找不到
+    // './generated/legacy'；domains/* 依赖 db 的 build，db build 缓存命中时脚本被
+    // 整个跳过（脚本里的 pnpm generate 自然也不执行），产物照样缺失。
+    //
+    // 修法：generate 进依赖图，且它是 cache:false（产物写在源码树，不可缓存）。
+    "build": {
+      "dependsOn": ["^build", "generate"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build", "generate"]
+    }
+  }
+}

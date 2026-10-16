@@ -13,6 +13,11 @@
     "lint": {
       "dependsOn": ["^build"]
     },
+    // Prisma 产物写在源码树（src/generated/**）而非 dist，**不可缓存**：
+    // 缓存命中时任务被跳过 → 生成不执行 → 源码树里的产物缺失，下游 TS2307。
+    "generate": {
+      "cache": false
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },
