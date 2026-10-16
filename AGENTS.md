@@ -67,7 +67,7 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架 |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架 |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 四域新表正本（member+finance+order+send-order **60 模型**，金额 `Decimal(14,2)`/面值 CNY）：#11b 定版 + finance 段 12 表已落地（`0015-finance-domain-up.sql`）；⚠ **#3g 硬化后（映射升实体表、`0003` 21 项实时期望、新增 `0014`）尚未复跑**，四步判定见 `packages/db/sql/README.md`；⚠ finance 12 张是首批**无前缀**表名，T0 前须重名核查（TODO #11c）；跑绿前 #3d 不可交 DBA |
+| `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟡 四域新表正本（member+finance+order+send-order **60 模型**，金额 `Decimal(14,2)`/面值 CNY）：#11b 定版 + finance 段 12 表落地（`0015`）；✅ **#3g 硬化后已于 2026-10-16 空库全链跑绿**（`docs/plans/03` §十：60 表零警告 / `0003` 17 PASS 0 FAIL / 守卫破坏测试拦停 / 两遍幂等）；⚠ 交 DBA 前两条时序前置 = T1 当天重跑 `precheck` 补映射 + 生产侧复跑新表名重名核查（本机 dump 只覆盖 160/174，见 #11c）；finance 段回填 `0016~0019` 待写 |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
 | `packages/auth` | 会话类型（会员/后台） | 🟡 仅类型 |

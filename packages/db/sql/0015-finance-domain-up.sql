@@ -2,7 +2,7 @@
 CREATE TABLE `accounts` (
     `id` BIGINT NOT NULL AUTO_INCREMENT,
     `kind` VARCHAR(24) NOT NULL,
-    `member_id` INTEGER NULL,
+    `member_id` INTEGER NOT NULL DEFAULT 0,
     `currency` VARCHAR(8) NOT NULL DEFAULT 'CNY',
     `balance` DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
     `opening_amount` DECIMAL(14, 2) NOT NULL DEFAULT 0.00,
@@ -13,7 +13,7 @@ CREATE TABLE `accounts` (
     `updated_at` DATETIME(0) NOT NULL,
 
     INDEX `accounts_member_id_idx`(`member_id`),
-    UNIQUE INDEX `accounts_kind_member_id_key`(`kind`, `member_id`),
+    UNIQUE INDEX `accounts_kind_currency_member_id_key`(`kind`, `currency`, `member_id`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

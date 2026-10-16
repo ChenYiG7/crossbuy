@@ -140,7 +140,7 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 - [x] 写回填脚本（幂等 + 显式 id + 消歧映射 + fail-fast 守卫 + 顶 AUTO_INCREMENT）→ `packages/db/sql/0002-member-backfill-t1.sql`
 - [x] 写一致性校验脚本 → `packages/db/sql/0003-member-backfill-verify.sql`（**21 项**，期望值按当前源实时计算；旧版 15 项里有 4 项把生产快照数字写死，见 `docs/plans/03` §9.4）
 - [x] **本地演练 T0→T1→校验**：15/15 PASS、3 遍幂等、回退 OK → `docs/plans/03-T1本地演练报告.md`
-- [ ] ★ **#3g 硬化后的复跑**（`0002`/`0003` 重写、新增 `0014`）：空库全链 → 两遍幂等 → 故意删映射行验证守卫 → `0014` 逐表行数相等。判定口径见 `packages/db/sql/README.md`「复跑验证命令」；**跑绿前上一条的 15/15 不代表当前脚本**
+- [x] ★ **#3g 硬化后的复跑**（2026-10-16，独立新库 `crossbuy_t1v` 从零跑）：空库全链 rc=0 → `0003` **17 PASS + 4 INFO + 0 FAIL**（B2/B12 证地址孤儿过滤生效：2,147 行 / 悬空 0 / 过滤 7,324）→ 两遍计数与 Σbalance 不变（5,021 / 115,263,684.24 / 2,147）→ **故意删映射行 + 用生产映射跑本地快照**两种破坏都被守卫 `rc=1` 拦停并点名 → `0014` 审计 15 表来源与行数全对。证据 `docs/plans/03` §十、判定口径 `packages/db/sql/README.md`
 - [ ] **★ 生产写权限**：`datapro` 只读 → 需 DBA 用具备 DDL/DML 的账号执行 ①~③
 - [ ] 第一回填批（侧表）：T1 期间双写 `MemberRepository`（双写事务 + 反向同步水位）
 - [x] 第二批侧表回填（webhook/oauth/favorite/browse_history/benefit/operation_log/area/PAT/idempotency）→ `0004`/`0005`，本地 25 项 PASS（TODO #3e）

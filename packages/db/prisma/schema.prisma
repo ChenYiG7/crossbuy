@@ -531,10 +531,11 @@ model Account {
   /// MEMBER 会员余额户 / COMPANY 平台收入 / PURCHASE 采购成本 / FREIGHT 运费 /
   /// CHANNEL_IN_TRANSIT 渠道在途 / ADJUSTMENT 人工调整损益（词表正本在 contract）
   kind   String @db.VarChar(24)
-  /// kind=MEMBER 时 == member.id（== 旧 dg_users.uid）；其余账户 NULL
-  /// ⚠ MySQL 唯一索引里 NULL 互不相等 → 非会员账户不受 @@unique(kind,memberId) 约束，
-  ///   「一个 kind 只允许一个」要靠应用层或 sentinel 收口（登记 TODO #11c）
-  memberId Int? @map("member_id")
+  /// kind=MEMBER 时 == member.id（== 旧 dg_users.uid）；平台侧账户（COMPANY/PURCHASE/
+  /// FREIGHT/CHANNEL_IN_TRANSIT/ADJUSTMENT）用 **sentinel 0**，不用 NULL——
+  /// MySQL 唯一索引里 NULL 互不相等，NULL 版本会让「一个 kind 一个户」形同虚设（TODO #11c② 拍板）
+  /// ⚠ 不变式：member.id 恒 ≥ 1（回填后 AUTO_INCREMENT = max(uid)+1），故 0 不可能与真实会员撞号
+  memberId Int @default(0) @map("member_id")
   /// 面值币种（★ Q1 定版 CNY；禁跨币种加减）
   currency String @default("CNY") @db.VarChar(8)
   /// 当前余额（守卫列，禁旁路写：只允许 ledger.post() 同事务原子 UPDATE）
@@ -550,7 +551,8 @@ model Account {
   createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(0)
 
-  @@unique([kind, memberId])
+  /// 「一个 kind + 币种 + 会员 = 一个户」在 DB 层真正成立（memberId 用 sentinel 0 而非 NULL）
+  @@unique([kind, currency, memberId])
   @@index([memberId])
   @@map("accounts")
 }
