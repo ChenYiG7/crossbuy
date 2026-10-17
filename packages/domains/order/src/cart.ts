@@ -187,18 +187,21 @@ export interface CartMoneyBreakdown {
 }
 
 /**
- * 旧 Cart::countMoney 1:1。
- * @param userCharged 付费会员（utype = UTYPE_CHARGED）——服务费归零
- * @param dffee 代发单件服务费（user.dffee）
- * @param feeDeductPreview 权益预览（null = 不抵扣）；付费会员在外层被视为不需要抵扣
+ * 旧 Cart::countMoney 1:1 + **逐行抵扣额**（下单链路必需）。
+ *
+ * ⚠ 旧 countMoney 有**内存态副作用**：`$cart->extend = json_encode($extend)` 写入
+ * `deducted_service_fee` 但**不 save()**——然而同一请求内 `cartToOrder()` 走
+ * `$cart->toArray()` 会把它搬进 `dg_order.extend`，随后 `payOrder()` 再读回来算实付服务费。
+ * 读路径（cart.ts 列表/金额）不需要它（GraphQL 出参不含 extend），下单链路需要——
+ * 故本函数把逐行抵扣额显式返回，由下单服务落 extend（语义等价，副作用外显化）。
  */
-export function countMoney(
+export function countMoneyWithDeductions(
   carts: CartEntity[],
   products: Map<number, SupplierProductEntity>,
   userCharged: boolean,
   dffee: number,
   feeDeductPreview: { canDeduct: number; maxDeduct: number } | null,
-): CartMoneyBreakdown {
+): { money: CartMoneyBreakdown; deductedByGid: Map<number, number> } {
   let originalDaigouServerMoney = 0;
   let originalDaifaServerMoney = 0;
   let daigouServerMoney = 0;
@@ -207,6 +210,7 @@ export function countMoney(
   let deductedServerMoney = 0;
   let remainingDeduct = feeDeductPreview ? feeDeductPreview.canDeduct : 0;
   const maxDeductServerMoney = feeDeductPreview ? feeDeductPreview.maxDeduct : 0;
+  const deductedByGid = new Map<number, number>();
 
   const tierPrices = calculateTierPrices(carts, products);
 
@@ -218,18 +222,21 @@ export function countMoney(
         goodsMoney += money;
         const originalFee = Math.ceil(money * 0.05 * 100) / 100;
         originalDaigouServerMoney += originalFee;
+        let deductedFee = 0;
         if (remainingDeduct > 0) {
           if (remainingDeduct >= originalFee) {
-            deductedServerMoney += originalFee;
+            deductedFee = originalFee;
             remainingDeduct -= originalFee;
           } else {
-            deductedServerMoney += remainingDeduct;
+            deductedFee = remainingDeduct;
             daigouServerMoney += originalFee - remainingDeduct;
             remainingDeduct = 0;
           }
         } else {
           daigouServerMoney += originalFee;
         }
+        deductedByGid.set(cart.gid, round2(deductedFee));
+        deductedServerMoney += deductedFee;
         break;
       }
       case ORDER_TYPE_DAIFA: {
@@ -249,13 +256,32 @@ export function countMoney(
   const originalServerMoney = originalDaigouServerMoney + originalDaifaServerMoney;
   const serverMoney = daigouServerMoney + daifaServerMoney;
   return {
-    goodsMoney: round2(goodsMoney),
-    originalServerMoney: round2(originalServerMoney),
-    maxDeductServerMoney: round2(maxDeductServerMoney),
-    deductedServerMoney: round2(deductedServerMoney),
-    serverMoney: round2(serverMoney),
-    totalMoney: round2(goodsMoney + serverMoney),
+    money: {
+      goodsMoney: round2(goodsMoney),
+      originalServerMoney: round2(originalServerMoney),
+      maxDeductServerMoney: round2(maxDeductServerMoney),
+      deductedServerMoney: round2(deductedServerMoney),
+      serverMoney: round2(serverMoney),
+      totalMoney: round2(goodsMoney + serverMoney),
+    },
+    deductedByGid,
   };
+}
+
+/**
+ * 旧 Cart::countMoney 1:1。
+ * @param userCharged 付费会员（utype = UTYPE_CHARGED）——服务费归零
+ * @param dffee 代发单件服务费（user.dffee）
+ * @param feeDeductPreview 权益预览（null = 不抵扣）；付费会员在外层被视为不需要抵扣
+ */
+export function countMoney(
+  carts: CartEntity[],
+  products: Map<number, SupplierProductEntity>,
+  userCharged: boolean,
+  dffee: number,
+  feeDeductPreview: { canDeduct: number; maxDeduct: number } | null,
+): CartMoneyBreakdown {
+  return countMoneyWithDeductions(carts, products, userCharged, dffee, feeDeductPreview).money;
 }
 
 /** 供应商商品 → 契约摘要（price_range/seller_mix_setting JSON 解析容错 1:1 旧模型属性） */

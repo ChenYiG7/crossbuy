@@ -585,3 +585,37 @@ export const shipmentBatchResultSchema = z.object({
   }).optional(),
 });
 export type ShipmentBatchResult = z.infer<typeof shipmentBatchResultSchema>;
+
+// ---------------------------------------------------------------------------
+// 九、R1 复现期：购物车转订单（旧 CreateOrderMutation + CreateOrderFromCartService）
+// ---------------------------------------------------------------------------
+
+/**
+ * 下单入参（旧 CreateOrderMutation args 1:1）。
+ * ids = 购物车 gid 逗号串（`explode(',', $args['ids'])`）；storeMode 旧默认 0。
+ * 收/发件人字段缺失按 null 处理（旧 `Arr::get($args, k, null)`）。
+ */
+export const placeOrderSchema = z.object({
+  ids: z.string().min(1),
+  storeMode: z.coerce.number().int().optional().default(0),
+  consignee: z.string().nullish(),
+  country: z.string().nullish(),
+  address: z.string().nullish(),
+  tel: z.string().nullish(),
+  zip: z.string().nullish(),
+  remark: z.string().nullish(),
+  deliveryname: z.string().nullish(),
+  sendAddress: z.string().nullish(),
+  sendTel: z.string().nullish(),
+  sendName: z.string().nullish(),
+});
+export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
+
+/** 下单出参（旧 handle() 返回 order_ids + total_money；金额走 Money 字符串） */
+export const placeOrderResultSchema = z.object({
+  orderIds: z.array(z.number().int()),
+  totalMoney: z.string(),
+  /** 代发一件代发场景下创建的运单号（旧 SendOrder::create 的 sid；无则 null） */
+  sendOrderId: z.number().int().nullable(),
+});
+export type PlaceOrderResult = z.infer<typeof placeOrderResultSchema>;

@@ -19,6 +19,12 @@ export type Tx = LegacyPrisma.TransactionClient;
 /** db 句柄类型：client 单例或事务内 client */
 export type Db = LegacyPrismaClient | Tx;
 
+/** 下单链路购物车行（listCartsForOrder 列集；Cart::toArray 的搬运源） */
+export type CartForOrderRow = Awaited<ReturnType<OrderRepository['listCartsForOrder']>>[number];
+
+/** 建单入参（旧 `Order::create($order)`：$order = cart 全列（去 gid/anonymous）+ 覆盖项） */
+export type CreateOrderData = LegacyPrisma.dg_orderCreateInput;
+
 export class OrderRepository {
   // db 对域内 service/amount-sync 开放（组装 where 与分页查询共用连接）；域外仍禁直触
   constructor(public readonly db: LegacyPrismaClient = legacyPrisma) {}
@@ -365,6 +371,182 @@ export class OrderRepository {
       },
     });
     return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  // -----------------------------------------------------------------------
+  // 下单链路（旧 CreateOrderFromCartService + Cart::cartToOrder）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 下单装载购物车（旧 `Cart::with([...])->whereIn('gid', ids)->get()` 1:1）：
+   * **不过滤 uid / type**（归属守卫在 service，与旧 handle() 同）。
+   */
+  async listCartsForOrder(db: Db, gids: number[]) {
+    if (gids.length === 0) return [];
+    return db.dg_cart.findMany({
+      where: { gid: { in: gids } },
+      select: {
+        gid: true, uid: true, uname: true, type: true, tid: true,
+        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
+        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
+        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
+        goodscolor: true, goodsseller: true, sellerurl: true, goodssite: true, siteurl: true,
+        expressno: true, goodsremark: true, goodsid: true, proprice: true,
+        TermQty: true, TermPrice: true, TermShipping: true, inspection: true,
+        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
+        yanhuofba: true, yanhuojinyun: true, yanhuozengzhi: true, yanhuoasin: true, yanhuofnsku: true,
+        baozhuang: true, hbbaozhuang: true, baonum: true, SKU: true, FNSKU: true,
+        shangpin_fnsku: true, shangpin_sku: true, name: true, shangpin_name: true,
+        shangpin_amazon: true, amazon: true, putong: true, fuzhuang: true, tiebiao: true,
+        huanbaoz: true, qita: true, outid: true, add_from: true, add_from_memo: true, addtime: true,
+        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
+        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+      },
+      orderBy: { gid: 'asc' },
+    });
+  }
+
+  /**
+   * 行锁购物车（旧 lockCartsForUpdate：`Cart::with([...])->where(uid)->whereIn(gid)
+   * ->orderBy('gid')->lockForUpdate()->get()`）。
+   *
+   * ⚠ dg_cart 在 Prisma 里**没有 supplierProduct 关系**（`supplier_product_id` 是裸 int，
+   * 生产无外键约束）→ 店铺名两步查：product.shop_id → shop.title ?: shop.nickname
+   * （旧 cartToOrder 的 `$supplierProduct->supplierShop->title ?: nickname`）。
+   */
+  async lockCartsForUpdate(
+    tx: LegacyPrisma.TransactionClient,
+    uid: number,
+    gids: number[],
+  ): Promise<Array<CartForOrderRow & { shopId: number | null; shopTitle: string | null; shopNickname: string | null }>> {
+    const rows = await tx.dg_cart.findMany({
+      where: { uid, gid: { in: gids } },
+      select: {
+        gid: true, uid: true, uname: true, type: true, tid: true,
+        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
+        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
+        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
+        goodscolor: true, goodsseller: true, sellerurl: true, goodssite: true, siteurl: true,
+        expressno: true, goodsremark: true, goodsid: true, proprice: true,
+        TermQty: true, TermPrice: true, TermShipping: true, inspection: true,
+        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
+        yanhuofba: true, yanhuojinyun: true, yanhuozengzhi: true, yanhuoasin: true, yanhuofnsku: true,
+        baozhuang: true, hbbaozhuang: true, baonum: true, SKU: true, FNSKU: true,
+        shangpin_fnsku: true, shangpin_sku: true, name: true, shangpin_name: true,
+        shangpin_amazon: true, amazon: true, putong: true, fuzhuang: true, tiebiao: true,
+        huanbaoz: true, qita: true, outid: true, add_from: true, add_from_memo: true, addtime: true,
+        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
+        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+      },
+      orderBy: { gid: 'asc' },
+    });
+    // Prisma 无 lockForUpdate：同一列集补一条 raw FOR UPDATE 取锁（旧行锁语义）
+    if (rows.length > 0) {
+      await tx.$queryRaw`SELECT gid FROM dg_cart WHERE uid = ${uid} AND gid IN (${LegacyPrismaRuntime.join(rows.map((r) => r.gid))}) ORDER BY gid FOR UPDATE`;
+    }
+
+    // 店铺名（两步查：product → shop）
+    const productIds = [...new Set(rows.map((r) => r.supplier_product_id).filter((v): v is number => v !== null && v !== 0))];
+    const shopIdByProduct = new Map<number, number>();
+    if (productIds.length > 0) {
+      const products = await tx.v2_supplier_product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, shop_id: true },
+      });
+      for (const p of products) shopIdByProduct.set(p.id, p.shop_id);
+    }
+    const shopIds = [...new Set([...shopIdByProduct.values()].filter((v) => v !== 0))];
+    const shopById = new Map<number, { title: string; nickname: string | null }>();
+    if (shopIds.length > 0) {
+      const shops = await tx.v2_supplier_shop.findMany({
+        where: { id: { in: shopIds } },
+        select: { id: true, title: true, nickname: true },
+      });
+      for (const s of shops) shopById.set(s.id, { title: s.title, nickname: s.nickname });
+    }
+
+    return rows.map((cart) => {
+      const shopId = cart.supplier_product_id ? shopIdByProduct.get(cart.supplier_product_id) ?? null : null;
+      const shop = shopId === null ? undefined : shopById.get(shopId);
+      return {
+        ...cart,
+        shopId,
+        shopTitle: shop?.title ?? null,
+        shopNickname: shop?.nickname ?? null,
+      };
+    });
+  }
+
+  /** 阶梯价回写购物车（旧 updateTierPricesForCarts 的 `$cart->save()`） */
+  async updateCartGoodsprice(db: Db, gid: number, goodsprice: number): Promise<void> {
+    await db.dg_cart.updateMany({ where: { gid }, data: { goodsprice } });
+  }
+
+  /**
+   * 砍价记录（旧 `BargainRecord::where(goodid)->where(goodstype)->first()`）。
+   * ⚠ `dg_bargain_record.goodid` 是 **BigInt**（Prisma 映射）→ 非数字 goodsid 直接判无砍价
+   * （旧 MySQL 隐式转 0 会命中 goodid=0 的行，实际不存在——等价）。
+   */
+  async findBargain(db: Db, goodsId: string, goodsType: number): Promise<{ bgprice: number | null } | null> {
+    const numeric = /^\d+$/.test(goodsId) ? BigInt(goodsId) : null;
+    if (numeric === null) return null;
+    const row = await db.dg_bargain_record.findFirst({
+      where: { goodid: numeric, goodstype: goodsType },
+      select: { bgprice: true },
+      orderBy: { id: 'asc' },
+    });
+    if (!row) return null;
+    return { bgprice: row.bgprice === null ? null : Number(row.bgprice) };
+  }
+
+  /**
+   * 建单（旧 Cart::cartToOrder 的 `Order::create`）；返回 payOrder / 后处理所需列。
+   * ⚠ 列集固定：本地 dump 缺生产新列（buyer_remark_icon/buyer_memo），禁 select 它们。
+   */
+  async createOrder(db: Db, data: CreateOrderData) {
+    return db.dg_order.create({
+      data,
+      select: {
+        oid: true, type: true, state: true, uid: true, uname: true,
+        goodsurl: true, goodsname: true, goodsprice: true, goodsnum: true,
+        goodsimg: true, goodsseller: true, goodssite: true, expressno: true,
+        extend: true,
+      },
+    });
+  }
+
+  /** 删除购物车行（旧 `$cart->delete()`） */
+  async deleteCart(db: Db, gid: number): Promise<void> {
+    await db.dg_cart.delete({ where: { gid } });
+  }
+
+  /**
+   * 一件代发：回写会员发件信息（旧 `$user->dfsendaddress/tel/name; $user->save()`）。
+   * ⚠ dg_users 属主 = member 域，但旧代码在下单事务内写——与 addBalanceRecord 同款
+   * 事务内直写（domain 间不拆事务；R3 拆库时改为跨域端口 + 事务消息）。
+   */
+  async updateDfSendInfo(
+    tx: LegacyPrisma.TransactionClient,
+    uid: number,
+    info: { dfsendaddress: string; dfsendtel: string; dfsendname: string },
+  ): Promise<void> {
+    await tx.dg_users.update({ where: { uid }, data: info });
+  }
+
+  /**
+   * 行锁读用户（下单链路扩列版：payOrder 需要 memberid/email/belong_company）。
+   * 与 lockUser 分列集是为了两条链路各自最小列集（旧代码也是各读各的模型实例）。
+   */
+  async lockUserForOrder(tx: LegacyPrisma.TransactionClient, uid: number) {
+    const rows = await tx.$queryRaw<
+      Array<{
+        uid: number; uname: string; memberid: string | null; email: string | null;
+        money: number; dfflag: number | null; utype: number | null; validity: number;
+        dffee: number | null; belong_company: string | null;
+      }>
+    >`SELECT uid, uname, memberid, email, money, dfflag, utype, validity, dffee, belong_company
+       FROM dg_users WHERE uid = ${uid} FOR UPDATE`;
+    return rows[0] ?? null;
   }
 
   // -----------------------------------------------------------------------

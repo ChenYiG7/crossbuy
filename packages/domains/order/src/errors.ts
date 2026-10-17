@@ -13,6 +13,16 @@ export const ORDER_ERROR_MESSAGES = {
   NO_PERMISSIONS: '没有操作权限',
   ORDER_NOT_ALLOWED_CANCEL: '订单当前状态不允许取消',
   ORDER_INVALID_TYPE: '订单类型不合法',
+  /** 旧 graphql-message.cart.not_found */
+  CART_NOT_FOUND: '购物车记录不存在',
+  /** 旧 handle() 的 `throw new UserError('type error!')`（类型混装且含代发） */
+  ORDER_TYPE_MIXED: 'type error!',
+  /** 旧 graphql-message.order.sku_creating（30s 冷却 / 进程锁占用） */
+  ORDER_SKU_CREATING: '同一规格 30 秒内只能创建一次订单，请稍后再试！',
+  /** 旧 graphql-message.order.insufficient_balance */
+  ORDER_INSUFFICIENT_BALANCE: '您的余额不足，请先充值再下单！',
+  /** 入参不合法（旧 GraphQL String! 层校验；REST 面显式化） */
+  ORDER_PLACE_INPUT_INVALID: '入参不合法',
 } as const;
 
 export type OrderErrorCode = keyof typeof ORDER_ERROR_MESSAGES;

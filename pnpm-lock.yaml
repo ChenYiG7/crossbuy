@@ -314,6 +314,9 @@ importers:
       '@crossbuy/domain-order':
         specifier: workspace:*
         version: link:../../packages/domains/order
+      '@crossbuy/domain-send-order':
+        specifier: workspace:*
+        version: link:../../packages/domains/send-order
       '@crossbuy/ui':
         specifier: workspace:*
         version: link:../../packages/ui

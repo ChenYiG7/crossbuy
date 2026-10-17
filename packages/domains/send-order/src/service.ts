@@ -7,7 +7,7 @@ import {
 import { err, ok, type Result } from '@crossbuy/utils';
 import { unixToIso } from '@crossbuy/utils';
 import type { Principal } from '@crossbuy/auth';
-import type { LegacyWhere, SendOrderRepository } from './repository';
+import type { LegacyWhere, SendOrderRepository, SendOrderTx } from './repository';
 
 /**
  * 订单侧读端口（dg_order 属主 = order 域；send-order 列表的订单面依赖经此消费——
@@ -61,6 +61,33 @@ export interface SendOrderService {
     oids: number[];
     receiver: { regionName?: string; detailAddress?: string };
   }): Promise<{ sid: number }>;
+
+  /**
+   * 一件代发下单运单（旧 CreateOrderFromCartService 的 SendOrder::create 1:1）：
+   * STATE_WAITING=1 / OTYPE_3=3 / 全零金额 + 收件人七列 + 代发发件三列。
+   * oids 先落空串，订单建完后由 order 域调 updateSendOrderOids 回写（1:1 旧两步骤）。
+   */
+  createForDaifa(input: {
+    uid: number;
+    uname: string;
+    memberid: string | null;
+    email: string | null;
+    dfsendaddress: string;
+    dfsendname: string;
+    dfsendtel: string;
+    receiver: {
+      consignee: string | null;
+      address: string | null;
+      tel: string | null;
+      zip: string | null;
+      remark: string | null;
+      country: string | null;
+      deliveryname: string | null;
+    };
+  }, tx?: SendOrderTx): Promise<{ sid: number }>;
+
+  /** 回写运单 oids（旧 `$sendOrder->oids = implode(',', $orderIds); $sendOrder->save();`） */
+  updateSendOrderOids(sid: number, oids: number[], tx?: SendOrderTx): Promise<void>;
 
   /**
    * 会员运单列表（旧 listSendOrder + SendOrderListInput::buildQuery 1:1）。
@@ -245,6 +272,34 @@ export class SendOrderServiceImpl implements SendOrderService {
     }
 
     return ok({ rows: projected, page: query.page, pageSize: query.limit });
+  }
+
+  async createForDaifa(
+    input: {
+      uid: number;
+      uname: string;
+      memberid: string | null;
+      email: string | null;
+      dfsendaddress: string;
+      dfsendname: string;
+      dfsendtel: string;
+      receiver: {
+        consignee: string | null;
+        address: string | null;
+        tel: string | null;
+        zip: string | null;
+        remark: string | null;
+        country: string | null;
+        deliveryname: string | null;
+      };
+    },
+    tx?: SendOrderTx,
+  ): Promise<{ sid: number }> {
+    return this.repository.createForDaifa(input, tx);
+  }
+
+  async updateSendOrderOids(sid: number, oids: number[], tx?: SendOrderTx): Promise<void> {
+    return this.repository.updateSendOrderOids(sid, oids, tx);
   }
 
   async createFor1688Logistics(input: {

@@ -13,6 +13,9 @@ import { legacyPrisma, type LegacyPrisma, type LegacyPrismaClient } from '@cross
  * - 写路径唯一入口 + 状态机 CAS（UPDATE ... WHERE status=from）随域铺开时落
  * - 属主旧表清单见 docs/plans/07-表属主映射.md
  */
+/** 事务句柄（service 透传用；域内禁直 import @crossbuy/db） */
+export type SendOrderTx = LegacyPrisma.TransactionClient;
+
 export class SendOrderRepository {
   // db 对域内 service 开放（组装 where 与分页共用连接）；域外仍禁直触
   constructor(public readonly db: LegacyPrismaClient = legacyPrisma) {}
@@ -109,6 +112,78 @@ export class SendOrderRepository {
     return { sid };
   }
 
+  /**
+   * 一件代发下单运单（旧 CreateOrderFromCartService::placeOrdersFromCarts 的
+   * SendOrder::create($sendOrderData + $receiveInfo) 1:1）。
+   *
+   * ⚠ 与 1688 物流建档的差异：本路径落**收件人七列**与**代发发件三列**，
+   * 且 consignee 非空（旧 `!empty($options['consignee'])` 才建单）。
+   */
+  async createForDaifa(input: {
+    uid: number;
+    uname: string;
+    memberid: string | null;
+    email: string | null;
+    dfsendaddress: string;
+    dfsendname: string;
+    dfsendtel: string;
+    receiver: {
+      consignee: string | null;
+      address: string | null;
+      tel: string | null;
+      zip: string | null;
+      remark: string | null;
+      country: string | null;
+      deliveryname: string | null;
+    };
+  }, tx?: SendOrderTx): Promise<{ sid: number }> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const client = tx ?? this.db;
+    const row = await client.dg_sendorder.create({
+      data: {
+        uid: input.uid,
+        uname: input.uname,
+        memberid: input.memberid ?? '',
+        email: input.email,
+        oids: '',
+        couponid: 0,
+        couponmoney: 0,
+        serverfee: 0,
+        customsfee: 0,
+        yishouqufee: 0,
+        xiwgfei: 0,
+        xwdj: '',
+        totalfee: 0,
+        countmoney: 0,
+        areaname: '',
+        addtime: nowSec,
+        uptime: nowSec,
+        state: 1, // SendOrder::STATE_WAITING
+        storage: 0,
+        otype: 3, // SendOrder::OTYPE_3「一件代发」
+        dfsendaddress: input.dfsendaddress,
+        dfsendname: input.dfsendname,
+        dfsendtel: input.dfsendtel,
+        // 旧 Arr::only($options, [...])：缺失键落 null（列可空 → 原样；consignee 非null → ''）
+        consignee: input.receiver.consignee ?? '',
+        address: input.receiver.address,
+        tel: input.receiver.tel,
+        zip: input.receiver.zip,
+        remark: input.receiver.remark,
+        country: input.receiver.country,
+        deliveryname: input.receiver.deliveryname,
+      },
+      select: { sid: true },
+    });
+    return { sid: row.sid };
+  }
+
+  /** 回写运单 oids（旧 `$sendOrder->oids = implode(',', $orderIds); $sendOrder->save();`） */
+  async updateSendOrderOids(sid: number, oids: number[], tx?: SendOrderTx): Promise<void> {
+    const client = tx ?? this.db;
+    // updateMany（不回读全列，避开本地 dump 缺生产新列的 P2022）
+    await client.dg_sendorder.updateMany({ where: { sid }, data: { oids: oids.join(',') } });
+  }
 }
 
 /** 旧 query builder 的 Prisma where 形态（service 组装用） */

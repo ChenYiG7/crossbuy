@@ -88,7 +88,7 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 
 | 路径 | 职责 | 状态 |
 |---|---|---|
-| `apps/web` | 前台 www（对日电商） | 🟢 **M1 member 链路已落地**（2026-10-17：/member 页 RSC 直调域服务 + 登录/登出/PATCH 路由 + jose JWT 会话 + 端到端 smoke 31 断言；Tailwind 4 + 共享 UI，M0.6） |
+| `apps/web` | 前台 www（对日电商） | 🟢 **M1 member 链路 + M2 下单已落地**（2026-10-17：/member 页 RSC 直调域服务 + 登录/登出/PATCH 路由 + jose JWT 会话 + 端到端 smoke 31 断言；Tailwind 4 + 共享 UI，M0.6；**2026-10-17 深夜**：订单列表 GET + 取消 POST + **购物车转订单 POST `/api/customer/v1/orders`**，组合根含进程内重复下单闸门与 AFTER_COMMIT 副作用端口） |
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架（Tailwind 4 + 共享 UI 已接，M0.6） |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 **M1 只读切片已落地**（2026-10-17：登录（bcrypt + RBAC 范围实时判定）+ /users 用户列表 RSC 直调 member 域 + smoke 14 断言；写路径仍走旧后台直到域绞杀；两件套 next.config 已复制） |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架（M0.8 起 build = tsup，生产启动 `node dist/index.js`） |

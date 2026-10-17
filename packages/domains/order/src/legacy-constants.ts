@@ -24,6 +24,8 @@ export const RECORD = {
   TYPE_DECR: 1,
   /** Record::TYPE_INCR */
   TYPE_INCR: 2,
+  /** Record::RECORD_ACTION_1（下单扣款：payOrder 的 addMoney 动作） */
+  ACTION_1: 1,
   /** Record::RECORD_ACTION_4（返金/收入动作——action 词表随对账域补全） */
   ACTION_4: 4,
   ORDER_FLAG_1: 1,

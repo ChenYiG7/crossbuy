@@ -30,6 +30,13 @@ const STATUS_BY_CODE: Record<string, number> = {
   NO_PERMISSIONS: 403,
   ORDER_NOT_ALLOWED_CANCEL: 409,
   ORDER_INVALID_TYPE: 400,
+  // 下单面
+  CART_NOT_FOUND: 404,
+  ORDER_TYPE_MIXED: 400,
+  /** 旧 sku_creating：重复下单（30s 冷却 / 进程锁占用）——与旧系统同为「稍后重试」 */
+  ORDER_SKU_CREATING: 409,
+  ORDER_INSUFFICIENT_BALANCE: 400,
+  ORDER_PLACE_INPUT_INVALID: 400,
 };
 
 export function httpStatusForMemberError(code: string): number {
