@@ -44,6 +44,7 @@
 - [ ] **#11f 旧代码逆向补读**：OEM 专属 `action` 14–20/22/23 的业务语义需读 `haiou/app/Models/Record.php:100-110`（`resolveOemAction()` 按 paytype 映射）——本轮 flow_type 先落 `OEM_SERVICE_FEE_{n}` 占位，本机合计仅 11 行，语义不阻塞建表但阻塞对账口径。
 - [ ] **#12 logistics / ticket / cms**
 - [ ] **#13 前台 www 灰度替换**（SEO 收录不能断）
+- [ ] **#15 FBA 业务场景确认（架构裁定 2026-10-17，docs/04 §3.3）**：FBA = **业务线非域**——落点 = mzk 端流程分支 + send-order/logistics/platform/finance 域编排，**不预建模块**；待业务确认范围（头程 / 入库 / 箱规）。若未来出现独占表族 → 按 §3.3 准入判据（独占表族 / R3 独立所有权 / 独立伸缩部署，满足其一）新建 `fulfillment` 域（scaffold 分钟级）。业务确认前本项不动代码。
 
 ## 二、红线与坑（写代码前必读，每条带失败案例）
 

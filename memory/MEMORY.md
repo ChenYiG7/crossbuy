@@ -15,7 +15,7 @@
 全 TS：Next.js 15 App Router（`apps/{web,mzk,admin}`）+ Tailwind/shadcn；`apps/worker` = 纯 Node + BullMQ/Redis（替代旧 58 Job）；Prisma 6 + MySQL 8；zod 契约；decimal.js 金额单入口；Monorepo = pnpm workspace + Turborepo（`packages/{ui,db,contract,config,auth,utils}`）。**WMS 独立项目**（未来 `own/wms`），主系统只留 `wms-gateway` 接口面。信息源优先级：`AGENTS.md > docs/07 > TODO.md > docs/01~06 > 源码注释 > 代码`。
 
 ## 迁移铁律
-禁 Big Bang（新旧并行可回退）｜按域垂直切片（前后端+worker+契约端到端跑通再切）｜过渡期**共用旧表、写入口按域切换**（PHP 唯一写方直到域绞杀；2026-10-16 前的「同库双写新旧表」时序后移 R2）｜金额服务端重算 + Decimal + 唯一写入口｜webhook/队列消费幂等。
+禁 Big Bang（新旧并行可回退）｜按域垂直切片（前后端+worker+契约端到端跑通再切）｜过渡期**共用旧表、写入口按域切换**（PHP 唯一写方直到域绞杀；2026-10-16 前的「同库双写新旧表」时序后移 R2）｜金额服务端重算 + Decimal + 唯一写入口｜webhook/队列消费幂等｜**部署粒度 = app 级**（五 app 五部署单元、无共享后端进程、域写路径变更才协同发该域写方进程；新域准入三判据、FBA=业务线非域——docs/04 §2 D3 + §3.3，2026-10-17 拍板）。
 
 ## 表重构与共存（Q7，2026-10-13 定；**2026-10-16 起封存为 R2 资产，T0/T1 生产执行暂缓**）
 - **新表为唯一正本**，不继承旧结构（弃 MD5 无盐密码、money 挂用户、float 存钱、INT unix 时间戳、多态外键）。过渡期 = **同库同事务双写**新旧表（同库双表不违反铁律；读只读新表）。
