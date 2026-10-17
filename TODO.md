@@ -26,8 +26,8 @@
 
 ### P2（阶段 1：member 垂直切片，第 2-3 个月）
 
-- [ ] **#8 member 域端到端**：contract → route → service → repository → 单测跑通，与旧系统双跑对账
-- [ ] **#9 会员认证**：Auth.js（NextAuth v5）+ JWT 落地，`dfFlag` 分流
+- [ ] **#8 member 域端到端**（docs/06 §四，M1 试水切片）：✅ **2026-10-17 已落地**——契约（登录/资料读/资料编辑 22 字段 1:1 对齐旧 EditUserInfoMutation）→ repository 防腐层 → service（登录全闸门 + getProfile + updateProfile）→ web 路由（login/logout/me PATCH+GET）→ /member 页（RSC 直调 + 编辑表单）→ 单测 37 用例（PHPUnit 翻译 LoginTest/GetUserInfoTest/EditUserInfoTest + 头像怪癖往返）→ 端到端 smoke 31 断言（scratch 库不碰 dump）；门禁 typecheck/lint/test/build 全绿。**剩余**：① 收藏增删（docs/06 §四-3 写路径）；② admin「用户管理」模块（§四-4，新老并行）；③ 写路径演练 PHP↔TS 双跑 diff + nginx 灰度 ≥2 周（§四-6/7，绞杀 DoD，依赖 M0.8 部署管线）
+- [ ] **#9 会员认证**：✅ **JWT 会话已落地（2026-10-17，M1）**——jose HS256 + HttpOnly cookie（Bearer 兜底）+ `MemberTokenVerifier`（Principal 抽象落地，R3 抽认证中心换实现零改动）；AUTH_SESSION_SECRET production fail-fast；dfFlag 已入 token（isDf）。**裁定：不引 Auth.js（NextAuth v5）**——R1 客户面就一个登录态，jose 直实现 ~90 行、无框架黑魔法，签发/校验细节集中在 `apps/web/src/auth/`，将来要换（SSO/刷新令牌/多端）整体替换即可，域代码零感知。**剩余**：① 「记住我」已实现（双 TTL）；② 多端/刷新令牌/黑名单随 R3 认证中心；③ dfFlag 分流的下游使用（mzk 端流程分支，随 mzk 域铺开）
 
 ### P3（阶段 2：核心域绞杀）
 

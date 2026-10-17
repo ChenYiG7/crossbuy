@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { getMemberService, getMemberVerifier } from '@/server/member';
 import { SESSION_COOKIE_NAME } from '@/auth/cookies';
 import { LoginForm } from './login-form';
-import { ProfileView } from './profile-view';
+import { ProfileSection } from './profile-section';
 
 /**
  * 会员中心页（M1：RSC 直调域服务，不过 HTTP——docs/04 客户面 BFF+RSC 直调）。
@@ -44,7 +44,7 @@ export default async function MemberPage() {
       <header className="flex items-center gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
       </header>
-      <ProfileView profile={result.value} />
+      <ProfileSection profile={result.value} />
     </main>
   );
 }

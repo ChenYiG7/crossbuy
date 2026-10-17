@@ -18,18 +18,30 @@ import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
  * 资料字段 → 旧表列映射（1:1 复现旧 `EditUserInfoMutation` 的 args alias，禁顺手改名）。
  * 例：`trueName → tname`、`avatar → face`、`useType → usetype`（后者是**枚举不是布尔**，
  * 见 docs/plans/07 §三 tinyint(1) 陷阱）。
+ * 字段清单与旧 mutation args 一一对应（2026-10-17 补齐公司字段族，共 22 个）。
  */
 const PROFILE_COLUMN = {
   regType: 'regtype',
   companyName: 'comname',
+  companyNameEng: 'comengname',
+  companyManager: 'commanager',
+  companyManagerEng: 'commanagereng',
+  companyCode: 'compost',
+  companyTel: 'comptel',
+  companyAddress: 'comaddress',
+  companyAddressEng: 'comaddresseng',
   trueName: 'tname',
   sex: 'sex',
+  zip: 'zip',
   tel: 'tel',
   address: 'address',
-  zip: 'zip',
   country: 'country',
   qq: 'qq',
+  line: 'line',
+  wechat: 'wechat',
   useType: 'usetype',
+  preBuyFrequency: 'prebuyfeq',
+  preBuyAmount: 'prebuyamt',
   avatar: 'face',
   originPackageChoice: 'origin_package_choice',
 } as const;

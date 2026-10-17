@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { Money } from '../core';
 
 /**
  * member 域契约 —— 迁移阶段 1 的试水域（旧系统文档最全、边界最清、对外接口稳定）。
@@ -50,19 +49,47 @@ export const useTypeSchema = z.union([
 ]);
 export type UseType = z.infer<typeof useTypeSchema>;
 
-/** 资料编辑入参：全部可选（旧 mutation 允许只传一个字段） */
+/**
+ * 资料编辑入参：全部可选（旧 mutation 允许只传一个字段）。
+ *
+ * 字段清单与旧 `EditUserInfoMutation::args()` **1:1 对齐**（含全部公司字段——
+ * 旧 mutation 比早期翻译稿多 11 个字段，2026-10-17 按旧代码补齐）：
+ *   regType / companyName / companyNameEng / companyManager / companyManagerEng /
+ *   companyCode / companyTel / companyAddress / companyAddressEng / trueName / sex /
+ *   zip / tel / address / country / qq / line / wechat / useType / preBuyFrequency /
+ *   preBuyAmount / avatar / originPackageChoice
+ *
+ * ⚠ avatar 有存储怪癖：入库前剥离 ossFullHost 前缀、读出时按 key 前缀补 CDN URL
+ *   （旧 EditUserInfoMutation + UserInfoType::resolveAvatarField，1:1 复现，
+ *    见 domains/member/src/avatar.ts 与 docs/plans/08 S10）。
+ * ⚠ 旧 mutation 无长度校验（PHP 侧 rules 只校验四个枚举列）——max 取旧列宽的保守值，
+ *   防超长串写入被 MySQL 截断（strict mode 下直接报错，fail-fast 更好）。
+ */
 export const memberProfileUpdateSchema = z.object({
   regType: z.union([z.literal(0), z.literal(1)]).optional(),
   companyName: z.string().max(255).optional(),
+  companyNameEng: z.string().max(255).optional(),
+  companyManager: z.string().max(255).optional(),
+  companyManagerEng: z.string().max(255).optional(),
+  /** 公司编号 JASTPRO 代码（旧列 compost——公司邮编，不是统一社会信用代码） */
+  companyCode: z.string().max(255).optional(),
+  companyTel: z.string().max(64).optional(),
+  companyAddress: z.string().max(255).optional(),
+  companyAddressEng: z.string().max(255).optional(),
   trueName: z.string().max(255).optional(),
   sex: z.union([z.literal(0), z.literal(1)]).optional(),
+  zip: z.string().max(32).optional(),
   tel: z.string().max(64).optional(),
   address: z.string().max(255).optional(),
-  zip: z.string().max(32).optional(),
   country: z.string().max(64).optional(),
+  /** 旧列 qq 的 mutation 描述是 "Skype"（列名与语义不符，1:1 保留不改名） */
   qq: z.string().max(64).optional(),
+  line: z.string().max(64).optional(),
+  wechat: z.string().max(64).optional(),
   useType: useTypeSchema.optional(),
-  avatar: z.string().url().optional(),
+  preBuyFrequency: z.string().max(64).optional(),
+  preBuyAmount: z.string().max(64).optional(),
+  avatar: z.string().max(512).optional(),
   originPackageChoice: z.union([z.literal(0), z.literal(1)]).optional(),
 });
 export type MemberProfileUpdate = z.infer<typeof memberProfileUpdateSchema>;

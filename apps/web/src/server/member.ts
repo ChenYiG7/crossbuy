@@ -1,10 +1,12 @@
 import {
+  deriveOssFullHost,
   InMemoryLoginRateLimiter,
   Md5PasswordVerifier,
   MemberRepository,
   MemberServiceImpl,
   type MemberService,
 } from '@crossbuy/domain-member';
+import { getWebConfig } from '@/config';
 import { MemberTokenVerifier } from '../auth/member-verifier';
 
 /**
@@ -22,6 +24,14 @@ export function getMemberService(): MemberService {
     new MemberRepository(),
     new Md5PasswordVerifier(),
     new InMemoryLoginRateLimiter(),
+    // 头像怪癖环境值（旧 ossFullHost() 推导 + OSS_CDN_URL，见 avatar.ts）
+    {
+      ossFullHost: deriveOssFullHost(
+        getWebConfig().OSS_BUCKET,
+        getWebConfig().OSS_INTERNAL_ENDPOINT,
+      ),
+      ossCdnUrl: getWebConfig().OSS_CDN_URL ?? '',
+    },
   );
   return memberService;
 }

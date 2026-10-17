@@ -49,6 +49,76 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
     expect(persisted).not.toBeNull();
   });
 
+  /**
+   * ★ 全字段往返（2026-10-17 补齐）：旧 EditUserInfoMutation::args() 共 22 个字段，
+   * 早期翻译稿只覆盖 12 个——本用例按旧代码逐字段锁死列映射，防「字段漏登静默丢更新」。
+   */
+  it('全字段往返：旧 mutation 22 个字段逐一写入并可读回', async () => {
+    const uid = await withRollback(async (tx) => {
+      const [row] = await tx.dg_users.findMany({ select: { uid: true }, take: 1 });
+      return row.uid;
+    });
+
+    await withRollback(async (tx) => {
+      const service = new MemberServiceImpl(
+        new MemberRepository(tx),
+        new Md5PasswordVerifier(),
+        new InMemoryLoginRateLimiter(),
+      );
+      const res = await service.updateProfile(memberPrincipal(uid), {
+        regType: 1,
+        companyName: 'comname-ja',
+        companyNameEng: 'comname-en',
+        companyManager: 'mgr-ja',
+        companyManagerEng: 'mgr-en',
+        companyCode: 'JASTPRO-1',
+        companyTel: 'comptel',
+        companyAddress: 'comaddr-ja',
+        companyAddressEng: 'comaddr-en',
+        trueName: 'tname',
+        sex: 1,
+        zip: 'zip',
+        tel: 'tel',
+        address: 'address',
+        country: 'country',
+        qq: 'skype-id',
+        line: 'line-id',
+        wechat: 'wechat-id',
+        useType: 3,
+        preBuyFrequency: 'freq',
+        preBuyAmount: 'amt',
+        originPackageChoice: 1,
+      });
+      expect(res.ok).toBe(true);
+
+      const after = await new MemberRepository(tx).findMemberProfile(uid);
+      expect(after).not.toBeNull();
+      // 契约字段 → 旧列（PROFILE_COLUMN 映射的逐列断言）
+      expect(after!.regtype).toBe(1);
+      expect(after!.comname).toBe('comname-ja');
+      expect(after!.comengname).toBe('comname-en');
+      expect(after!.commanager).toBe('mgr-ja');
+      expect(after!.commanagereng).toBe('mgr-en');
+      expect(after!.compost).toBe('JASTPRO-1');
+      expect(after!.comptel).toBe('comptel');
+      expect(after!.comaddress).toBe('comaddr-ja');
+      expect(after!.comaddresseng).toBe('comaddr-en');
+      expect(after!.tname).toBe('tname');
+      expect(after!.sex).toBe(1);
+      expect(after!.zip).toBe('zip');
+      expect(after!.tel).toBe('tel');
+      expect(after!.address).toBe('address');
+      expect(after!.country).toBe('country');
+      expect(after!.qq).toBe('skype-id');
+      expect(after!.line).toBe('line-id');
+      expect(after!.wechat).toBe('wechat-id');
+      expect(after!.usetype).toBe(3);
+      expect(after!.prebuyfeq).toBe('freq');
+      expect(after!.prebuyamt).toBe('amt');
+      expect(after!.origin_package_choice).toBe(1);
+    });
+  });
+
   it('无效 regType（3）应被契约拒绝 —— 源：testEditUserInfoErrorWithInvalidRegType', async () => {
     const service = new MemberServiceImpl(new MemberRepository(legacyPrisma), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
     const res = await service.updateProfile(memberPrincipal(1), { regType: 3 });

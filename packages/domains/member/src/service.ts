@@ -7,6 +7,7 @@ import {
 import type { Principal } from '@crossbuy/auth';
 import { err, ok, type Result } from '@crossbuy/utils';
 import { money } from '@crossbuy/utils';
+import { resolveAvatarUrl, stripOssFullHost } from './avatar';
 import type { MemberError } from './errors';
 import type { MemberAuthRecord, MemberProfileRow, MemberRepository } from './repository';
 import type { LoginRateLimiter } from './login-rate-limiter';
@@ -59,10 +60,16 @@ export interface MemberService {
 export class MemberServiceImpl implements MemberService {
   readonly domain = 'member' as const;
 
+  /**
+   * @param oss ossFullHost / ossCdnUrl —— 头像存储怪癖的环境相关值（旧
+   *   EditUserInfoMutation 剥离前缀 + UserInfoType::resolveAvatarField 补前缀，
+   *   见 avatar.ts 与 docs/plans/08 S10）。空串 = 不剥离/不补（开发期默认）。
+   */
   constructor(
     protected readonly repository: MemberRepository,
     protected readonly passwordVerifier: PasswordVerifier,
     protected readonly rateLimiter: LoginRateLimiter,
+    protected readonly oss: { ossFullHost?: string; ossCdnUrl?: string } = {},
   ) {}
 
   async updateProfile(
@@ -84,7 +91,14 @@ export class MemberServiceImpl implements MemberService {
       return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
     }
 
-    await this.repository.updateProfile(uid, parsed.data);
+    // 头像存储怪癖：入库前剥离 ossFullHost 前缀（旧 EditUserInfoMutation，
+    // 1:1 复现；空配置 = 不剥离，禁把「没配 env」静默变成「改数据」）
+    const data =
+      parsed.data.avatar !== undefined
+        ? { ...parsed.data, avatar: stripOssFullHost(parsed.data.avatar, this.oss.ossFullHost ?? '') }
+        : parsed.data;
+
+    await this.repository.updateProfile(uid, data);
     return ok(undefined);
   }
 
@@ -209,7 +223,8 @@ export class MemberServiceImpl implements MemberService {
       preBuyAmount: row.prebuyamt,
       money: money(row.money?.toString() ?? '0'),
       dfFlag: (row.dfflag ?? 0) !== 0,
-      avatar: row.face,
+      // 头像读侧：相对 key → CDN URL（旧 resolveAvatarField，1:1 复现）
+      avatar: resolveAvatarUrl(row.face, this.oss.ossCdnUrl ?? ''),
       useInquiry: parseUseInquiry(row.reg_extra),
       originPackageChoice: row.origin_package_choice,
     };

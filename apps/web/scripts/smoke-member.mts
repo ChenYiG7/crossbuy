@@ -168,6 +168,23 @@ async function main(): Promise<void> {
 
     console.log('[4] 带 cookie / Bearer 读 me');
     const me = await call('GET', '/api/customer/v1/member/me', { cookie: cookie ?? undefined });
+
+    console.log('[4.5] 资料编辑 PATCH（旧 EditUserInfo REST 化）');
+    const patched = await call('PATCH', '/api/customer/v1/member/me', {
+      cookie: cookie ?? undefined,
+      body: { trueName: '演练用户改名', tel: '090-0000-0000', useType: 3 },
+    });
+    check('PATCH → 200', patched.status === 200, patched.body);
+    check('PATCH 响应即最新 profile（trueName 已改）', patched.body.data?.trueName === '演练用户改名');
+    const afterPatch = await call('GET', '/api/customer/v1/member/me', { cookie: cookie ?? undefined });
+    check('重读 me → 改动已落库', afterPatch.body.data?.trueName === '演练用户改名' && afterPatch.body.data?.useType === 3);
+    const anonPatch = await call('PATCH', '/api/customer/v1/member/me', { body: { trueName: 'x' } });
+    check('未登录 PATCH → 401', anonPatch.status === 401);
+    const badPatch = await call('PATCH', '/api/customer/v1/member/me', {
+      cookie: cookie ?? undefined,
+      body: { useType: 9 },
+    });
+    check('越界枚举 PATCH → 400（契约拒绝）', badPatch.status === 400 && badPatch.body.code === 400, badPatch.body);
     check('cookie GET me → 200', me.status === 200 && me.body.data?.uname === FIXTURE.uname, me.body);
 
     const token = cookie?.split('=')[1] ?? '';

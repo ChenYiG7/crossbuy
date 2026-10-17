@@ -16,6 +16,16 @@ const webConfigSchema = z.object({
   AUTH_SESSION_TTL_SEC: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
   /** 「记住我」会话 TTL（秒） */
   AUTH_SESSION_REMEMBER_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
+  /**
+   * 头像存储怪癖三件套（旧 EditUserInfoMutation / UserInfoType::resolveAvatarField，
+   * 1:1 复现，见 domains/member/src/avatar.ts + docs/plans/08 S10）：
+   * - OSS_BUCKET + OSS_INTERNAL_ENDPOINT 推导 ossFullHost（写侧剥离前缀）
+   * - OSS_CDN_URL（读侧给相对 key 补前缀）
+   * 全部可选：不配 = 不剥离/不补（开发期看库原值），**禁默认值冒充生产配置**。
+   */
+  OSS_BUCKET: z.string().optional(),
+  OSS_INTERNAL_ENDPOINT: z.string().url().optional(),
+  OSS_CDN_URL: z.string().url().optional(),
 });
 
 export type WebConfig = z.infer<typeof webConfigSchema>;

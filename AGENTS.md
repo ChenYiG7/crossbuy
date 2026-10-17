@@ -88,15 +88,15 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 
 | 路径 | 职责 | 状态 |
 |---|---|---|
-| `apps/web` | 前台 www（对日电商） | 🟡 骨架（Tailwind 4 + 共享 UI 已接，M0.6） |
+| `apps/web` | 前台 www（对日电商） | 🟢 **M1 member 链路已落地**（2026-10-17：/member 页 RSC 直调域服务 + 登录/登出/PATCH 路由 + jose JWT 会话 + 端到端 smoke 31 断言；Tailwind 4 + 共享 UI，M0.6） |
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架（Tailwind 4 + 共享 UI 已接，M0.6） |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 骨架（Tailwind 4 + 共享 UI 已接，M0.6） |
 | `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
 | `apps/api` | 机器面 API（open API + webhook，Fastify） | 🔴 docs/04 新增，待脚手架 |
 | `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟢 **R1 活跃 schema = legacy introspect（生产版）**（2026-10-16：`prisma/schema.prisma` = 生产 PolarDB `taotaro`（MySQL 8.0.18）**179 模型**，跳板机隧道 + gouba007 只读拉取；`dg_mail1` 是视图无模型、21 张 deprecated 原样入模；`pull:legacy` = pull + `post-pull-fixup.mjs`（撞名修复 + 头部自愈）；生产 dg_users 75 列/22,628 行；WorldFirst 五表存在但全空；provenance 见 `docs/plans/07` §三）+ **R2 封存资产** = `prisma/redesign/schema.prisma` 60 模型（member+finance+order+send-order，金额 `Decimal(14,2)`/面值 CNY，#11b 定版 + finance 12 表 `0015`；✅ #3g 空库全链跑绿 03 §十 + `0016~0018` 回填跑绿 03 §十一 994,279 分录）；**双 generator 双 client**（`src/generated/{legacy,redesign}`，`client.ts` 导出 `legacyPrisma`/`redesignPrisma`）均纳入 db:generate + typecheck + 运行时冒烟；`sql/0001~0018` 同批封存，T0/T1 生产执行暂缓 |
-| `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core + member 样板 |
+| `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core（统一响应体 Envelope，M1 从 apps/api 上移）+ member 样板（登录/资料读/资料编辑词表与 schema） |
 | `packages/utils` | 金额/Result/分页/品牌类型 | 🟢 已建 |
-| `packages/domains/*` | 11 域包（member/order/purchase/send-order/logistics/platform/finance/ticket/content/openapi/wms-gateway）：service 接口 + repository 防腐层（`scripts/scaffold-domains.mjs` 生成，禁手写同构样板） | 🟢 M0.2 骨架落地（每域 errors/repository/service 三件套；repository = 唯一可 import @crossbuy/db 的位置，ESLint 边界规则强制 + `scripts/boundary-probe.mjs` 破坏验证 5/5） |
+| `packages/domains/*` | 11 域包（member/order/purchase/send-order/logistics/platform/finance/ticket/content/openapi/wms-gateway）：service 接口 + repository 防腐层（`scripts/scaffold-domains.mjs` 生成，禁手写同构样板） | 🟢 M0.2 骨架落地（每域 errors/repository/service 三件套；repository = 唯一可 import @crossbuy/db 的位置，ESLint 边界规则强制 + `scripts/boundary-probe.mjs` 破坏验证 5/5）；**member 域 M1 切片已落地**（登录全闸门/资料读/资料编辑 + 限流与口令端口 + 头像怪癖复现，37 单测） |
 | `packages/notify` | 通知渠道抽象（email/dingtalk/Mns，基础设施非域） | 🟢 接口面（实现随域铺开） |
 | `packages/auth` | 会话类型 + **Principal/TokenVerifier 抽象**（M0.3：域服务只认 Principal，三端各自实现 verifier，R3 抽认证中心零改动） | 🟢 类型 + 抽象 |
 | `packages/ui` | 设计 token + **三 app 共用组件源**（`src/styles/theme.css` Tailwind 4 CSS-first 正本、`src/components/ui/` 7 个 new-york 基础组件、`src/lib/cn.ts`） | 🟢 M0.6 落地（产物 CSS 断言 + @source 破坏验证双向过） |

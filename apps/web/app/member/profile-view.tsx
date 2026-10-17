@@ -1,5 +1,7 @@
+'use client';
+
 import type { MemberProfile } from '@crossbuy/contract';
-import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crossbuy/ui';
+import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crossbuy/ui';
 import { LogoutButton } from './logout-button';
 
 /** useType 词表（旧 App\Models\User：usetype 1..5） */
@@ -21,7 +23,7 @@ function Field({ label, value }: { label: string; value: string | number | null 
 }
 
 /** 会员资料视图（server component；docs/04 客户面 BFF+RSC 直调域服务） */
-export function ProfileView({ profile }: { profile: MemberProfile }) {
+export function ProfileView({ profile, onEdit }: { profile: MemberProfile; onEdit?: () => void }) {
   return (
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
@@ -34,7 +36,14 @@ export function ProfileView({ profile }: { profile: MemberProfile }) {
             UID {profile.uid} · {profile.email ?? profile.uname}
           </CardDescription>
         </div>
-        <LogoutButton />
+        <div className="flex items-center gap-2">
+          {onEdit ? (
+            <Button variant="outline" size="sm" onClick={onEdit}>
+              编辑资料
+            </Button>
+          ) : null}
+          <LogoutButton />
+        </div>
       </CardHeader>
       <CardContent className="grid gap-6">
         <div className="grid gap-3 sm:grid-cols-2">
