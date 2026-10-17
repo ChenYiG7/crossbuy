@@ -514,3 +514,40 @@ export const WEBHOOK_1688_PAYMENT_EVENTS = [
   'ORDER_BUYER_VIEW_ORDER_STEP_PAY',
   'ORDER_BATCH_PAY',
 ] as const;
+
+// ---------------------------------------------------------------------------
+// 七、R1 复现期：1688 物流服务商入站 webhook（建档面；机器面 apps/api 消费）
+// ---------------------------------------------------------------------------
+
+/** 1688 物流 webhook 消息（旧 webhookFor1688LogisticsProvider 消费字段白名单；弱 schema 只锁结构） */
+export const webhook1688LogisticsMessageSchema = z.object({
+  /** 事件类型（INBOUND_NOTIFY 等；旧 TODO 注释明确拦截类 action 未处理） */
+  action: z.string().optional(),
+  buyerUserParam: z.object({
+    buyerUserId: z.string(),
+    username: z.string(),
+    phone: z.string().optional(),
+  }),
+  tradeOrderId: z.string(),
+  mailNo: z.string(),
+  cpCode: z.string(),
+  receiverAddress: z.object({
+    regionName: z.string().optional(),
+    detailAddress: z.string().optional(),
+  }),
+  itemList: z.array(z.object({
+    auctionUrl: z.string().optional(),
+    auctionTitle: z.string().optional(),
+    pictureUrl: z.string().optional(),
+    quantity: z.number().optional(),
+    skuName: z.string().optional(),
+  })),
+});
+export type Webhook1688LogisticsMessage = z.infer<typeof webhook1688LogisticsMessageSchema>;
+
+/** 1688 物流 webhook 应答体（旧 1:1：固定 SUCCESS 信封，非统一 Envelope） */
+export const webhook1688LogisticsAckSchema = z.object({
+  code: z.literal('SUCCESS'),
+  message: z.literal(''),
+  success: z.literal(true),
+});

@@ -201,9 +201,15 @@ importers:
       '@crossbuy/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@crossbuy/domain-member':
+        specifier: workspace:*
+        version: link:../../packages/domains/member
       '@crossbuy/domain-order':
         specifier: workspace:*
         version: link:../../packages/domains/order
+      '@crossbuy/domain-send-order':
+        specifier: workspace:*
+        version: link:../../packages/domains/send-order
       '@crossbuy/utils':
         specifier: workspace:*
         version: link:../../packages/utils

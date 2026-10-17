@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import {
   MEMBER_STATE,
   type AdminScope,
@@ -420,6 +421,71 @@ export class MemberRepository {
     const result = await this.db.dg_favorite.deleteMany({ where: { uid, fid } });
     return result.count;
   }
+
+  // -----------------------------------------------------------------------
+  // 1688 物流建档（旧 OrderController::tryGetUser 1:1；webhook 编排经 service 接口）
+  // -----------------------------------------------------------------------
+
+  /** appid + openid 查 oauth 绑定（旧 OauthLogin::with(['user'])->where(appid)->where(openid)->first()） */
+  async findOauthLogin(appid: string, openid: string): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null } | null> {
+    // 旧库无外键 → Prisma 无关系字段（S19 同源），with(['user']) 拆两步查
+    const login = await this.db.v2_oauth_login.findFirst({
+      where: { appid, openid, deleted_at: null },
+      select: { uid: true },
+    });
+    if (!login) return null;
+    const user = await this.db.dg_users.findUnique({
+      where: { uid: login.uid },
+      select: { uid: true, uname: true, memberid: true, email: true },
+    });
+    return user;
+  }
+
+  /** uname 撞名检查（旧 User::where('uname')->first()） */
+  async unameExists(uname: string): Promise<boolean> {
+    const row = await this.db.dg_users.findFirst({ where: { uname }, select: { uid: true } });
+    return row !== null;
+  }
+
+  /**
+   * 建档用户 + oauth 绑定（旧 tryGetUser 的 User::create + OauthLogin::create 1:1）。
+   * ⚠ card 生产 NOT NULL 无默认（非严格模式落 ''）——显式补 '' 等价；memberid 留 NULL
+   * （旧 TODO「分配 memberId」至今未实现）；password = md5(随机+时间)（旧 Str::random().time()）。
+   * 同一事务：用户与 oauth 绑定原子。
+   */
+  async createOauthUser(input: {
+    appid: string;
+    openid: string;
+    uname: string;
+    tel: string | null;
+  }, tx?: LegacyPrisma.TransactionClient): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null }> {
+    // tx 透传（Prisma 禁嵌套事务；测试复用外层 rollback 事务）
+    const run = async (client: LegacyPrisma.TransactionClient) => {
+      const row = await client.dg_users.create({
+        data: {
+          uname: input.uname,
+          password: createMd5(`${Math.random()}${Date.now()}`),
+          card: '',
+          tel: input.tel,
+          state: 1,
+          usetype: 5,
+          validity: 0,
+        },
+        select: { uid: true, uname: true, memberid: true, email: true },
+      });
+      await client!.v2_oauth_login.create({
+        data: { appid: input.appid, openid: input.openid, uid: row.uid },
+      });
+      return row;
+    };
+    // tx 显式透传 / repository 绑定 tx 客户端（无 $transaction）= 调用方持事务边界直跑；
+    // 绑定 db 单例 = 自起事务
+    if (tx) return run(tx);
+    if (typeof (this.db as { $transaction?: unknown }).$transaction !== 'function') {
+      return run(this.db as LegacyPrisma.TransactionClient);
+    }
+    return this.db.$transaction(run);
+  }
 }
 
 /** 旧 `App\Models\Favorite::TYPE_DAIFA`（3 = 一件代发；DAIGOU=1） */
@@ -459,4 +525,9 @@ export interface FavoriteRow {
   goodssite: string | null;
   siteurl: string | null;
   addtime: number | null;
+}
+
+/** md5 十六进制（旧密码格式写入专用；验证走 password-verifier 端口） */
+function createMd5(input: string): string {
+  return crypto.createHash('md5').update(input).digest('hex');
 }

@@ -12,10 +12,35 @@ import type { SendOrderRepository } from './repository';
 export interface SendOrderService {
   /** 服务注册判别键（R3 服务注册表用） */
   readonly domain: 'send-order';
+
+  /**
+   * 1688 物流建档运单（旧 OrderController::tryGetOrders 尾段 1:1）：
+   * STATE_WAITING=1 / OTYPE_3=3「一件代发」/ 全零金额字段 / receiver 直落 address+country。
+   * 返回新 sid；回写 dg_order.sid 由调用方（order 域编排，属主写自己表）完成。
+   */
+  createFor1688Logistics(input: {
+    uid: number;
+    uname: string;
+    memberid: string | null;
+    email: string | null;
+    oids: number[];
+    receiver: { regionName?: string; detailAddress?: string };
+  }): Promise<{ sid: number }>;
 }
 
 export class SendOrderServiceImpl implements SendOrderService {
   readonly domain = 'send-order' as const;
 
   constructor(protected readonly repository: SendOrderRepository) {}
+
+  async createFor1688Logistics(input: {
+    uid: number;
+    uname: string;
+    memberid: string | null;
+    email: string | null;
+    oids: number[];
+    receiver: { regionName?: string; detailAddress?: string };
+  }): Promise<{ sid: number }> {
+    return this.repository.createFor1688Logistics(input);
+  }
 }

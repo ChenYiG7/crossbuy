@@ -83,6 +83,19 @@ export interface MemberService {
   deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>>;
 
   /**
+   * 1688 物流建档的 oauth 用户查询/建档（旧 OrderController::tryGetUser 1:1）。
+   * appid+openid 命中 → 直接返回；未命中 → 建档（uname 撞名加 rand(10,99) 后缀——
+   * **只追一次不循环**，旧代码同款；usetype=5「1688转运」；memberid 留 NULL）+ oauth 绑定。
+   * webhook 面（无 Principal）——调用方是 order 域编排 service。
+   */
+  findOrCreateOauthUser(input: {
+    appid: string;
+    openid: string;
+    username: string;
+    phone: string | null;
+  }): Promise<Result<{ uid: number; uname: string; memberid: string | null; email: string | null }, MemberError>>;
+
+  /**
    * 后台只读用户列表（docs/06 §四-4 admin「用户管理」只读起步；admin app 经本接口
    * 读 dg_users——表属主纪律：admin app 薄壳同时装配 admin + member 两个域）。
    * scope 由 admin 域实时判定后传入（all/flags/none 三分支语义见 contract）；
@@ -277,6 +290,29 @@ export class MemberServiceImpl implements MemberService {
       take: limit,
     });
     return ok({ items: rows.map((row) => this.toFavorite(row)), total, page, limit });
+  }
+
+  async findOrCreateOauthUser(input: {
+    appid: string;
+    openid: string;
+    username: string;
+    phone: string | null;
+  }): Promise<Result<{ uid: number; uname: string; memberid: string | null; email: string | null }, MemberError>> {
+    const existing = await this.repository.findOauthLogin(input.appid, input.openid);
+    if (existing) return ok(existing);
+
+    // 旧 tryGetUser：uname 撞名 → 追加 rand(10,99)（**只追一次**，理论上仍可撞——1:1 保留）
+    let uname = input.username;
+    if (await this.repository.unameExists(uname)) {
+      uname = `${uname}${Math.floor(Math.random() * 90 + 10)}`;
+    }
+    const created = await this.repository.createOauthUser({
+      appid: input.appid,
+      openid: input.openid,
+      uname,
+      tel: input.phone,
+    });
+    return ok(created);
   }
 
   async deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>> {

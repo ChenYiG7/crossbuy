@@ -197,6 +197,116 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
+  // 1688 物流建档（旧 tryGetOrders / DgArrival 1:1；webhook-1688-logistics 编排）
+  // -----------------------------------------------------------------------
+
+  /** 按 tid 查订单（含软删——旧 Order 无全局 scope；旧 tryGetOrders 同款不过滤） */
+  async listByTid(db: Db, tid: string): Promise<Array<{ oid: number; expressno: string | null }>> {
+    const rows = await db.dg_order.findMany({
+      where: { tid },
+      select: { oid: true, expressno: true },
+      orderBy: { oid: 'asc' },
+    });
+    return rows.map((r) => ({ oid: r.oid, expressno: r.expressno }));
+  }
+
+  /**
+   * 直建转运订单（旧 tryGetOrders 的 Order::insert 1:1）：**state=3（SEND 入库态）**、
+   * type=2 转运、goodssite='1688'、expressno=mailNo。⚠ dg_order.memberid 生产 NOT NULL
+   * 无默认（非严格模式落 ''）——显式补 ''；yanhuo* 等必填空串列（information_schema 核实）同补。
+   */
+  async createZhuanyunOrders(
+    db: Db,
+    input: {
+      tid: string;
+      uid: number;
+      uname: string;
+      items: Array<{ auctionUrl?: string; auctionTitle?: string; pictureUrl?: string; quantity?: number; skuName?: string }>;
+      expressno: string;
+    },
+  ): Promise<Array<{ oid: number; expressno: string | null }>> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const oids: number[] = [];
+    for (const item of input.items) {
+      const row = await db.dg_order.create({
+        data: {
+          uid: input.uid,
+          uname: input.uname,
+          memberid: '', // 非严格模式等价（旧 insert 不传 memberid）
+          tid: input.tid,
+          goodssite: '1688',
+          goodsurl: item.auctionUrl ?? '',
+          goodsname: item.auctionTitle ?? '',
+          goodsimg: item.pictureUrl ?? '',
+          goodsnum: item.quantity ?? 0,
+          sku_name: item.skuName ?? '',
+          type: 2, // ORDER_TYPE_ZHUANYUN
+          state: 3, // STATE_SEND——旧建单即入库状态（docs/plans/09 §1.1）
+          sendprice: 0,
+          addtime: nowSec,
+          expressno: input.expressno,
+          // NOT NULL 无默认列（information_schema 核实）——非严格模式空串等价
+          yanhuofba: '', yanhuojinyun: '', yanhuozengzhi: '', yanhuoasin: '', yanhuofnsku: '',
+          baozhuang: '', hbbaozhuang: '', baonum: '', SKU: '', shangpin_sku: '', FNSKU: '',
+          shangpin_fnsku: '', name: '', shangpin_name: '', amazon: '', putong: '',
+          shangpin_amazon: '', fuzhuang: '', tiebiao: '', huanbaoz: '', qita: '',
+        },
+        select: { oid: true },
+      });
+      oids.push(row.oid);
+    }
+    return this.listByTid(db, input.tid);
+  }
+
+  /** 回写运单 sid（旧 Order::whereIn(oid)->update(['sid' => ...])；含软删同旧） */
+  async attachSid(db: Db, oids: number[], sid: number): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid: { in: oids } }, data: { sid: String(sid) } });
+  }
+
+  /** expressno 多单号空格合并回写（旧 Order::whereIn(oid)->update(['expressno' => ...])） */
+  async updateExpressno(db: Db, oids: number[], expressno: string): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid: { in: oids } }, data: { expressno } });
+  }
+
+  /**
+   * 入库登记 firstOrCreateRecord（旧 DgArrival::firstOrCreateRecord 1:1，表 v2_logistic_domestic）：
+   * expressno 命中即复用；未命中按 params 建（package_info 缺省 []）。
+   */
+  async firstOrCreateArrival(
+    db: Db,
+    input: { expressno: string; providerCode: string; state: number; type: number },
+  ): Promise<{ id: number }> {
+    const existing = await db.v2_logistic_domestic.findFirst({
+      where: { expressno: input.expressno },
+      select: { id: true },
+    });
+    if (existing) return existing;
+    const row = await db.v2_logistic_domestic.create({
+      data: {
+        parent_id: 0, // NOT NULL 无默认——旧 insert 同样不传（非严格落 0）
+        expressno: input.expressno,
+        provider_code: input.providerCode,
+        state: input.state,
+        type: input.type,
+        package_info: '[]',
+        create_date: new Date(),
+      },
+      select: { id: true },
+    });
+    return row;
+  }
+
+  /** pivot syncWithoutDetaching（旧 $record->orders()->syncWithoutDetaching；唯一键撞键忽略） */
+  async attachArrivalOrder(db: Db, arrivalId: number, oid: number, createdAtSec: number): Promise<void> {
+    await db.$executeRawUnsafe(
+      `INSERT INTO v2_relation_order_and_logistic_domestic (logistic_domestic_id, oid, created_at)
+       VALUES (?, ?, FROM_UNIXTIME(?))
+       ON DUPLICATE KEY UPDATE logistic_domestic_id = logistic_domestic_id`,
+      BigInt(arrivalId), BigInt(oid), createdAtSec,
+    );
+  }
+
+  // -----------------------------------------------------------------------
   // 会员订单列表（旧 OrderListInput::buildQuery + ListOrderV2Query 1:1）
   // -----------------------------------------------------------------------
 

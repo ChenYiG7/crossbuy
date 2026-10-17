@@ -1,4 +1,4 @@
-import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
+import { legacyPrisma, type LegacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
 
 /**
  * 运单/合包/发货/发票 域 repository 防腐层（docs/04 §5 / docs/07）。
@@ -15,4 +15,65 @@ import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
  */
 export class SendOrderRepository {
   constructor(protected readonly db: LegacyPrismaClient = legacyPrisma) {}
+
+  /**
+   * 1688 物流建档运单（旧 tryGetOrders 尾段 SendOrder::create 字段 1:1）。
+   * dump 必填列（uname/memberid/xiwgfei/xwdj/consignee）显式落；全零金额 1:1。
+   */
+  async createFor1688Logistics(input: {
+    uid: number;
+    uname: string;
+    memberid: string | null;
+    email: string | null;
+    oids: number[];
+    receiver: { regionName?: string; detailAddress?: string };
+  }, tx?: LegacyPrisma.TransactionClient): Promise<{ sid: number }> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const run = async (client: LegacyPrisma.TransactionClient) => {
+      const row = await client.dg_sendorder.create({
+        data: {
+          uid: input.uid,
+          uname: input.uname,
+          memberid: input.memberid ?? '',
+          email: input.email,
+          oids: input.oids.join(','),
+          couponid: 0,
+          couponmoney: 0,
+          serverfee: 0,
+          customsfee: 0,
+          yishouqufee: 0,
+          xiwgfei: 0,
+          xwdj: '',
+          totalfee: 0,
+          countmoney: 0,
+          areaname: '',
+          addtime: nowSec,
+          uptime: nowSec,
+          state: 1, // SendOrder::STATE_WAITING
+          storage: 0,
+          otype: 3, // SendOrder::OTYPE_3「一件代发」
+          dfsendaddress: '',
+          dfsendname: '',
+          dfsendtel: '',
+          consignee: '',
+          address: input.receiver.detailAddress ?? '',
+          tel: '',
+          zip: '',
+          remark: '',
+          country: input.receiver.regionName ?? '',
+        },
+        select: { sid: true },
+      });
+      return row.sid;
+    };
+    // tx 显式透传 / repository 绑定 tx 客户端（无 $transaction）= 调用方持事务边界直跑
+    let sid: number;
+    if (tx) sid = await run(tx);
+    else if (typeof (this.db as { $transaction?: unknown }).$transaction !== 'function') {
+      sid = await run(this.db as LegacyPrisma.TransactionClient);
+    } else {
+      sid = await this.db.$transaction(run);
+    }
+    return { sid };
+  }
 }

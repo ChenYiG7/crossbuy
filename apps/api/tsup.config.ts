@@ -15,6 +15,9 @@ export default defineConfig({
   format: ['esm'],
   target: 'node20',
   clean: true,
-  noExternal: ['@crossbuy/config', '@crossbuy/contract', '@crossbuy/utils', '@crossbuy/auth', '@crossbuy/domain-order', '@crossbuy/db'],
+  noExternal: [
+    '@crossbuy/config', '@crossbuy/contract', '@crossbuy/utils', '@crossbuy/auth',
+    '@crossbuy/domain-order', '@crossbuy/domain-member', '@crossbuy/domain-send-order', '@crossbuy/db',
+  ],
   sourcemap: true,
 });

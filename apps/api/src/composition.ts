@@ -3,8 +3,13 @@ import {
   record1688Snapshot,
   runInOrderTransaction,
   Webhook1688Service,
+  Webhook1688LogisticsService,
   type AlibabaOrderClient,
+  type OauthUserPort,
+  type SendOrderPort,
 } from '@crossbuy/domain-order';
+import { InMemoryLoginRateLimiter, Md5PasswordVerifier, MemberRepository, MemberServiceImpl } from '@crossbuy/domain-member';
+import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 
 /**
  * apps/api 组合根（webhook 面）：域实现在这里接线，路由只拿接口。
@@ -37,4 +42,40 @@ export function getWebhook1688Service(): Webhook1688Service {
     });
   })();
   return webhook1688;
+}
+
+// ---------------------------------------------------------------------------
+// 1688 物流建档 webhook（跨域装配：member 建档 + send-order 建单 + order 编排）
+// ---------------------------------------------------------------------------
+
+let webhook1688Logistics: Webhook1688LogisticsService | null = null;
+
+export function getWebhook1688LogisticsService(): Webhook1688LogisticsService {
+  webhook1688Logistics ??= (() => {
+    const repo = new OrderRepository();
+    // 跨域端口（组合根承边界——app 组合多域是 docs/04 既定模式）
+    const memberService: OauthUserPort = new MemberServiceImpl(
+      new MemberRepository(),
+      new Md5PasswordVerifier(),
+      new InMemoryLoginRateLimiter(),
+    );
+    const sendOrderService: SendOrderPort = new SendOrderServiceImpl(new SendOrderRepository());
+    return new Webhook1688LogisticsService({
+      repository: repo,
+      appid: process.env.ALIBABA_LOGISTICS_APPID ?? '',
+      memberService,
+      sendOrderService,
+      // R1 转发端口：env 开启（旧 APP_ENV=production 同款）；失败只留痕不阻断
+      forwardMessage: process.env.WEBHOOK_1688_LOGISTICS_FORWARD_URL
+        ? async (message) => {
+            await fetch(process.env.WEBHOOK_1688_LOGISTICS_FORWARD_URL!, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(message),
+            }).catch(() => undefined);
+          }
+        : undefined,
+    });
+  })();
+  return webhook1688Logistics;
 }

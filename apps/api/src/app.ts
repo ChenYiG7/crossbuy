@@ -10,6 +10,7 @@ import { guardPlugin } from './plugins/guard';
 import { healthRoutes } from './routes/health';
 import { openRoutes } from './routes/open';
 import { webhook1688Routes } from './routes/webhook-1688';
+import { webhook1688LogisticsRoutes } from './routes/webhook-1688-logistics';
 import type { ApiConfig } from './config';
 
 /** 守卫豁免路径：健康检查与文档（外部探活/看文档不该被签名拦住） */
@@ -75,6 +76,7 @@ export async function buildApp(config: ApiConfig) {
       },
     );
     await scope.register(webhook1688Routes);
+    await scope.register(webhook1688LogisticsRoutes);
   });
 
   return app;
