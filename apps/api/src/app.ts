@@ -1,0 +1,64 @@
+import Fastify from 'fastify';
+import {
+  jsonSchemaTransform,
+  serializerCompiler,
+  validatorCompiler,
+  type ZodTypeProvider,
+} from 'fastify-type-provider-zod';
+import { traceIdPlugin } from './plugins/trace-id';
+import { guardPlugin } from './plugins/guard';
+import { healthRoutes } from './routes/health';
+import { openRoutes } from './routes/open';
+import type { ApiConfig } from './config';
+
+/** 守卫豁免路径：健康检查与文档（外部探活/看文档不该被签名拦住） */
+// ⚠ 文档 JSON 的实际路径是 `/docs/json`：注册 @fastify/swagger-ui 时指定的 routePrefix
+// 会一并决定它（不是 @fastify/swagger 默认的 /documentation/json）—— 由 printRoutes() 实测确认。
+export const GUARD_EXEMPT_PATHS = [
+  '/api/open/v1/health',
+  '/api/webhook/v1/health',
+  '/docs/json',
+];
+
+/**
+ * 构建 app（**不监听**）—— 测试可直接注入请求，不需要起端口。
+ * docs/04 §4-4：契约（zod）→ OpenAPI 3 由 zod schema 自动生成，不手写文档。
+ */
+export async function buildApp(config: ApiConfig) {
+  const app = Fastify({ logger: { level: config.LOG_LEVEL } }).withTypeProvider<ZodTypeProvider>();
+
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+
+  await app.register(traceIdPlugin);
+
+  await app.register(import('@fastify/swagger'), {
+    openapi: {
+      info: {
+        title: 'crossbuy API',
+        description: '机器面：开放 API + webhook（R1 复现期，契约先行）',
+        version: '1.0.0',
+      },
+      tags: [
+        { name: 'open', description: '开放 API（HMAC 签名 + IP 白名单）' },
+        { name: 'webhook', description: '第三方回调' },
+      ],
+    },
+    transform: jsonSchemaTransform,
+  });
+  await app.register(import('@fastify/swagger-ui'), { routePrefix: '/docs' });
+
+  // ① 健康检查先注册：它在豁免名单里，永远可达
+  await app.register(healthRoutes);
+
+  // ② 受保护作用域：guard 只对注册在本 scope 内的路由生效（Fastify 封装）
+  await app.register(async (scope) => {
+    await scope.register(guardPlugin, {
+      config,
+      exempt: GUARD_EXEMPT_PATHS,
+    });
+    await scope.register(openRoutes);
+  });
+
+  return app;
+}
