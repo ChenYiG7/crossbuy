@@ -173,6 +173,30 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
+  // 1688 支付 webhook（旧 OrderController::update1688PaidOrders 1:1 —— S19 范本之一）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 1688 支付推进（旧 :817-838 **逐条 1:1**）：
+   * 条件 UPDATE（tid + state in [1,2] + goodssite='1688' + type=1）→ state=2、
+   * conttime 条件回填（IF(IFNULL(conttime,0)<=0, now, conttime) 首次支付时间不覆盖）、
+   * uptime=now、extend JSON_SET payTime。**幂等性 = 条件本身**（已推进行不再匹配）。
+   * 返回 affected 行数（旧 $affected；无行命中不是错误——事件先于建单到达是常态）。
+   */
+  async update1688PaidOrders(db: Db, tid: string, payTimeSec: number, nowSec: number): Promise<number> {
+    const affected = await db.$executeRawUnsafe(
+      `UPDATE dg_order SET
+         state = 2,
+         conttime = IF(IFNULL(\`conttime\`, 0) <= 0, ?, \`conttime\`),
+         uptime = ?,
+         extend = JSON_SET(COALESCE(\`extend\`, '{}'), '$.payTime', ?)
+       WHERE tid = ? AND state IN (1, 2) AND goodssite = '1688' AND type = 1`,
+      nowSec, nowSec, payTimeSec, tid,
+    );
+    return affected;
+  }
+
+  // -----------------------------------------------------------------------
   // 会员订单列表（旧 OrderListInput::buildQuery + ListOrderV2Query 1:1）
   // -----------------------------------------------------------------------
 

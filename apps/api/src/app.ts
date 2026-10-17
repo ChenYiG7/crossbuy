@@ -9,6 +9,7 @@ import { traceIdPlugin } from './plugins/trace-id';
 import { guardPlugin } from './plugins/guard';
 import { healthRoutes } from './routes/health';
 import { openRoutes } from './routes/open';
+import { webhook1688Routes } from './routes/webhook-1688';
 import type { ApiConfig } from './config';
 
 /** 守卫豁免路径：健康检查与文档（外部探活/看文档不该被签名拦住） */
@@ -58,6 +59,22 @@ export async function buildApp(config: ApiConfig) {
       exempt: GUARD_EXEMPT_PATHS,
     });
     await scope.register(openRoutes);
+  });
+
+  // ③ webhook 作用域：**不挂 guard**（1688 回调方不可能持我方签名；旧路由仅 log_operation）。
+  //    防护 = 事件分支白名单 + update1688PaidOrders 条件 UPDATE 天然幂等（S19 范本）。
+  await app.register(async (scope) => {
+    scope.addContentTypeParser(
+      'application/x-www-form-urlencoded',
+      { parseAs: 'string' },
+      (_req, body, done) => {
+        const params = new URLSearchParams(String(body));
+        const out: Record<string, string> = {};
+        for (const [k, v] of params) out[k] = v;
+        done(null, out);
+      },
+    );
+    await scope.register(webhook1688Routes);
   });
 
   return app;

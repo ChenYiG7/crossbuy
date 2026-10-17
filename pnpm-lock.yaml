@@ -198,6 +198,12 @@ importers:
       '@crossbuy/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@crossbuy/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@crossbuy/domain-order':
+        specifier: workspace:*
+        version: link:../../packages/domains/order
       '@crossbuy/utils':
         specifier: workspace:*
         version: link:../../packages/utils

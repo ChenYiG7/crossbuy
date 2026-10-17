@@ -15,6 +15,8 @@
   "dependencies": {
     "@crossbuy/config": "workspace:*",
     "@crossbuy/contract": "workspace:*",
+    "@crossbuy/db": "workspace:*",
+    "@crossbuy/domain-order": "workspace:*",
     "@crossbuy/utils": "workspace:*",
     "@fastify/swagger": "^9.9.2",
     "@fastify/swagger-ui": "^6.1.2",

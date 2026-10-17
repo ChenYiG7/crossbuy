@@ -473,3 +473,44 @@ export type MemberOrderRow = z.infer<typeof memberOrderRowSchema>;
 
 /** 列表分页出参（Laravel paginate 同构：total 全量计数） */
 export type MemberOrderPageResult = PageResult<MemberOrderRow>;
+
+// ---------------------------------------------------------------------------
+// 六、R1 复现期：1688 入站 webhook（支付面；机器面 apps/api 消费，响应形态 1:1 旧控制器）
+// ---------------------------------------------------------------------------
+
+/** 金额快照阶段（旧 PlatformOrderAmountSnapshotService::STAGE_ORDER，latest_stage 只进不退） */
+export const PLATFORM_SNAPSHOT_STAGES = ['created', 'sync', 'price_modified', 'paid'] as const;
+export type PlatformSnapshotStage = (typeof PLATFORM_SNAPSHOT_STAGES)[number];
+export const PLATFORM_SNAPSHOT_STAGE_RANK: Readonly<Record<PlatformSnapshotStage, number>> = {
+  created: 1,
+  sync: 2,
+  price_modified: 3,
+  paid: 4,
+};
+
+/**
+ * 1688 webhook 应答体（旧 OrderController 1:1——**非**统一 Envelope：
+ * 第三方回调的成败信号是给重试机制的，改形态会破坏上游重试语义）。
+ * 规则：解析失败 → 200 + retryable:false（重试也没用）；SDK/DB 瞬时失败 → 503 + retryable:true。
+ */
+export const webhook1688AckSchema = z.object({
+  success: z.boolean(),
+  event_type: z.string(),
+  retryable: z.boolean().optional(),
+  reason: z.string().optional(),
+});
+export type Webhook1688Ack = z.infer<typeof webhook1688AckSchema>;
+
+/** 1688 webhook 消息（弱 schema：type + 任意 data；强校验在各事件分支内 1:1 旧代码） */
+export const webhook1688MessageSchema = z.object({
+  type: z.string(),
+  data: z.record(z.string(), z.unknown()).optional(),
+});
+export type Webhook1688Message = z.infer<typeof webhook1688MessageSchema>;
+
+/** 1688 支付面已处理的事件类型（R1 首批：三个支付事件；建单事件依赖 Job 管线后置） */
+export const WEBHOOK_1688_PAYMENT_EVENTS = [
+  'ORDER_BUYER_VIEW_ORDER_PAY',
+  'ORDER_BUYER_VIEW_ORDER_STEP_PAY',
+  'ORDER_BATCH_PAY',
+] as const;
