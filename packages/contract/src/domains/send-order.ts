@@ -413,3 +413,99 @@ export const prostateChangeSchema = z.object({
   operatorId: z.number().int().positive().nullable().optional(),
 });
 export type ProstateChange = z.infer<typeof prostateChangeSchema>;
+
+// ---------------------------------------------------------------------------
+// 五、R1 复现期：会员运单列表（旧 listSendOrder + SendOrderListInput 1:1）
+// ---------------------------------------------------------------------------
+
+/** 运单列表查询（旧 SendOrderListInput::fields 1:1——**storeMode 死条件不入契约**：buildQuery 引用了未声明的字段，GraphQL 永不传入，S28 登记） */
+export const sendOrderListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  sid: z.coerce.number().int().optional(),
+  state: sendOrderStatusSchema.optional(),
+  /** 关键字：`数字/数字` 形态走 sid 精确路径；否则 LIKE sid/oids/address/sn/consignee */
+  keyword: z.string().max(255).optional(),
+  /** 订单关键字：oid/goodsname/outid/yanhuofnsku/goodsremark/yanhuoasin（经订单侧反查 sid） */
+  orderKeyword: z.string().max(255).optional(),
+  /** 时间窗过滤的是 **uptime**（非 addtime——1:1） */
+  startTime: z.coerce.number().int().optional(),
+  endTime: z.coerce.number().int().optional(),
+});
+export type SendOrderListQuery = z.infer<typeof sendOrderListQuerySchema>;
+
+/** 国际物流信息（旧 Airbill type 子集；空时按 sn '#' 拆分合成——resolveAirbillsField 1:1） */
+export const airbillSchema = z.object({
+  sendid: z.number().int(),
+  sn: z.string().nullable(),
+  traceInfo: z.string().nullable(),
+});
+export type Airbill = z.infer<typeof airbillSchema>;
+
+/** 收货地址信息（旧 resolveAddressInfoField 1:1） */
+export const sendOrderAddressInfoSchema = z.object({
+  consignee: z.string().nullable(),
+  enname: z.string().nullable(),
+  companyName: z.string().nullable(),
+  country: z.string().nullable(),
+  address: z.string().nullable(),
+  tel: z.string().nullable(),
+  zip: z.string().nullable(),
+});
+
+/** 运单行（旧 Member/SendOrderType 输出 1:1 主行；金额 Money 字符串化、时间 ISO 化同 order 面） */
+export const sendOrderMemberRowSchema = z.object({
+  sid: z.number().int(),
+  uid: z.number().int(),
+  /** 订单 ids CSV（旧原样字符串列） */
+  oids: z.string().nullable(),
+  consignee: z.string().nullable(),
+  address: z.string().nullable(),
+  tel: z.string().nullable(),
+  zip: z.string().nullable(),
+  /** 配送方法（deliveryname） */
+  deliveryName: z.string().nullable(),
+  /** 追踪号（多单号 '#' 分隔） */
+  sn: z.string().nullable(),
+  countWeight: z.string().nullable(),
+  /** 代发商品规格 长宽高#分隔（dflwh） */
+  dfSpec: z.string().nullable(),
+  state: sendOrderStatusSchema,
+  freight: z.string(),
+  serverFee: z.string(),
+  customsFee: z.string(),
+  /** 国内运费（列值原样） */
+  sendPrice: z.string(),
+  /** 合计费用（旧 calculateTotalfee：round2 四项 + 国内运费兜底汇总） */
+  totalSendFee: z.string(),
+  /** 评价（comment 列是 JSON：{comment: string}——resolveCommentField 1:1） */
+  comment: z.string(),
+  commentAt: z.number().int().nullable(),
+  reply: z.string().nullable(),
+  remark: z.string().nullable(),
+  haveInvoice: z.boolean(),
+  /** 任一订单 yanhuofba='FBA'（resolveFBAField；订单经端口读） */
+  fba: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+  /** 物流查询网址（SystemSetting 端口；缺省 '' / Google 搜索兜底在端口内） */
+  shippingWebsiteUrl: z.string(),
+  /** 进口商信息（列原样 JSON 字符串——旧 GraphQL alias 到 Address 类型属遗留坏味道，R1 原样透出，S28） */
+  importerInfo: z.string().nullable(),
+  addressInfo: sendOrderAddressInfoSchema,
+  /** 到货标记：首订单 mark_flag arrival 位非 0（resolveArrivalField 1:1；无订单 = 0） */
+  arrival: z.union([z.literal(0), z.literal(1)]),
+  airbills: z.array(airbillSchema),
+  dfsendname: z.string().nullable(),
+  dfsendaddress: z.string().nullable(),
+  dfsendtel: z.string().nullable(),
+  originPackageChoice: z.number().int().nullable(),
+});
+export type SendOrderMemberRow = z.infer<typeof sendOrderMemberRowSchema>;
+
+/** 列表出参（⚠ 旧 GraphQL 面**不回 total**（CustomPaginationType data/page/size）——1:1 不回，S29；REST 需要时按需补 count） */
+export type SendOrderMemberPageResult = {
+  rows: SendOrderMemberRow[];
+  page: number;
+  pageSize: number;
+};

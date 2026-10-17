@@ -14,8 +14,40 @@ import { legacyPrisma, type LegacyPrisma, type LegacyPrismaClient } from '@cross
  * - 属主旧表清单见 docs/plans/07-表属主映射.md
  */
 export class SendOrderRepository {
-  constructor(protected readonly db: LegacyPrismaClient = legacyPrisma) {}
+  // db 对域内 service 开放（组装 where 与分页共用连接）；域外仍禁直触
+  constructor(public readonly db: LegacyPrismaClient = legacyPrisma) {}
 
+  // -----------------------------------------------------------------------
+  // 会员运单列表（旧 SendOrderListInput::buildQuery + ListSendOrderQuery 1:1）
+  // -----------------------------------------------------------------------
+
+  /** 列表行（select 子集） */
+  async listMemberSendOrders(db: LegacyPrismaClient, where: LegacyWhere, page: number, limit: number) {
+    const rows = await db.dg_sendorder.findMany({
+      where,
+      select: {
+        sid: true, uid: true, oids: true, consignee: true, address: true, tel: true, zip: true,
+        deliveryname: true, sn: true, countweight: true, dflwh: true, state: true,
+        freight: true, serverfee: true, customsfee: true, sendprice: true, remotefee: true,
+        comment: true, commenttime: true, reply: true, remark: true, havefapiao: true,
+        addtime: true, uptime: true, importer_info: true, enname: true, company_name: true,
+        country: true, dfsendname: true, dfsendaddress: true, dfsendtel: true,
+        origin_package_choice: true,
+      },
+      orderBy: { addtime: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return rows;
+  }
+
+  /** 国际物流信息（旧 airbills relation select 子集 1:1） */
+  async listAirbills(db: LegacyPrismaClient, sid: number) {
+    return db.dg_airbill.findMany({
+      where: { sendid: sid },
+      select: { sendid: true, sn: true, trace_info: true },
+    });
+  }
   /**
    * 1688 物流建档运单（旧 tryGetOrders 尾段 SendOrder::create 字段 1:1）。
    * dump 必填列（uname/memberid/xiwgfei/xwdj/consignee）显式落；全零金额 1:1。
@@ -76,4 +108,8 @@ export class SendOrderRepository {
     }
     return { sid };
   }
+
 }
+
+/** 旧 query builder 的 Prisma where 形态（service 组装用） */
+export type LegacyWhere = LegacyPrisma.dg_sendorderWhereInput;

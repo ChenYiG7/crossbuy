@@ -307,6 +307,63 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
+  // send-order 域端口读面（dg_order 属主 = order 域；send-order 列表经端口消费）
+  // -----------------------------------------------------------------------
+
+  /** 运单侧订单摘要（旧 with(['orders']) 需要的列：mark_flag/yanhuofba/type/sendprice） */
+  async listBriefBySids(db: Db, sids: number[]): Promise<Map<number, Array<{
+    oid: number; sid: string | null; markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number;
+  }>>> {
+    if (sids.length === 0) return new Map();
+    const rows = await db.dg_order.findMany({
+      where: { sid: { in: sids.map(String) } },
+      select: { oid: true, sid: true, mark_flag: true, yanhuofba: true, type: true, sendprice: true },
+    });
+    const map = new Map<number, Array<{ oid: number; sid: string | null; markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number }>>();
+    for (const r of rows) {
+      if (r.sid === null) continue;
+      const key = Number(r.sid);
+      if (!Number.isInteger(key)) continue;
+      const list = map.get(key) ?? [];
+      list.push({ oid: r.oid, sid: r.sid, markFlag: r.mark_flag, yanhuofba: r.yanhuofba, type: r.type, sendprice: Number(r.sendprice) });
+      map.set(key, list);
+    }
+    return map;
+  }
+
+  /**
+   * 运单列表 orderKeyword 反查（旧 SendOrderListInput :101-121 1:1）：
+   * uid + sid>0 + 六列 like + dfflag type 分流（DF 加 storeMode——**该条件为死代码**，
+   * GraphQL 未声明字段永不传入，此处端口入参不含 storeMode）→ pluck sid unique。
+   */
+  async listSidsByShipmentKeyword(db: Db, uid: number, keyword: string, isDf: boolean): Promise<number[]> {
+    const kw = { contains: keyword };
+    // ⚠ 旧 `oid LIKE '%kw%'` 对 Int 列做隐式转换匹配——Prisma 无法 LIKE 整数列，
+    // 收敛为「纯数字 → 精确等值；否则跳过 oid 条件」（S28 同族，双跑 diff 会显示子串场景差异）
+    const oidFilter: { oid: { equals: number } } | null = /^\d+$/.test(keyword) ? { oid: { equals: Number(keyword) } } : null;
+    const where: LegacyPrisma.dg_orderWhereInput = {
+      uid,
+      sid: { gt: '0' },
+      OR: [
+        ...(oidFilter ? [oidFilter] : []),
+        { goodsname: kw },
+        { outid: kw },
+        { yanhuofnsku: kw },
+        { goodsremark: kw },
+        { yanhuoasin: kw },
+      ],
+      ...(isDf ? { type: 3 } : { type: { in: [1, 2] } }),
+    };
+    const rows = await db.dg_order.findMany({ where, select: { sid: true } });
+    const sids = new Set<number>();
+    for (const r of rows) {
+      const v = Number(r.sid);
+      if (Number.isInteger(v) && v > 0) sids.add(v);
+    }
+    return [...sids];
+  }
+
+  // -----------------------------------------------------------------------
   // 发货回传（旧 updateExpressNoForChrome / batchUpdateExpressno 1688·淘宝分支 1:1）
   // -----------------------------------------------------------------------
 

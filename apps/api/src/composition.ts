@@ -59,7 +59,19 @@ export function getWebhook1688LogisticsService(): Webhook1688LogisticsService {
       new Md5PasswordVerifier(),
       new InMemoryLoginRateLimiter(),
     );
-    const sendOrderService: SendOrderPort = new SendOrderServiceImpl(new SendOrderRepository());
+    const sendOrderService: SendOrderPort = new SendOrderServiceImpl(
+      new SendOrderRepository(),
+      // 订单读端口（dg_order 属主 = order 域；运单列表订单面依赖）
+      (() => {
+        const orderRepo = new OrderRepository();
+        return {
+          listBriefBySids: (sids) => orderRepo.listBriefBySids(orderRepo.db, sids),
+          listSidsByShipmentKeyword: (uid, keyword, isDf) => orderRepo.listSidsByShipmentKeyword(orderRepo.db, uid, keyword, isDf),
+        };
+      })(),
+      // 物流查询网址端口（SystemSetting 迁移前缺省 null → Google 搜索兜底，旧语义）
+      { resolve: () => null },
+    );
     return new Webhook1688LogisticsService({
       repository: repo,
       appid: process.env.ALIBABA_LOGISTICS_APPID ?? '',
