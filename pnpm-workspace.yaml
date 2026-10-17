@@ -34,5 +34,6 @@ catalog:
   "@radix-ui/react-slot": ^1.5.0
   "@radix-ui/react-label": ^2.1.17
   "@radix-ui/react-separator": ^1.2.0
-  # ---- 认证（M1：web 会员端 JWT 会话，jose）----
+  # ---- 认证（M1：web 会员端 JWT 会话，jose；admin 端 bcrypt 校验，bcryptjs）----
   jose: ^6.2.12
+  bcryptjs: ^3.0.2

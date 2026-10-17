@@ -2,10 +2,14 @@ import {
   FAVORITE_TYPE,
   GOODS_SITE_BY_PLATFORM,
   MEMBER_STATE,
+  adminUserListQuerySchema,
   favoriteCreateSchema,
   favoriteListQuerySchema,
   memberLoginSchema,
   memberProfileUpdateSchema,
+  type AdminScope,
+  type AdminUserListQuery,
+  type AdminUserListResult,
   type Favorite,
   type MemberProfile,
 } from '@crossbuy/contract';
@@ -77,6 +81,17 @@ export interface MemberService {
 
   /** 删除收藏（旧 DeleteFavoriteMutation：按 uid 收敛，删不到 = not_found） */
   deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>>;
+
+  /**
+   * 后台只读用户列表（docs/06 §四-4 admin「用户管理」只读起步；admin app 经本接口
+   * 读 dg_users——表属主纪律：admin app 薄壳同时装配 admin + member 两个域）。
+   * scope 由 admin 域实时判定后传入（all/flags/none 三分支语义见 contract）；
+   * none → 短路空集（旧 grid 1=0 分支，不发查询）。
+   */
+  listForAdmin(
+    scope: AdminScope,
+    query: AdminUserListQuery,
+  ): Promise<Result<AdminUserListResult, MemberError>>;
 }
 
 export class MemberServiceImpl implements MemberService {
@@ -282,6 +297,24 @@ export class MemberServiceImpl implements MemberService {
       return err({ code: 'FAVORITE_NOT_FOUND', message: '收藏记录不存在' });
     }
     return ok(undefined);
+  }
+
+  async listForAdmin(
+    scope: AdminScope,
+    query: AdminUserListQuery,
+  ): Promise<Result<AdminUserListResult, MemberError>> {
+    const parsed = adminUserListQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      return err({ code: 'MEMBER_ADMIN_QUERY_INVALID', message: '查询参数非法' });
+    }
+
+    // none → 旧 grid 的 1=0 分支：恒空集，不发查询
+    if (scope.kind === 'none') {
+      return ok({ items: [], total: 0, page: parsed.data.page, limit: parsed.data.limit });
+    }
+
+    const { items, total } = await this.repository.listForAdmin(scope, parsed.data);
+    return ok({ items, total, page: parsed.data.page, limit: parsed.data.limit });
   }
 
   /** 旧 LoginMutation 的 state 三闸：0 未審査 / -1 审核失败 / 3 使用禁止 */

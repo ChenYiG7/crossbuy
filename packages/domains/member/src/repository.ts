@@ -1,5 +1,10 @@
-import { MEMBER_STATE } from '@crossbuy/contract';
-import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
+import {
+  MEMBER_STATE,
+  type AdminScope,
+  type AdminUserListItem,
+  type AdminUserListQuery,
+} from '@crossbuy/contract';
+import { legacyPrisma, type LegacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
 
 /**
  * 会员 域 repository 防腐层（docs/04 §5 / docs/07）。
@@ -178,6 +183,89 @@ export class MemberRepository {
         dfflag: true,
       },
     });
+  }
+
+  /**
+   * 后台只读用户列表（docs/06 §四-4 admin「用户管理」只读起步）。
+   *
+   * scope 三分支 1:1 旧 UserController::grid：
+   * - all：不加过滤；
+   * - flags：memberid LIKE '{flag}%' OR memberid='' OR NULL（**未分组客户所有人可见**，
+   *   旧代码 orWhere 空串/NULL 是有意行为，不是遗漏）；
+   * - none：service 层短路（不发查询），这里不处理。
+   * q/utype/state 是 REST 面新增便利过滤（LIKE/精确），不改旧默认行为（全量 uid 倒序分页）。
+   */
+  async listForAdmin(
+    scope: Exclude<AdminScope, { kind: "none" }>,
+    query: AdminUserListQuery,
+  ): Promise<{ items: AdminUserListItem[]; total: number }> {
+    const scopeWhere: LegacyPrisma.dg_usersWhereInput =
+      scope.kind === 'all'
+        ? {}
+        : {
+            OR: [
+              ...scope.flags.map((flag) => ({ memberid: { startsWith: flag } })),
+              { memberid: '' },
+              { memberid: null },
+            ],
+          };
+
+    const filterWhere: LegacyPrisma.dg_usersWhereInput = {
+      ...(query.q
+        ? {
+            OR: [
+              { uname: { contains: query.q } },
+              { tname: { contains: query.q } },
+              { email: { contains: query.q } },
+              { memberid: { contains: query.q } },
+            ],
+          }
+        : {}),
+      ...(query.utype === undefined ? {} : { utype: query.utype }),
+      ...(query.state === undefined ? {} : { state: query.state }),
+    };
+
+    const where: LegacyPrisma.dg_usersWhereInput = {
+      AND: [scopeWhere, filterWhere],
+    };
+
+    const [rows, total] = await Promise.all([
+      this.db.dg_users.findMany({
+        where,
+        select: {
+          uid: true,
+          uname: true,
+          tname: true,
+          email: true,
+          tel: true,
+          memberid: true,
+          utype: true,
+          state: true,
+          money: true,
+          regtype: true,
+        },
+        orderBy: { uid: 'desc' },
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+      }),
+      this.db.dg_users.count({ where }),
+    ]);
+
+    return {
+      total,
+      items: rows.map((row) => ({
+        uid: row.uid,
+        uname: row.uname,
+        tname: row.tname,
+        email: row.email,
+        tel: row.tel,
+        memberid: row.memberid,
+        utype: row.utype ?? 0,
+        state: row.state ?? 0,
+        money: String(row.money ?? '0'),
+        regtype: row.regtype,
+      })),
+    };
   }
 
   /**

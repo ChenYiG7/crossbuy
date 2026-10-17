@@ -9,6 +9,7 @@
     "tsBuildInfoFile": ".next/cache/tsconfig.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
+      "@/*": ["./src/*"],
       "@crossbuy/ui": ["../../packages/ui/src/index.ts"],
       "@crossbuy/ui/*": ["../../packages/ui/src/*"]
     }

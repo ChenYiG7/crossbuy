@@ -27,9 +27,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FORCE = process.argv.includes('--force');
 
-/** 11 域清单（docs/04 §3.1；R3 归属列 = 拆分时的搬运目标） */
+/** 12 域清单（docs/04 §3.1 + 2026-10-17 增补 admin；R3 归属列 = 拆分时的搬运目标） */
 const DOMAINS = [
   { name: 'member', label: '会员', legacy: 'Services/Member、Models/User*', r3: 'CRM（+认证中心的用户资料）' },
+  { name: 'admin', label: '后台管理员/RBAC/操作日志', legacy: 'app/Admin、Models/AdminUser、dcat-admin 权限表族（R1 零新表唯一例外）', r3: '独立后台基座' },
   { name: 'order', label: '购物车/下单/订单', legacy: 'Services/Order', r3: 'oms' },
   { name: 'purchase', label: '采购/1688/淘宝代购/砍价', legacy: 'Services/Order 内采购逻辑', r3: 'oms' },
   { name: 'send-order', label: '运单/合包/发货/发票', legacy: 'Services/SendOrder*', r3: 'oms' },
