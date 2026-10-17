@@ -25,6 +25,11 @@ const STATUS_BY_CODE: Record<string, number> = {
   /** 同 URL 重复收藏（旧系统 UserError；REST 面显式化为 409 Conflict） */
   FAVORITE_GOODS_URL_DUPLICATE: 409,
   FAVORITE_NOT_FOUND: 404,
+  // 订单面（旧 GraphQL UserError 文案 → REST 状态；409/404 显式化见 docs/plans/08）
+  ORDER_NOT_FOUND: 404,
+  NO_PERMISSIONS: 403,
+  ORDER_NOT_ALLOWED_CANCEL: 409,
+  ORDER_INVALID_TYPE: 400,
 };
 
 export function httpStatusForMemberError(code: string): number {

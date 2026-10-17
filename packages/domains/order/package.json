@@ -10,13 +10,14 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"(no tests yet)\""
+    "test": "vitest run"
   },
   "dependencies": {
     "@crossbuy/auth": "workspace:*",
     "@crossbuy/contract": "workspace:*",
     "@crossbuy/db": "workspace:*",
-    "@crossbuy/utils": "workspace:*"
+    "@crossbuy/utils": "workspace:*",
+    "decimal.js": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

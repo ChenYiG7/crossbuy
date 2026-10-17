@@ -296,6 +296,9 @@ importers:
       '@crossbuy/domain-member':
         specifier: workspace:*
         version: link:../../packages/domains/member
+      '@crossbuy/domain-order':
+        specifier: workspace:*
+        version: link:../../packages/domains/order
       '@crossbuy/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -569,6 +572,9 @@ importers:
       '@crossbuy/utils':
         specifier: workspace:*
         version: link:../../utils
+      decimal.js:
+        specifier: 'catalog:'
+        version: 10.6.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

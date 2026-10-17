@@ -16,6 +16,7 @@
     "@crossbuy/contract": "workspace:*",
     "@crossbuy/db": "workspace:*",
     "@crossbuy/domain-member": "workspace:*",
+    "@crossbuy/domain-order": "workspace:*",
     "@crossbuy/ui": "workspace:*",
     "@crossbuy/utils": "workspace:*",
     "jose": "catalog:",
