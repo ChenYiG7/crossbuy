@@ -7,3 +7,4 @@ export * from './service';
 export * from './platform-snapshot';
 export * from './webhook-1688';
 export * from './webhook-1688-logistics';
+export * from './shipment';

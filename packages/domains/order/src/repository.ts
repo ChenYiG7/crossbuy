@@ -307,6 +307,64 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
+  // 发货回传（旧 updateExpressNoForChrome / batchUpdateExpressno 1688·淘宝分支 1:1）
+  // -----------------------------------------------------------------------
+
+  /** chrome 面：按 tid 查**已付款**订单（旧 :481 无 goodssite 过滤——1:1） */
+  async listPaidByTid(db: Db, tid: string): Promise<Array<{ oid: number }>> {
+    const rows = await db.dg_order.findMany({
+      where: { tid, state: 2 },
+      select: { oid: true },
+      orderBy: { oid: 'desc' },
+    });
+    return rows.map((r) => ({ oid: r.oid }));
+  }
+
+  /** 批量面：已付款且**单号为空**的订单（旧 :683-688 filter 语义） */
+  async listPaidWithoutExpressno(db: Db, tid: string, platform: string): Promise<Array<{ oid: number }>> {
+    const rows = await db.dg_order.findMany({
+      where: { tid, goodssite: platform, state: 2 },
+      select: { oid: true, expressno: true },
+      orderBy: { oid: 'desc' },
+    });
+    return rows.filter((r) => !r.expressno).map((r) => ({ oid: r.oid }));
+  }
+
+  /** 批量面：已发货但**单号与目标串不一致**的订单（旧 :690-697；isDelayedFix 日志差异 R1 略） */
+  async listSentWithDifferentExpressno(db: Db, tid: string, platform: string, expressStr: string): Promise<Array<{ oid: number }>> {
+    const rows = await db.dg_order.findMany({
+      where: { tid, goodssite: platform, state: 3 },
+      select: { oid: true, expressno: true },
+      orderBy: { oid: 'desc' },
+    });
+    return rows.filter((r) => `${r.expressno ?? ''}` !== `${expressStr}`).map((r) => ({ oid: r.oid }));
+  }
+
+  /** 幂等判定集：tid+平台全部订单的单号（旧 :712-720 every(normalized)） */
+  async listExpressnoByTidAndPlatform(db: Db, tid: string, platform: string): Promise<Array<string | null>> {
+    const rows = await db.dg_order.findMany({
+      where: { tid, goodssite: platform },
+      select: { expressno: true },
+    });
+    return rows.map((r) => r.expressno);
+  }
+
+  /**
+   * 发货更新（旧 Order::updateOrder 对本场景的**有效语义**子集）：
+   * state 2→3（两侧均为活跃态）无金额字段 → dispatchSync 空转（旧 afterCommit 后
+   * changedFields 非金额字段直接 return）→ 此处只做 bulk update。
+   * ⚠ saveBatchUpdateRecord（审计日志 channel+admin_operation_log）→ R1 走 auditLog
+   * 端口（S27：webhook 面无 admin 会话，旧 Admin::user() 为空本就只落 channel 日志）。
+   */
+  async applyShipment(
+    db: Db,
+    oids: number[],
+    data: { state?: number; waytime?: number; expressno: string },
+  ): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid: { in: oids } }, data });
+  }
+
+  // -----------------------------------------------------------------------
   // 会员订单列表（旧 OrderListInput::buildQuery + ListOrderV2Query 1:1）
   // -----------------------------------------------------------------------
 

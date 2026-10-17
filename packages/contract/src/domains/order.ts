@@ -551,3 +551,37 @@ export const webhook1688LogisticsAckSchema = z.object({
   message: z.literal(''),
   success: z.literal(true),
 });
+
+// ---------------------------------------------------------------------------
+// 八、R1 复现期：发货回传（chrome 插件 ACTION_SAVE_EXPRESS + 1688 发货同步共用链路）
+// ---------------------------------------------------------------------------
+
+/** chrome 单笔发货回传入参（旧 updateExpressNoForChrome；物流多单号空格分隔） */
+export const shipmentChromeSchema = z.object({
+  tid: z.string().min(1),
+  expressNo: z.string().min(1),
+});
+export type ShipmentChromeInput = z.infer<typeof shipmentChromeSchema>;
+
+/** 批量发货同步条目（旧 batchUpdateExpressno 的 $ordersDetail 元素 1:1） */
+export const shipmentBatchItemSchema = z.object({
+  tid: z.string(),
+  express_detail: z.object({
+    expressId: z.array(z.object({
+      expressNo: z.string(),
+      companyNo: z.string().optional().default(''),
+    })),
+  }),
+});
+export type ShipmentBatchItem = z.infer<typeof shipmentBatchItemSchema>;
+
+/** 批量发货同步出参（旧 1:1：code 200/40000 + failed/idempotent 名单） */
+export const shipmentBatchResultSchema = z.object({
+  code: z.union([z.literal(200), z.literal(40000)]),
+  msg: z.string().optional(),
+  data: z.object({
+    failed_tids: z.array(z.string()),
+    idempotent_tids: z.array(z.string()),
+  }).optional(),
+});
+export type ShipmentBatchResult = z.infer<typeof shipmentBatchResultSchema>;
