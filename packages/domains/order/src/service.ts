@@ -1,12 +1,15 @@
 import type { Principal } from '@crossbuy/auth';
 import { err, ok, type Result } from '@crossbuy/utils';
+import { OrderStatus, type MemberOrderRow, type OrderListQuery } from '@crossbuy/contract';
 
 import type { OrderError } from './errors';
 import { orderError } from './errors';
 import { moneyEquals, moneyOf } from './money';
 import { DF_CONFIGS, ORDER_FLAGS, ORDER_TYPE, RECORD, UTYPE } from './legacy-constants';
 import { DeferredAmountSync } from './amount-sync';
-import type { Db, OrderRepository, Tx } from './repository';
+import type { LegacyWhere, ListOrderRow, OrderRepository, Tx } from './repository';
+import { unixToIso } from '@crossbuy/utils';
+import { parseSkuName, splitItemLocation, bargainDisplayOf, bargainDisplayFromSec, readExtendField, MADE_IN_CHINA_YES, MADE_IN_CHINA_NO, MARK_FLAG_FAVORITE_POSITION, MARK_FLAG_ARRIVAL_POSITION } from './list-helpers';
 
 /**
  * order 域服务（docs/04 §3.2：域间唯一调用面，R3 拆分的搬运单元）。
@@ -27,6 +30,13 @@ export interface OrderService {
    * state=10 + bargainprice=0 → 组金额同步（deferred flush，同事务）。
    */
   cancelOrders(principal: Principal, rawOids: Array<number | string>): Promise<Result<number[], OrderError>>;
+
+  /**
+   * 会员订单列表（旧 listOrderV2 + OrderListInput::buildQuery 1:1）。
+   * 状态显示合并（3 并 12）/ dfflag type 分流 / keyword 三词上限在此落；
+   * displayFrom = 「安くなった額」展示窗口起点（旧 config('bargain.display_from')，注入）。
+   */
+  listOrders(principal: Principal, query: OrderListQuery): Promise<Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>>;
 }
 
 /** 旧 lang('order_id')（custom-trans.php:157） */
@@ -70,6 +80,8 @@ export class OrderServiceImpl implements OrderService {
      * 域内禁自带连接，dispatch 同理）。
      */
     protected readonly runTx: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>,
+    /** 「安くなった額」展示窗口起点秒（旧 config('bargain.display_from','2026-11-01') Asia/Tokyo 零点；注入防隐式时区） */
+    protected readonly displayFromSec: number = bargainDisplayFromSec('2026-11-01'),
   ) {}
 
   async cancelOrders(principal: Principal, rawOids: Array<number | string>): Promise<Result<number[], OrderError>> {
@@ -121,6 +133,212 @@ export class OrderServiceImpl implements OrderService {
   }
 
   /** 旧 cancelSingleOrder（守卫 → sendprice 转移 → 返金 → 状态收尾） */
+  async listOrders(
+    principal: Principal,
+    query: OrderListQuery,
+  ): Promise<Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>> {
+    if (principal.kind !== 'member') {
+      return err({ code: 'NO_PERMISSIONS', message: '非会员主体' });
+    }
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'NO_PERMISSIONS', message: 'Principal 非法' });
+    }
+
+    const db = this.repository.db;
+
+    // ---- dfflag 分流（旧 buildQuery：代发强制 type=3，普通强制 type in [1,2]）----
+    const isDf = await this.repository.getUserDfFlag(db, uid);
+    const typeFilter: LegacyWhere['type'] = isDf
+      ? { equals: ORDER_TYPE.DAIFA }
+      : { in: [ORDER_TYPE.DAIGOU, ORDER_TYPE.ZHUANYUN] };
+
+    const AND: NonNullable<LegacyWhere['AND']> = [];
+    const where: LegacyWhere = { uid, type: typeFilter, AND };
+
+    // ---- 状态过滤：3 并 12（不良待确认对客户显示为在途，旧 resolveStateField 对偶逻辑在过滤面）----
+    let states: number[] = [];
+    if (query.states) {
+      states = query.states.split(',').map((v) => Number(v.trim())).filter(Number.isInteger);
+      if (states.includes(OrderStatus.SEND) && !states.includes(OrderStatus.AFTER_SALE_WAIT_CHECK)) {
+        states.push(OrderStatus.AFTER_SALE_WAIT_CHECK);
+      }
+      AND.push({ state: { in: states } });
+    } else if (query.state !== undefined) {
+      if (query.state === OrderStatus.SEND) {
+        AND.push({ state: { in: [OrderStatus.SEND, OrderStatus.AFTER_SALE_WAIT_CHECK] } });
+      } else {
+        AND.push({ state: query.state });
+      }
+    }
+
+    // ---- queryType 特殊视图 ----
+    if (query.queryType === 'refuse') {
+      // 禁运品：state < 5 且 item_location 非空且非 MADE_IN_CHINA 标记（旧 :144-149）
+      AND.push({
+        state: { lt: OrderStatus.DELIVERY },
+        item_location: { notIn: ['', MADE_IN_CHINA_YES, MADE_IN_CHINA_NO] },
+      });
+    } else if (query.queryType === 'question') {
+      const oids = await this.repository.listOidsByUnreadChat(db, uid);
+      AND.push({ oid: { in: oids } }); // 空集 = Prisma in [] 恒 false，与旧 whereIn([]) 同义
+    }
+
+    // ---- 单列过滤（顺序 1:1 buildQuery）----
+    if (query.expressNo) AND.push({ expressno: query.expressNo });
+    if (query.fnsku) AND.push({ FNSKU: query.fnsku });
+
+    // ---- keyword：三词上限 + `数字/数字` oid 精确路径 + 六列 like + detail 日文名 ----
+    if (query.keyword) {
+      const keywords = query.keyword.split(' ').filter((v) => v !== '');
+      if (keywords.length > 3) {
+        return err({ code: 'ORDER_KEYWORD_TOO_MANY', message: '搜索关键词最多只能输入3个关键词' });
+      }
+      const ors: NonNullable<LegacyWhere['OR']> = [];
+      if (/^[0-9]+(\/[0-9]*)+$/.test(query.keyword)) {
+        const ids = query.keyword.split('/').map(Number).filter(Number.isInteger);
+        ors.push({ oid: { in: ids } });
+      } else {
+        for (const value of keywords) {
+          const kw = { contains: value };
+          ors.push(
+            { goodsname: kw },
+            { goodsseller: kw },
+            { outid: kw },
+            { FNSKU: kw },
+            { goodsremark: kw },
+            { yanhuoasin: kw },
+          );
+          if (Number.isInteger(Number(value))) ors.push({ oid: { equals: Number(value) } });
+        }
+        // 旧 whereHas('detail', goods_name_trans like)——两步查集合并入 OR
+        for (const value of keywords) {
+          const detailOids = await this.repository.listOidsByDetailNameLike(db, value);
+          if (detailOids.length > 0) ors.push({ oid: { in: detailOids } });
+        }
+      }
+      AND.push({ OR: ors });
+    }
+
+    if (query.startTime) AND.push({ addtime: { gte: query.startTime } });
+    if (query.endTime) AND.push({ addtime: { lte: query.endTime } });
+
+    // ---- 代发专属：在库保管 / 电商 SKU 关联（旧 :171-196）----
+    if (isDf) {
+      if (query.storeMode) {
+        if (query.storeState) {
+          if (query.storeState === 1) {
+            AND.push({ goodsnum: { gt: 0 }, state: { not: OrderStatus.DELIVERY } });
+          } else {
+            AND.push({ OR: [{ goodsnum: { lte: 0 } }, { state: OrderStatus.DELIVERY }] });
+          }
+        }
+        AND.push({ dfstoremode: 1 });
+      }
+      if (query.inEcommerceSkuIds) {
+        const skuIds = query.inEcommerceSkuIds.split(',').map(Number).filter(Number.isInteger);
+        const oids = await this.repository.listOidsByEcommerceSkuIds(db, skuIds);
+        AND.push({ oid: { in: oids } });
+      } else if (query.notInEcommerceSkuIds) {
+        const skuIds = query.notInEcommerceSkuIds.split(',').map(Number).filter(Number.isInteger);
+        const bound = await this.repository.listOidsByEcommerceSkuIds(db, skuIds);
+        AND.push({ oid: { notIn: bound } });
+      }
+    }
+
+    if (query.splitId) {
+      const spuIds = await this.repository.listSpuIdsBySplitOid(db, query.splitId);
+      AND.push({ oid: { in: spuIds } });
+    }
+    if (query.sid) AND.push({ sid: String(query.sid) });
+    if (query.outId) AND.push({ outid: query.outId });
+
+    // ---- mark_flag 位过滤（Prisma 无位运算 → raw 预筛 oid 集）----
+    if (query.markFavorite !== undefined) {
+      const oids = await this.repository.listOidsByMarkFlag(db, uid, MARK_FLAG_FAVORITE_POSITION, query.markFavorite);
+      AND.push({ oid: { in: oids } });
+    }
+    if (query.markArrival !== undefined) {
+      const oids = await this.repository.listOidsByMarkFlag(db, uid, MARK_FLAG_ARRIVAL_POSITION, query.markArrival);
+      AND.push({ oid: { in: oids } });
+    }
+
+    if (query.sellerId) AND.push({ supplier_shop_id: query.sellerId });
+    if (query.productId) AND.push({ supplier_product_id: query.productId });
+    if (query.updatedAfter) AND.push({ uptime: { gte: query.updatedAfter } });
+
+    const { rows, total } = await this.repository.listMemberOrders(db, where, query.page, query.limit);
+
+    // ---- detail 投影（goodsNameTrans / goodSkuTrans）----
+    const details = await this.repository.findOrderDetails(db, rows.map((r) => r.oid));
+
+    const projected = rows.map((r) => this.projectListRow(r, details.get(r.oid)));
+    return ok({ rows: projected, total, page: query.page, pageSize: query.limit });
+  }
+
+  /** 行投影（旧 Member/OrderType resolve* 系列 1:1） */
+  protected projectListRow(
+    r: ListOrderRow,
+    detail: { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null } | undefined,
+  ): MemberOrderRow {
+    const goodsNum = r.goodsnum ?? 0;
+    const skuDetail = parseSkuName(r.sku_name, r.goodssize, r.goodscolor);
+    const skuTrans = Array.isArray(detail?.sku_trans) ? (detail?.sku_trans as Array<{ name: string; value: string }>) : skuDetail;
+    const bargain = bargainDisplayOf(
+      r.addtime ?? 0,
+      r.state ?? 0,
+      r.goodsprice,
+      Number(r.goodsprice1 ?? 0),
+      goodsNum,
+      this.displayFromSec,
+    );
+    const madeInChina = splitItemLocation(r.item_location).madeInChina;
+    const markFlag = r.mark_flag ?? 0;
+
+    return {
+      oid: r.oid,
+      sid: r.sid,
+      type: (r.type ?? 0) as MemberOrderRow['type'],
+      // 显示态：12 → 3（旧 resolveStateField）
+      state: (r.state === OrderStatus.AFTER_SALE_WAIT_CHECK ? OrderStatus.SEND : r.state ?? 0) as MemberOrderRow['state'],
+      expressNo: r.expressno,
+      goodsId: r.goodsid,
+      goodsName: r.goodsname,
+      goodsNameTrans: detail?.goods_name_trans ?? r.goodsname,
+      goodsUrl: r.goodsurl,
+      goodsImg: r.goodsimg,
+      goodsSize: r.goodssize,
+      goodsColor: r.goodscolor,
+      goodsSeller: r.goodsseller,
+      goodsSite: r.goodssite,
+      goodSkus: skuDetail,
+      goodSkuTrans: skuTrans,
+      skuId: null, // 旧 Type 引 skuId 列但 Member 面未消费实际值（字段声明无 alias、resolve 缺省）——保持 null 并登记
+      ship: r.ship,
+      goodsPrice: moneyOf(r.goodsprice).toString(),
+      goodsPrice1: moneyOf(Number(r.goodsprice1 ?? 0)).toString(),
+      bargainStatus: bargain.status,
+      bargainAmount: bargain.amount,
+      goodsNum,
+      itemLocation: splitItemLocation(r.item_location).reason,
+      madeInChina,
+      sendPrice: moneyOf(r.sendprice).toString(),
+      goodsRemark: r.goodsremark,
+      orderRemark: r.orderremark,
+      fba: r.yanhuofba === '' ? null : r.yanhuofba,
+      asin: r.yanhuoasin === '' ? null : r.yanhuoasin,
+      fnsku: r.FNSKU === '' ? null : r.FNSKU,
+      outId: r.outid,
+      tid: r.tid === '' ? null : r.tid,
+      createdAt: r.addtime ? unixToIso(r.addtime) : '',
+      arrivedAt: r.arrivetime ? unixToIso(r.arrivetime) : null,
+      dfStoreMode: r.dfstoremode ?? 0,
+      markFavorite: (markFlag >> MARK_FLAG_FAVORITE_POSITION) & 0b11,
+      markArrival: (markFlag >> MARK_FLAG_ARRIVAL_POSITION) & 0b11,
+      platformOrderNo: readExtendField(r.extend, 'platform_order_no'),
+    };
+  }
+
   protected async cancelSingleOrder(tx: Tx, user: CancelUserRow, order: CancelOrderRow | undefined): Promise<void> {
     // 守卫第一分支：空单 = not_found（旧 ensureCancelable 首判；TS 收窄在此显式化）
     if (!order) throw orderError('ORDER_NOT_FOUND');

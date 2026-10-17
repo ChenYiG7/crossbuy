@@ -344,3 +344,132 @@ export const orderStatusChangeSchema = z.object({
   reason: z.string().max(255).nullable().optional(),
 });
 export type OrderStatusChange = z.infer<typeof orderStatusChangeSchema>;
+
+// ---------------------------------------------------------------------------
+// 五、R1 复现期：会员订单列表（旧 listOrderV2 + OrderListInput 20 项筛选 1:1）
+// ---------------------------------------------------------------------------
+
+/** 「安くなった額」展示状态（旧 OrderBargain::of，docs/plans/09 §3.2 语义） */
+export const BargainDisplayStatus = {
+  /** display_from 以前下单（画面显示「—」） */
+  BEFORE_START: 'before_start',
+  /** 无效订单（不显示） */
+  INVALID: 'invalid',
+  /** 采购中且尚无砍后单价（画面显示「買付後に表示」） */
+  PENDING: 'pending',
+  /** 已采购未降价 */
+  NONE: 'none',
+  /** 有降价 */
+  SAVED: 'saved',
+} as const;
+export type BargainDisplayStatusCode = (typeof BargainDisplayStatus)[keyof typeof BargainDisplayStatus];
+
+/** mark_flag 位标记值（旧 MARK_FLAG_VALUE_*：两位一个标记，favorite 占 0-1 位、arrival 占 2-3 位） */
+export const MarkFlagValue = {
+  DEFAULT: 0,
+  SUCCESS: 1,
+  PROCESSING: 2,
+  FAILED: 3,
+} as const;
+
+/** queryType 特殊视图（旧 OrderListInput：refuse 禁运品 / question 站内信问询） */
+export const ORDER_LIST_QUERY_TYPES = ['refuse', 'question'] as const;
+
+/**
+ * 订单列表查询（旧 OrderListInput::fields 1:1；可选项缺省 = 不过滤）。
+ * ⚠ 语义要点（正本 docs/plans/09 §3.1）：
+ *  - state=3 时旧代码自动并入 12（不良待确认对客户显示为在途）——service 层落
+ *  - dfflag 用户强制 type=3；普通用户强制 type in [1,2]——service 层按 principal 落
+ *  - keyword 空格分词最多 3 个（超出报错）；`数字/数字` 形态走 oid 精确路径
+ */
+export const orderListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  expressNo: z.string().max(64).optional(),
+  state: orderStatusSchema.optional(),
+  states: z.string().max(64).optional(), // 逗号分隔，service 解析校验
+  queryType: z.enum(ORDER_LIST_QUERY_TYPES).optional(),
+  keyword: z.string().max(255).optional(),
+  fnsku: z.string().max(64).optional(),
+  startTime: z.coerce.number().int().optional(),
+  endTime: z.coerce.number().int().optional(),
+  splitId: z.coerce.number().int().optional(),
+  sid: z.coerce.number().int().optional(),
+  storeMode: z.coerce.number().int().optional(),
+  storeState: z.coerce.number().int().optional(),
+  inEcommerceSkuIds: z.string().max(255).optional(),
+  notInEcommerceSkuIds: z.string().max(255).optional(),
+  outId: z.string().max(64).optional(),
+  markFavorite: z.union([z.literal(0), z.literal(1)]).optional(),
+  markArrival: z.union([z.literal(0), z.literal(1)]).optional(),
+  sellerId: z.coerce.number().int().optional(),
+  productId: z.coerce.number().int().optional(),
+  updatedAfter: z.coerce.number().int().optional(),
+});
+export type OrderListQuery = z.infer<typeof orderListQuerySchema>;
+
+/**
+ * 列表行（旧 Member/OrderType 输出字段 1:1 主行部分）。
+ * ⚠ 关联视图差异（有意分期，非遗漏）：sendOrder / examinations / arrival /
+ * instantChat* / fromSplitOid 依赖 send-order、检品、入库、站内信各属主域，
+ * R1 起步子集不返回——前端切流前按需补齐并登记 docs/plans/08。
+ */
+export const memberOrderRowSchema = z.object({
+  oid: z.number().int().positive(),
+  sid: z.string().nullable(), // dg_order.sid 是字符串列（S20 双口径；运单主键是 Int）
+  type: orderTypeSchema,
+  /** **显示态**：12 对客户显示为 3（旧 resolveStateField）——与库内 state 不同 */
+  state: orderStatusSchema,
+  expressNo: z.string().nullable(),
+  goodsId: z.string().nullable(),
+  goodsName: z.string().nullable(),
+  /** 旧 resolveGoodsNameTransField：detail.goods_name_trans ?? goodsname */
+  goodsNameTrans: z.string().nullable(),
+  goodsUrl: z.string().nullable(),
+  goodsImg: z.string().nullable(),
+  goodsSize: z.string().nullable(),
+  goodsColor: z.string().nullable(),
+  goodsSeller: z.string().nullable(),
+  goodsSite: z.string().nullable(),
+  /** 商品规格键值对（旧 parseSkuName：sku_name red/green 标签解析，空则回退 size/color） */
+  goodSkus: z.array(z.object({ name: z.string(), value: z.string() })),
+  /** 旧 resolveGoodSkuTransField：detail.sku_trans（数组）否则回退 parseSkuName */
+  goodSkuTrans: z.array(z.object({ name: z.string(), value: z.string() })),
+  skuId: z.string().nullable(),
+  /** 运送方式 1 エアー便 / 2 船便 / 3 空港禁輸品 */
+  ship: z.number().int().nullable(),
+  /** 商品单价（Money 字符串；旧 GraphQL float → REST 面修正） */
+  goodsPrice: z.string(),
+  /** 砍后单价（0 = 无改价记录） */
+  goodsPrice1: z.string(),
+  bargainStatus: z.enum([BargainDisplayStatus.BEFORE_START, BargainDisplayStatus.INVALID, BargainDisplayStatus.PENDING, BargainDisplayStatus.NONE, BargainDisplayStatus.SAVED]),
+  /** (goodsprice − goodsprice1) × goodsnum；before_start/invalid/pending 为 null */
+  bargainAmount: z.string().nullable(),
+  goodsNum: z.number().int(),
+  /** 航空禁运原因（去除 MADE_IN_CHINA 词后剩余） */
+  itemLocation: z.string().nullable(),
+  /** 中国制造标记（只保留 MADE_IN_CHINA 词） */
+  madeInChina: z.string().nullable(),
+  sendPrice: z.string(),
+  goodsRemark: z.string().nullable(),
+  orderRemark: z.string().nullable(),
+  fba: z.string().nullable(),
+  asin: z.string().nullable(),
+  fnsku: z.string().nullable(),
+  outId: z.string().nullable(),
+  tid: z.string().nullable(),
+  /** 下单时间（ISO，Asia/Shanghai；旧回 unix int，REST 面 ISO 化同 favorite） */
+  createdAt: z.string(),
+  arrivedAt: z.string().nullable(),
+  /** 0 直发 / 1 库存（一件代发） */
+  dfStoreMode: z.number().int(),
+  /** 收藏/到货标记（mark_flag 位解析） */
+  markFavorite: z.number().int(),
+  markArrival: z.number().int(),
+  /** 电商平台订单号（extend.platform_order_no） */
+  platformOrderNo: z.string(),
+});
+export type MemberOrderRow = z.infer<typeof memberOrderRowSchema>;
+
+/** 列表分页出参（Laravel paginate 同构：total 全量计数） */
+export type MemberOrderPageResult = PageResult<MemberOrderRow>;

@@ -20,7 +20,8 @@ export type Tx = LegacyPrisma.TransactionClient;
 export type Db = LegacyPrismaClient | Tx;
 
 export class OrderRepository {
-  constructor(protected readonly db: LegacyPrismaClient = legacyPrisma) {}
+  // db 对域内 service/amount-sync 开放（组装 where 与分页查询共用连接）；域外仍禁直触
+  constructor(public readonly db: LegacyPrismaClient = legacyPrisma) {}
 
   // -----------------------------------------------------------------------
   // 取消链路（OrderCancelService）
@@ -170,8 +171,116 @@ export class OrderRepository {
       },
     });
   }
+
+  // -----------------------------------------------------------------------
+  // 会员订单列表（旧 OrderListInput::buildQuery + ListOrderV2Query 1:1）
+  // -----------------------------------------------------------------------
+
+  /** 用户 dfflag（dfflag 用户列表强制 type=3） */
+  async getUserDfFlag(db: Db, uid: number): Promise<boolean> {
+    const row = await this.db.dg_users.findUnique({ where: { uid }, select: { dfflag: true } });
+    return (row?.dfflag ?? 0) === 1;
+  }
+
+  /** mark_flag 位条件筛 oid（Prisma 无位运算 → raw 小查询；value∈{0,1}，position 0=favorite/2=arrival） */
+  async listOidsByMarkFlag(db: Db, uid: number, position: number, value: number): Promise<number[]> {
+    const rows = await db.$queryRawUnsafe<{ oid: number }[]>(
+      'SELECT oid FROM dg_order WHERE uid = ? AND deleted_at IS NULL AND ((mark_flag & (0b11 << ?)) >> ?) = ?',
+      uid, position, position, value,
+    );
+    return rows.map((r) => Number(r.oid));
+  }
+
+  /** v2_order_detail.id == dg_order.oid（旧 hasOne(V2OrderDetail,'id','oid')）：日语商品名命中集 */
+  async listOidsByDetailNameLike(db: Db, keyword: string): Promise<number[]> {
+    const rows = await db.v2_order_detail.findMany({
+      where: { goods_name_trans: { contains: keyword } },
+      select: { id: true },
+    });
+    return rows.map((r) => Number(r.id));
+  }
+
+  /** detail 投影（id == oid）：goods_name_trans / sku_trans / instant_chat_tag */
+  async findOrderDetails(db: Db, oids: number[]) {
+    if (oids.length === 0) return new Map<number, { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null }>();
+    const rows = await db.v2_order_detail.findMany({
+      where: { id: { in: oids } },
+      select: { id: true, goods_name_trans: true, sku_trans: true, instant_chat_tag: true },
+    });
+    return new Map(rows.map((r) => [Number(r.id), r]));
+  }
+
+  /** question 视图：yunjiao 未读（xbox='b'）命中的 oid 集（旧 Yunjiao::where(uid)->where(xbox,UNREAD)） */
+  async listOidsByUnreadChat(db: Db, uid: number): Promise<number[]> {
+    const rows = await db.dg_yunjiao.findMany({ where: { uid, xbox: 'b' }, select: { oid: true } });
+    return [...new Set(rows.map((r) => Number(r.oid)))];
+  }
+
+  /** splitId 过滤：dg_order_split.oid = splitId → spoid 集（旧 OrderSplit::where('oid',..)->pluck('spoid')） */
+  async listSpuIdsBySplitOid(db: Db, splitOid: number): Promise<number[]> {
+    const rows = await db.dg_order_split.findMany({ where: { oid: splitOid }, select: { spoid: true } });
+    return rows.map((r) => Number(r.spoid)).filter((v) => v > 0);
+  }
+
+  /** notInEcommerceSkuIds：关联表反查已绑 oid 集（旧 ProductSkuAndOrderRelation pluck oid） */
+  async listOidsByEcommerceSkuIds(db: Db, skuIds: number[]): Promise<number[]> {
+    const rows = await db.v2_relation_ecommerce_product_sku_and_order.findMany({
+      where: { ecommerce_product_sku_id: { in: skuIds } },
+      select: { oid: true },
+    });
+    return rows.map((r) => Number(r.oid));
+  }
+
+  /**
+   * 列表主查询（**排除软删** = OrderWithoutTrashed，1:1）。
+   * where 由 service 组装（Prisma DgOrderWhereInput 接近旧 query builder 形态）；
+   * 排序 `oid + 1 desc` 与 `oid desc` 等价（oid 本就是 Int，+1 是旧代码绕字符串排序的 trick）。
+   */
+  async listMemberOrders(
+    db: Db,
+    where: LegacyPrisma.dg_orderWhereInput,
+    page: number,
+    limit: number,
+  ): Promise<{ rows: ListOrderRow[]; total: number }> {
+    // OrderWithoutTrashed 口径：列表恒排除软删（service 的 where 不携带此条件，在此强制）
+    const effectiveWhere: LegacyPrisma.dg_orderWhereInput = { AND: [{ deleted_at: null }, where] };
+    const [rows, total] = await Promise.all([
+      db.dg_order.findMany({
+        where: effectiveWhere,
+        select: {
+          oid: true, uid: true, type: true, state: true, sid: true, expressno: true,
+          goodsid: true, goodsname: true, goodsurl: true, goodsimg: true,
+          goodssize: true, goodscolor: true, goodsseller: true, goodssite: true,
+          sku_name: true, ship: true, goodsprice: true, goodsprice1: true, goodsnum: true,
+          item_location: true, sendprice: true, goodsremark: true, orderremark: true,
+          yanhuofba: true, yanhuoasin: true, FNSKU: true, outid: true, tid: true,
+          addtime: true, arrivetime: true, dfstoremode: true, mark_flag: true, extend: true,
+        },
+        orderBy: { oid: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+      db.dg_order.count({ where: effectiveWhere }),
+    ]);
+    return { rows: rows as ListOrderRow[], total };
+  }
 }
 
+/** 旧 query builder 的 Prisma where 形态（service 组装用；禁泄漏出域） */
+export type LegacyWhere = LegacyPrisma.dg_orderWhereInput;
+
+/** 列表行（select 子集；金额列 Prisma 回 number/Decimal，投影在 service 统一转字符串） */
+type Decimal = { toString(): string; toNumber(): number };
+export type ListOrderRow = {
+  oid: number; uid: number; type: number | null; state: number | null; sid: string | null;
+  expressno: string | null; goodsid: string | null; goodsname: string | null; goodsurl: string | null;
+  goodsimg: string | null; goodssize: string | null; goodscolor: string | null; goodsseller: string | null;
+  goodssite: string | null; sku_name: string; ship: number | null; goodsprice: number;
+  goodsprice1: number | Decimal; goodsnum: number | null; item_location: string | null; sendprice: number;
+  goodsremark: string | null; orderremark: string | null; yanhuofba: string; yanhuoasin: string;
+  FNSKU: string; outid: string | null; tid: string; addtime: number | null; arrivetime: number | null;
+  dfstoremode: number | null; mark_flag: number | null; extend: string | null;
+};
 
 /** 生产事务运行器（组合根用；域内禁自带连接 → 由此出口提供真事务语义） */
 export function runInOrderTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
