@@ -6,7 +6,12 @@
     "noEmit": true,
     "jsx": "preserve",
     "plugins": [{ "name": "next" }],
-    "tsBuildInfoFile": ".next/cache/tsconfig.tsbuildinfo"
+    "tsBuildInfoFile": ".next/cache/tsconfig.tsbuildinfo",
+    "baseUrl": ".",
+    "paths": {
+      "@crossbuy/ui": ["../../packages/ui/src/index.ts"],
+      "@crossbuy/ui/*": ["../../packages/ui/src/*"]
+    }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]

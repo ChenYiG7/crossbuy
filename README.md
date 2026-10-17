@@ -57,6 +57,25 @@ crossbuy/
 改技能的**正确入口**是 `scripts/import-claude-skills.mjs` 里的 `PROJECT_PATCHES`，
 不要直接改 `.workbuddy/skills/` 下的文件——下次重跑脚本会整目录覆写，改动会静默丢失。
 
+## 前端 UI 基座（packages/ui，M0.6）
+
+三 app（web/mzk/admin）**唯一组件源**，Tailwind 4 CSS-first 配置（全仓无 `tailwind.config.js`）：
+
+| 位置 | 职责 |
+|---|---|
+| `packages/ui/src/styles/theme.css` | 主题**唯一正本**：`@import 'tailwindcss'` + `@theme inline` 变量映射 + `:root`/`.dark` 变量本体 + base 层。app 的 globals.css 只需 `@import '@crossbuy/ui/styles.css';` |
+| `packages/ui/src/components/ui/` | shadcn（new-york 风格）基础组件，源码取自官方 registry；改组件优先 `npx shadcn add` |
+| `packages/ui/src/lib/cn.ts` | className 合并（clsx + tailwind-merge），`@crossbuy/ui/lib` 导出 |
+| `packages/ui/src/tokens.ts` | CSS 变量的 **TS 镜像**（canvas/图表场景用）；改 theme.css 必须同步它 |
+
+app 接入三件套（每个 app 都已就位）：`postcss.config.mjs`（`@tailwindcss/postcss`）、`globals.css` 两行（import + `@source './**/*.{ts,tsx}'`）、tsconfig `paths`。
+
+**★ `@source` 是承重墙**：`theme.css` 里的 `@source '../**/*.{ts,tsx}'` 显式扫描本包 components——Tailwind 自动扫描**不覆盖** monorepo 里的 ui 包，删掉它构建**照样全绿**但共享组件的样式**静默消失**（2026-10-17 破坏验证实录）。⇒ 验收 UI 改动必须 **grep 构建产物 CSS**（如 `animate-pulse`/`bg-primary` 在不在），不能只看 build 通过。
+
+**新增组件**：`cd apps/<app> && npx shadcn@latest add X`——各 app 的 `components.json` 已把 aliases 指向 `@crossbuy/ui`（组件直接落进共享包）；组件运行时依赖装到 `packages/ui`（catalog 已收编 tailwind/shadcn 依赖族）。
+
+其他：dark 模式 = 给 `html` 加 `.dark` class（`@custom-variant` 已配置）；`--brand` 是语义主色正本（shadcn `primary` 指向它）；涨跌配色按 A 股惯例在图表处显式给，不用 chart token 隐含。`.prettierignore` 豁免 `.workbuddy`（记忆日志/上游技能不参与格式化门禁；全仓 format:check 历史欠账见 TODO #6）。
+
 ## 设计文档
 
 - [AGENTS.md](./AGENTS.md) ← **AI 会话入口（项目宪法）**

@@ -1,0 +1,156 @@
+/**
+ * 共享设计主题 —— 三 app（web/mzk/admin）唯一正本。
+ *
+ * 接入方式：各 app 的 app/globals.css 只需一行 `@import '@crossbuy/ui/styles.css';`
+ * 本文件即 Tailwind 4 的 CSS-first 配置（全仓无 tailwind.config.js）：
+ *   - @theme inline 把 CSS 变量映射成 Tailwind 工具类；inline 保证 .dark 重定义变量后
+ *     已生成的工具类仍然动态生效（否则 dark 模式不切换）
+ *   - :root/.dark 是变量本体；--brand 是项目语义主色，shadcn 的 primary 指向它
+ *   - @source 显式声明源码扫描范围：monorepo 下本包 components 里的 cva 变体字符串
+ *     不在任何 app 目录内，必须显式扫描（漏扫 = 样式静默缺失，构建却成功——假绿）
+ *
+ * 纪律：
+ *   - 改本文件必须同步 src/tokens.ts（TS 镜像，供 canvas/图表等非 class 场景取值）
+ *   - 涨跌配色按 A 股惯例（涨红跌绿）在图表处显式指定，不依赖 chart token 隐含
+ *   - 新增 animated 组件（dialog/sonner 等）时 tw-animate-css 已就位，无需改这里
+ *   - 后续 `npx shadcn add X` 会按各 app 的 components.json 写进本包（见 README）
+ */
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* 本包源码：components 的 cva 变体字符串在这里，漏扫 = 样式静默缺失 */
+@source '../**/*.{ts,tsx}';
+
+:root {
+  /* 语义主色（正本，其余色板围绕它取） */
+  --brand: 222 47% 40%;
+  --brand-foreground: 0 0% 100%;
+  /* shadcn 标准色板（new-york neutral 取值，primary 指向 brand） */
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222 47% 11%;
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 98%;
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 222 47% 40%;
+  /* 图表通用序列（涨跌色不在这里隐含） */
+  --chart-1: 221 83% 53%;
+  --chart-2: 160 84% 39%;
+  --chart-3: 38 92% 50%;
+  --chart-4: 280 65% 60%;
+  --chart-5: 340 75% 55%;
+  /* admin 侧边栏（暗色，对齐旧 dcat-admin 观感） */
+  --sidebar: 222 47% 11%;
+  --sidebar-foreground: 210 40% 96%;
+  --sidebar-primary: 222 47% 40%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 222 40% 20%;
+  --sidebar-accent-foreground: 210 40% 96%;
+  --sidebar-border: 222 30% 25%;
+  --sidebar-ring: 222 47% 60%;
+  /* 圆角基准：sm/md/lg/xl 由它推导（见 @theme inline） */
+  --radius: 0.625rem;
+}
+
+.dark {
+  --brand: 217 91% 60%;
+  --brand-foreground: 222 47% 11%;
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --secondary: 222 20% 20%;
+  --secondary-foreground: 210 40% 96%;
+  --accent: 222 20% 20%;
+  --accent-foreground: 210 40% 96%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 98%;
+  --background: 222 47% 8%;
+  --foreground: 210 40% 96%;
+  --card: 222 40% 12%;
+  --card-foreground: 210 40% 96%;
+  --popover: 222 40% 12%;
+  --popover-foreground: 210 40% 96%;
+  --muted: 222 20% 20%;
+  --muted-foreground: 215 16% 60%;
+  --border: 222 20% 22%;
+  --input: 222 20% 24%;
+  --ring: 217 91% 60%;
+  --chart-1: 217 91% 65%;
+  --chart-2: 160 70% 45%;
+  --chart-3: 38 92% 60%;
+  --chart-4: 280 70% 70%;
+  --chart-5: 340 75% 65%;
+  --sidebar: 222 47% 7%;
+  --sidebar-foreground: 210 40% 96%;
+  --sidebar-primary: 217 91% 60%;
+  --sidebar-primary-foreground: 222 47% 11%;
+  --sidebar-accent: 222 35% 16%;
+  --sidebar-accent-foreground: 210 40% 96%;
+  --sidebar-border: 222 25% 20%;
+  --sidebar-ring: 217 91% 65%;
+}
+
+@theme inline {
+  --color-brand: hsl(var(--brand));
+  --color-brand-foreground: hsl(var(--brand-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-primary: hsl(var(--sidebar-primary));
+  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* 对日市场：系统字体栈优先日文字形（Noto Sans JP / ヒラギノ） */
+  --font-sans: system-ui, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

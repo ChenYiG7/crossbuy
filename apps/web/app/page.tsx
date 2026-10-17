@@ -1,10 +1,44 @@
-import { colorTokens } from '@crossbuy/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  Input,
+  Label,
+} from '@crossbuy/ui';
 
 export default function Home() {
   return (
-    <main style={{ padding: 32 }}>
-      <h1 style={{ color: colorTokens.brand }}>淘太郎 · 前台（web）</h1>
-      <p>面向日本市场的中国商品代购平台 —— 前台骨架，待接入 member 域首屏。</p>
+    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
+      <header className="flex items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">淘太郎 · 前台（web）</h1>
+        <Badge>shared UI</Badge>
+      </header>
+      <p className="text-sm text-muted-foreground">
+        面向日本市场的中国商品代购平台。以下卡片由 packages/ui 共享组件渲染（Tailwind 4 +
+        shadcn/ui），member 域首屏接入后替换本演示。
+      </p>
+      <Card>
+        <CardHeader>
+          <CardTitle>商品を検索</CardTitle>
+          <CardDescription>
+            キーワードまたは商品 URL を入力してください（デモフォーム）。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-2">
+          <Label htmlFor="keyword">キーワード</Label>
+          <Input id="keyword" placeholder="例：ミニトマト" />
+        </CardContent>
+        <CardFooter className="flex-wrap gap-2">
+          <Button>検索</Button>
+          <Button variant="secondary">URL から取込</Button>
+          <Button variant="ghost">クリア</Button>
+        </CardFooter>
+      </Card>
     </main>
   );
 }

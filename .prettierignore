@@ -4,3 +4,6 @@ dist
 .turbo
 pnpm-lock.yaml
 packages/db/generated
+
+# WorkBuddy 工具链资产（记忆日志 free-form、技能文件来自上游），不参与格式化门禁
+.workbuddy

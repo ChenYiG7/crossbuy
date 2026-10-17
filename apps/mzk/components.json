@@ -1,0 +1,16 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "new-york",
+  "tailwind": {
+    "css": "app/globals.css",
+    "baseColor": "neutral",
+    "cssVariables": true
+  },
+  "aliases": {
+    "components": "@crossbuy/ui/components",
+    "ui": "@crossbuy/ui/components/ui",
+    "utils": "@crossbuy/ui/lib",
+    "lib": "@crossbuy/ui/lib",
+    "hooks": "@crossbuy/ui/hooks"
+  }
+}
