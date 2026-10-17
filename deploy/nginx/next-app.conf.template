@@ -1,0 +1,43 @@
+# =====================================================================
+# Next app（web/mzk/admin）蓝绿 upstream 模板 —— docs/04 §2 D3
+# 占位符：{{APP}}=应用名  {{DOMAIN}}=对外域名  {{PORT_BLUE}}/{{PORT_GREEN}}=双端口
+# 约定（本仓五 app 端口规划）：
+#   web: blue 3101 / green 3102    mzk: blue 3111 / green 3112
+#   admin: blue 3121 / green 3122  api: blue 3201 / green 3202
+#   worker 不对外，无 nginx 面（进程守护 + 优雅退出即可）
+# 切换流程见 deploy/README.md（改 active.include 一行 + nginx -s reload，秒级）
+# =====================================================================
+
+upstream {{APP}}_blue {
+    server 127.0.0.1:{{PORT_BLUE}};
+    keepalive 32;
+}
+
+upstream {{APP}}_green {
+    server 127.0.0.1:{{PORT_GREEN}};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name {{DOMAIN}};
+
+    # 当前色（蓝绿切换点）：active.conf 内容二选一——
+    #   include /etc/nginx/upstreams/{{APP}}-blue.conf;   （内容：proxy_pass http://{{APP}}_blue;）
+    #   include /etc/nginx/upstreams/{{APP}}-green.conf;  （内容：proxy_pass http://{{APP}}_green;）
+    include /etc/nginx/upstreams/{{APP}}-active.conf;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+        # 发布瞬间 502 时让旧色兜底一跳（双活窗口内旧色仍在跑）
+        proxy_next_upstream error timeout http_502;
+    }
+}

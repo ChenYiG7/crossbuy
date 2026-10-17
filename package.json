@@ -16,7 +16,9 @@
     "format:check": "prettier --check .",
     "db:generate": "pnpm --filter @crossbuy/db generate",
     "db:migrate": "pnpm --filter @crossbuy/db migrate",
-    "db:studio": "pnpm --filter @crossbuy/db studio"
+    "db:studio": "pnpm --filter @crossbuy/db studio",
+    "deploy": "node scripts/deploy.mjs",
+    "blast": "node scripts/blast-radius.mjs"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

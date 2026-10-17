@@ -91,8 +91,9 @@ pnpm --filter @crossbuy/worker dev   # 只起 worker（需 Redis）
 | `apps/web` | 前台 www（对日电商） | 🟢 **M1 member 链路已落地**（2026-10-17：/member 页 RSC 直调域服务 + 登录/登出/PATCH 路由 + jose JWT 会话 + 端到端 smoke 31 断言；Tailwind 4 + 共享 UI，M0.6） |
 | `apps/mzk` | 代发端（dfFlag） | 🟡 骨架（Tailwind 4 + 共享 UI 已接，M0.6） |
 | `apps/admin` | 运营后台（替代 dcat-admin） | 🟡 **M1 只读切片已落地**（2026-10-17：登录（bcrypt + RBAC 范围实时判定）+ /users 用户列表 RSC 直调 member 域 + smoke 14 断言；写路径仍走旧后台直到域绞杀；两件套 next.config 已复制） |
-| `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架 |
-| `apps/api` | 机器面 API（open API + webhook，Fastify） | 🔴 docs/04 新增，待脚手架 |
+| `apps/worker` | BullMQ 队列 + 定时任务 | 🟡 骨架（M0.8 起 build = tsup，生产启动 `node dist/index.js`） |
+| `apps/api` | 机器面 API（open API + webhook，Fastify） | 🟢 M0.4 落地（zod→OpenAPI + traceId + HMAC/IP 守卫，smoke 24 断言）；M0.8 起 build = tsup（noExternal 打进内部包，产物可 node 直跑） |
+| `deploy/` + `scripts/deploy.mjs` + `scripts/blast-radius.mjs` | 部署管线（M0.8，docs/04 D3） | 🟢 per-app standalone/发布组装 + 影响半径计算（域写方协同清单在 `deploy/blast-radius.config.mjs`，**接新写方必须回来登记**）+ nginx 蓝绿模板；staging 机器就位后补 systemd/rsync/CI |
 | `packages/db` | Prisma schema + 客户端；`sql/` 迁移 SQL | 🟢 **R1 活跃 schema = legacy introspect（生产版）**（2026-10-16：`prisma/schema.prisma` = 生产 PolarDB `taotaro`（MySQL 8.0.18）**179 模型**，跳板机隧道 + gouba007 只读拉取；`dg_mail1` 是视图无模型、21 张 deprecated 原样入模；`pull:legacy` = pull + `post-pull-fixup.mjs`（撞名修复 + 头部自愈）；生产 dg_users 75 列/22,628 行；WorldFirst 五表存在但全空；provenance 见 `docs/plans/07` §三）+ **R2 封存资产** = `prisma/redesign/schema.prisma` 60 模型（member+finance+order+send-order，金额 `Decimal(14,2)`/面值 CNY，#11b 定版 + finance 12 表 `0015`；✅ #3g 空库全链跑绿 03 §十 + `0016~0018` 回填跑绿 03 §十一 994,279 分录）；**双 generator 双 client**（`src/generated/{legacy,redesign}`，`client.ts` 导出 `legacyPrisma`/`redesignPrisma`）均纳入 db:generate + typecheck + 运行时冒烟；`sql/0001~0018` 同批封存，T0/T1 生产执行暂缓 |
 | `packages/contract` | API 契约（TS 类型 + zod） | 🟢 core（统一响应体 Envelope，M1 从 apps/api 上移）+ member/favorite/admin 词表与 schema |
 | `packages/utils` | 金额/Result/分页/品牌类型/ISO 时间 | 🟢 已建（time.ts = unix→Asia/Shanghai ISO 全仓唯一出口） |

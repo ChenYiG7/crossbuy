@@ -15,6 +15,9 @@ dist/
 build/
 *.tsbuildinfo
 
+# 部署产物（scripts/deploy.mjs 组装的发布目录，含 standalone 拷贝，绝不入库）
+releases/
+
 # env
 .env
 .env.local

@@ -31,6 +31,8 @@ const nextConfig = (phase: string): NextConfig => {
       '@crossbuy/utils',
     ],
     outputFileTracingRoot: REPO_ROOT,
+    // M0.8（D3）：per-app standalone 产物（机制同 web）
+    output: 'standalone',
   };
 };
 

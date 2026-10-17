@@ -55,6 +55,9 @@ const nextConfig = (phase: string): NextConfig => {
     ],
     // ① 文件追踪根 = 仓库根（monorepo 权威值）
     outputFileTracingRoot: REPO_ROOT,
+    // M0.8（D3）：per-app standalone 产物——每个 Next app = 独立部署单元，
+    // 产物自带精简 node_modules，scripts/deploy.mjs 据此组装发布目录。
+    output: 'standalone',
   };
 };
 
