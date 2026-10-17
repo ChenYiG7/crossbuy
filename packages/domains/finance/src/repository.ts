@@ -15,4 +15,31 @@ import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
  */
 export class FinanceRepository {
   constructor(protected readonly db: LegacyPrismaClient = legacyPrisma) {}
+
+  // -----------------------------------------------------------------------
+  // 汇率读面（旧 Currency::getCurrency CNY→JPY 的 DB 路径 1:1；dg_huilv 属主 = finance）
+  // -----------------------------------------------------------------------
+
+  /** 当天当前小时的汇率行（旧 where(nian/yue/ri/shi)->first()） */
+  async findRateByHour(now: Date): Promise<number | null> {
+    const row = await this.db.dg_huilv.findFirst({
+      where: {
+        nian: now.getFullYear(),
+        yue: now.getMonth() + 1,
+        ri: now.getDate(),
+        shi: now.getHours(),
+      },
+      select: { huilv: true },
+    });
+    return row ? row.huilv : null;
+  }
+
+  /** 最新一条汇率（外部 API 全失败时的兜底，旧 orderByDesc('hid')->first()） */
+  async findLatestRate(): Promise<number | null> {
+    const row = await this.db.dg_huilv.findFirst({
+      orderBy: { hid: 'desc' },
+      select: { huilv: true },
+    });
+    return row ? row.huilv : null;
+  }
 }

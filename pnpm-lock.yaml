@@ -305,6 +305,9 @@ importers:
       '@crossbuy/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@crossbuy/domain-finance':
+        specifier: workspace:*
+        version: link:../../packages/domains/finance
       '@crossbuy/domain-member':
         specifier: workspace:*
         version: link:../../packages/domains/member

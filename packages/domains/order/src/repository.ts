@@ -307,6 +307,67 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
+  // 购物车读路径（旧 listCart / getCartMoney；dg_cart + v2_supplier_product 属主 = order 域）
+  // -----------------------------------------------------------------------
+
+  /** 购物车行（select 子集：列表 + 金额计算全部所需列） */
+  async listCarts(
+    db: Db,
+    where: { uid: number; gids?: number[]; types: number[] },
+  ): Promise<Array<{
+    gid: number; uid: number; uname: string | null; type: number | null;
+    supplier_product_id: number | null; goodsurl: string; goodsname: string; goodsprice: number;
+    offer_price: number; retail_price: number | null; one_piece_price: number; sendprice: number;
+    goodsnum: number; min_order_quantity: number; goodsimg: string | null; goodssize: string | null;
+    goodscolor: string | null; goodsseller: string | null; goodssite: string | null;
+    expressno: string | null; goodsremark: string | null; goodsid: string | null;
+    ship: number | null; sku_name: string; goods_name_trans: string | null; sku_trans: unknown;
+    yanhuofba: string; yanhuoasin: string; yanhuofnsku: string; yanhuozengzhi: string; outid: string | null;
+    add_from: number | null; addtime: number | null;
+    var1: string; var2: string; var3: string; var4: string; var5: string; var6: string;
+    var7: string; var8: string | null; var9: string | null; var10: string | null; var11: string | null; var12: string | null;
+  }>> {
+    const rows = await db.dg_cart.findMany({
+      where: {
+        uid: where.uid,
+        ...(where.gids ? { gid: { in: where.gids } } : {}),
+        type: { in: where.types },
+      },
+      select: {
+        gid: true, uid: true, uname: true, type: true,
+        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
+        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
+        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
+        goodscolor: true, goodsseller: true, goodssite: true,
+        expressno: true, goodsremark: true, goodsid: true,
+        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
+        yanhuofba: true, yanhuoasin: true, yanhuofnsku: true, yanhuozengzhi: true, outid: true,
+        add_from: true, addtime: true,
+        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
+        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+      },
+      orderBy: { addtime: 'desc' },
+    });
+    return rows;
+  }
+
+  /** 供应商商品摘要（旧 with(['supplierProduct']) 的 R1 子集列；按 id 批量） */
+  async listSupplierProducts(db: Db, ids: number[]): Promise<Map<number, {
+    id: number; shop_id: number | null; platform: string; goods_id: string; goods_name: string;
+    price_range: unknown; min_order_quantity: number; seller_mix_setting: string | null; one_piece_free_postage: number;
+  }>> {
+    if (ids.length === 0) return new Map();
+    const rows = await db.v2_supplier_product.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true, shop_id: true, platform: true, goods_id: true, goods_name: true,
+        price_range: true, min_order_quantity: true, seller_mix_setting: true, one_piece_free_postage: true,
+      },
+    });
+    return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  // -----------------------------------------------------------------------
   // send-order 域端口读面（dg_order 属主 = order 域；send-order 列表经端口消费）
   // -----------------------------------------------------------------------
 

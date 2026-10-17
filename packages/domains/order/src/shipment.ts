@@ -54,7 +54,7 @@ export class ShipmentService {
   async batchUpdateExpressno(
     items: ShipmentBatchItem[],
     platform = '1688',
-    opts: { isDelayedFix?: boolean } = {},
+    _opts: { isDelayedFix?: boolean } = {}, // isDelayedFix 仅影响旧日志差异（S27），R1 留位
   ): Promise<ShipmentBatchResult> {
     const db = this.deps.repository.db;
     const failedTids: string[] = [];

@@ -426,6 +426,20 @@ export class MemberRepository {
   // 1688 物流建档（旧 OrderController::tryGetUser 1:1；webhook 编排经 service 接口）
   // -----------------------------------------------------------------------
 
+  /**
+   * 会员金额因子（旧 $user 的 dfflag/dffee/utype；购物车金额/服务费计算用）。
+   * dg_users 属主读口的窄投影——跨域消费走 order 域的 MemberFactorsPort。
+   */
+  async getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number } | null> {
+    const row = await this.db.dg_users.findUnique({
+      where: { uid },
+      select: { dfflag: true, dffee: true, utype: true },
+    });
+    if (!row) return null;
+    // dffee 列是 Decimal（金额单入口纪律：读入即 number 化的窄投影在此收口）
+    return { isDf: (row.dfflag ?? 0) === 1, dffee: Number(row.dffee ?? 0), utype: row.utype ?? 0 };
+  }
+
   /** appid + openid 查 oauth 绑定（旧 OauthLogin::with(['user'])->where(appid)->where(openid)->first()） */
   async findOauthLogin(appid: string, openid: string): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null } | null> {
     // 旧库无外键 → Prisma 无关系字段（S19 同源），with(['user']) 拆两步查

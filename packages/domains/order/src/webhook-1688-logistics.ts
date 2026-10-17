@@ -1,5 +1,5 @@
 import { webhook1688LogisticsMessageSchema, type Webhook1688LogisticsMessage } from '@crossbuy/contract';
-import type { Db, OrderRepository, Tx } from './repository';
+import type { OrderRepository, Tx } from './repository';
 
 /**
  * 跨域端口（域间禁横向 import——结构化最小接口，组合根用 member/send-order 的

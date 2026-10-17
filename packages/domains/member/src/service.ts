@@ -96,6 +96,12 @@ export interface MemberService {
   }): Promise<Result<{ uid: number; uname: string; memberid: string | null; email: string | null }, MemberError>>;
 
   /**
+   * 会员金额因子（dfflag/dffee/utype——购物车金额计算窄投影；null = 会员不存在）。
+   * webhook/跨域面（无 Principal）——调用方是 order 域组合根。
+   */
+  getMoneyFactors(uid: number): Promise<Result<{ isDf: boolean; dffee: number; utype: number }, MemberError>>;
+
+  /**
    * 后台只读用户列表（docs/06 §四-4 admin「用户管理」只读起步；admin app 经本接口
    * 读 dg_users——表属主纪律：admin app 薄壳同时装配 admin + member 两个域）。
    * scope 由 admin 域实时判定后传入（all/flags/none 三分支语义见 contract）；
@@ -290,6 +296,12 @@ export class MemberServiceImpl implements MemberService {
       take: limit,
     });
     return ok({ items: rows.map((row) => this.toFavorite(row)), total, page, limit });
+  }
+
+  async getMoneyFactors(uid: number): Promise<Result<{ isDf: boolean; dffee: number; utype: number }, MemberError>> {
+    const factors = await this.repository.getMoneyFactors(uid);
+    if (!factors) return err({ code: 'MEMBER_NOT_FOUND', message: '会员不存在' });
+    return ok(factors);
   }
 
   async findOrCreateOauthUser(input: {
