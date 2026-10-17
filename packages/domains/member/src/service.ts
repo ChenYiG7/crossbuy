@@ -1,15 +1,20 @@
 import {
+  FAVORITE_TYPE,
+  GOODS_SITE_BY_PLATFORM,
   MEMBER_STATE,
+  favoriteCreateSchema,
+  favoriteListQuerySchema,
   memberLoginSchema,
   memberProfileUpdateSchema,
+  type Favorite,
   type MemberProfile,
 } from '@crossbuy/contract';
 import type { Principal } from '@crossbuy/auth';
 import { err, ok, type Result } from '@crossbuy/utils';
-import { money } from '@crossbuy/utils';
+import { money, unixToIso } from '@crossbuy/utils';
 import { resolveAvatarUrl, stripOssFullHost } from './avatar';
 import type { MemberError } from './errors';
-import type { MemberAuthRecord, MemberProfileRow, MemberRepository } from './repository';
+import type { FavoriteRow, MemberAuthRecord, MemberProfileRow, MemberRepository } from './repository';
 import type { LoginRateLimiter } from './login-rate-limiter';
 import type { PasswordVerifier } from './password-verifier';
 
@@ -55,6 +60,23 @@ export interface MemberService {
 
   /** 读取「我」的资料（旧 getUserInfo 的 dg_users 部分；跨域字段随属主域补齐） */
   getProfile(principal: Principal): Promise<Result<MemberProfile, MemberError>>;
+
+  /**
+   * 新增收藏（旧 AddFavoriteMutation）：
+   * type 按**库里的活 dfflag** 分流（3 一件代发 / 1 普通代购，禁信 token 里的旧值）；
+   * 同 uid + goodsurl 已存在 → FAVORITE_GOODS_URL_DUPLICATE（旧「先查后插」，无唯一键，
+   * 并发窗口仍可能重复——1:1 复现并登记 docs/plans/08）。
+   */
+  addFavorite(principal: Principal, input: unknown): Promise<Result<Favorite, MemberError>>;
+
+  /** 收藏列表（旧 ListFavoriteQuery/FavoriteController：二值 type 过滤 + fid 倒序 + 分页） */
+  listFavorites(
+    principal: Principal,
+    query: unknown,
+  ): Promise<Result<{ items: Favorite[]; total: number; page: number; limit: number }, MemberError>>;
+
+  /** 删除收藏（旧 DeleteFavoriteMutation：按 uid 收敛，删不到 = not_found） */
+  deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>>;
 }
 
 export class MemberServiceImpl implements MemberService {
@@ -162,6 +184,106 @@ export class MemberServiceImpl implements MemberService {
     return ok(this.toProfile(row));
   }
 
+  async addFavorite(principal: Principal, input: unknown): Promise<Result<Favorite, MemberError>> {
+    if (principal.kind !== 'member') {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: '非会员主体' });
+    }
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
+    }
+
+    const parsed = favoriteCreateSchema.safeParse(input);
+    if (!parsed.success) {
+      const field = parsed.error.issues[0]?.path.join('.') ?? 'input';
+      return err({
+        code: 'FAVORITE_INVALID',
+        message: `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`,
+      });
+    }
+    const { name, platform, nick, price, detailUrl, picture } = parsed.data;
+
+    // 会员 Slim 行（uname 落库 + dfflag 定 type）；查不到 = 号没了（并发删号）
+    const slim = await this.repository.getMemberSlim(uid);
+    if (!slim) return err({ code: 'MEMBER_NOT_FOUND', message: '会员不存在' });
+
+    // 重复检查（旧 mutation 同款：先查后插；错误消息照旧 zh_CN 文案）
+    const existing = await this.repository.findFavoriteByGoodsUrl(uid, detailUrl);
+    if (existing) {
+      return err({
+        code: 'FAVORITE_GOODS_URL_DUPLICATE',
+        message: '已有同样的商品加入收藏了，请确认。',
+      });
+    }
+
+    const row = await this.repository.createFavorite({
+      uid,
+      uname: slim.uname,
+      type: slim.dfFlag ? FAVORITE_TYPE.DAIFA : FAVORITE_TYPE.DAIGOU,
+      goodsUrl: detailUrl,
+      goodsName: name,
+      goodsPrice: price,
+      goodsImg: picture ?? null,
+      goodsSeller: nick,
+      goodsSite: GOODS_SITE_BY_PLATFORM[platform] ?? '其他',
+      addtime: Math.floor(Date.now() / 1000),
+    });
+    return ok(this.toFavorite(row));
+  }
+
+  async listFavorites(
+    principal: Principal,
+    query: unknown,
+  ): Promise<
+    Result<{ items: Favorite[]; total: number; page: number; limit: number }, MemberError>
+  > {
+    if (principal.kind !== 'member') {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: '非会员主体' });
+    }
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
+    }
+
+    const parsed = favoriteListQuerySchema.safeParse(query);
+    if (!parsed.success) {
+      const field = parsed.error.issues[0]?.path.join('.') ?? 'query';
+      return err({
+        code: 'FAVORITE_INVALID',
+        message: `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`,
+      });
+    }
+    const { type, page, limit } = parsed.data;
+
+    const { rows, total } = await this.repository.listFavorites(uid, {
+      // 二值语义（旧代码原样）：只有显式传 3 才看代发，其余 = 非代发含 NULL
+      daifaOnly: type === FAVORITE_TYPE.DAIFA,
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+    return ok({ items: rows.map((row) => this.toFavorite(row)), total, page, limit });
+  }
+
+  async deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>> {
+    if (principal.kind !== 'member') {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: '非会员主体' });
+    }
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
+    }
+    if (!Number.isInteger(fid) || fid <= 0) {
+      return err({ code: 'FAVORITE_INVALID', message: 'fid 非法' });
+    }
+
+    // 按 uid 收敛：删别人的 fid 影响 0 行 → not_found（旧测试锁死的行为）
+    const deleted = await this.repository.deleteFavorite(uid, fid);
+    if (deleted === 0) {
+      return err({ code: 'FAVORITE_NOT_FOUND', message: '收藏记录不存在' });
+    }
+    return ok(undefined);
+  }
+
   /** 旧 LoginMutation 的 state 三闸：0 未審査 / -1 审核失败 / 3 使用禁止 */
   private checkStateGate(record: MemberAuthRecord): MemberError | null {
     switch (record.state) {
@@ -227,6 +349,30 @@ export class MemberServiceImpl implements MemberService {
       avatar: resolveAvatarUrl(row.face, this.oss.ossCdnUrl ?? ''),
       useInquiry: parseUseInquiry(row.reg_extra),
       originPackageChoice: row.origin_package_choice,
+    };
+  }
+
+  /**
+   * 收藏行 → 契约读模型：
+   * - goodsprice 库里是 float（旧结构不动）——读出任经 utils/money 单入口转字符串，禁浮点回传
+   * - addtime（INT unix 秒）→ ISO 字符串（Asia/Shanghai，utils/time 单出口）
+   */
+  protected toFavorite(row: FavoriteRow): Favorite {
+    return {
+      fid: row.fid,
+      uid: row.uid ?? 0,
+      uname: row.uname,
+      typeid: row.typeid,
+      type: row.type,
+      goodsUrl: row.goodsurl,
+      goodsName: row.goodsname,
+      goodsPrice: money(row.goodsprice),
+      goodsImg: row.goodsimg,
+      goodsSeller: row.goodsseller,
+      sellerUrl: row.sellerurl,
+      goodsSite: row.goodssite,
+      siteUrl: row.siteurl,
+      createdAt: row.addtime != null ? unixToIso(row.addtime) : '',
     };
   }
 }

@@ -238,4 +238,137 @@ export class MemberRepository {
       data: { state: MEMBER_STATE.LOGIN_RESTRICTED, orderenable: ORDER_UNENABLE },
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // 收藏（member 域属主旧表 dg_favorite；旧 AddFavorite/DeleteFavorite/ListFavorite
+  // + FavoriteController REST 面。⚠ 表无 (uid, goodsurl) 唯一键——旧系统「先查后插」，
+  // 并发同 URL 仍可能插出重复行，1:1 复现不「修」，见 docs/plans/08）
+  // ---------------------------------------------------------------------------
+
+  /** 读 uname + dfflag（收藏 type 分流用：旧 `$user->dfflag == DF_FLAG_1 ? 3 : 1`，取库里的活值） */
+  async getMemberSlim(uid: number): Promise<{ uname: string; dfFlag: boolean } | null> {
+    const row = await this.db.dg_users.findUnique({
+      where: { uid },
+      select: { uname: true, dfflag: true },
+    });
+    if (!row) return null;
+    return { uname: row.uname, dfFlag: (row.dfflag ?? 0) !== 0 };
+  }
+
+  /** 重复收藏检查（旧 AddFavoriteMutation：同 uid + goodsurl 已存在即拒） */
+  async findFavoriteByGoodsUrl(uid: number, goodsUrl: string): Promise<{ fid: number } | null> {
+    return this.db.dg_favorite.findFirst({
+      where: { uid, goodsurl: goodsUrl },
+      select: { fid: true },
+    });
+  }
+
+  /**
+   * 新增收藏（旧 AddFavoriteMutation 的写入字段 1:1），返回落库行（供服务层直接转契约）。
+   * sellerurl/siteurl/marktext 旧 mutation 不写（null 留空）——客户端只传商品快照。
+   */
+  async createFavorite(input: {
+    uid: number;
+    uname: string;
+    type: number;
+    goodsUrl: string;
+    goodsName: string;
+    goodsPrice: number;
+    goodsImg: string | null;
+    goodsSeller: string;
+    goodsSite: string;
+    addtime: number;
+  }): Promise<FavoriteRow> {
+    return this.db.dg_favorite.create({
+      data: {
+        uid: input.uid,
+        uname: input.uname,
+        typeid: 0, // 旧 mutation 字面量（未用上的分类 id 位）
+        type: input.type,
+        goodsurl: input.goodsUrl,
+        goodsname: input.goodsName,
+        goodsprice: input.goodsPrice,
+        goodsimg: input.goodsImg,
+        goodsseller: input.goodsSeller,
+        goodssite: input.goodsSite,
+        addtime: input.addtime,
+      },
+      select: FAVORITE_SELECT,
+    });
+  }
+
+  /**
+   * 收藏列表（旧 ListFavoriteQuery + FavoriteController）：
+   * - type 过滤**二值语义**：daifaOnly=true → type=3；否则 → type IS NULL OR type != 3
+   * - fid 倒序；分页 skip/take + count（旧 REST 控制器同款）
+   */
+  async listFavorites(
+    uid: number,
+    opts: { daifaOnly: boolean; skip: number; take: number },
+  ): Promise<{ rows: FavoriteRow[]; total: number }> {
+    const typeWhere = opts.daifaOnly
+      ? { type: FAVORITE_TYPE_DAIFA }
+      : { OR: [{ type: null }, { type: { not: FAVORITE_TYPE_DAIFA } }] };
+    const where = { uid, ...typeWhere };
+    const [rows, total] = await Promise.all([
+      this.db.dg_favorite.findMany({
+        where,
+        orderBy: { fid: 'desc' },
+        skip: opts.skip,
+        take: opts.take,
+        select: FAVORITE_SELECT,
+      }),
+      this.db.dg_favorite.count({ where }),
+    ]);
+    return { rows, total };
+  }
+
+  /**
+   * 删除收藏（旧 DeleteFavoriteMutation：where uid = 当前用户 AND fid IN (...)）。
+   * **按 uid 收敛**——删别人的 fid 影响行数 0（旧测试 testDeleteFavoriteWithOtherUidFail
+   * 锁死该行为：不报「记录存在但属别人」，统一 not_found）。
+   */
+  async deleteFavorite(uid: number, fid: number): Promise<number> {
+    const result = await this.db.dg_favorite.deleteMany({ where: { uid, fid } });
+    return result.count;
+  }
+}
+
+/** 旧 `App\Models\Favorite::TYPE_DAIFA`（3 = 一件代发；DAIGOU=1） */
+const FAVORITE_TYPE_DAIFA = 3;
+
+/** 收藏行查询列（显式 select，禁 select * 把 sellerurl/siteurl/marktext 等无关列带出） */
+const FAVORITE_SELECT = {
+  fid: true,
+  uid: true,
+  uname: true,
+  typeid: true,
+  type: true,
+  goodsurl: true,
+  goodsname: true,
+  goodsprice: true,
+  goodsimg: true,
+  goodsseller: true,
+  sellerurl: true,
+  goodssite: true,
+  siteurl: true,
+  addtime: true,
+} as const;
+
+/** 收藏行（repository 出口类型；列名保持旧库原样，解释权在 service） */
+export interface FavoriteRow {
+  fid: number;
+  uid: number | null;
+  uname: string;
+  typeid: number;
+  type: number | null;
+  goodsurl: string;
+  goodsname: string;
+  goodsprice: number;
+  goodsimg: string | null;
+  goodsseller: string | null;
+  sellerurl: string | null;
+  goodssite: string | null;
+  siteurl: string | null;
+  addtime: number | null;
 }

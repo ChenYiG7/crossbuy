@@ -20,6 +20,11 @@ const STATUS_BY_CODE: Record<string, number> = {
   MEMBER_PROFILE_INVALID: 400,
   MEMBER_PRINCIPAL_INVALID: 401,
   MEMBER_NOT_FOUND: 404,
+  // 收藏面
+  FAVORITE_INVALID: 400,
+  /** 同 URL 重复收藏（旧系统 UserError；REST 面显式化为 409 Conflict） */
+  FAVORITE_GOODS_URL_DUPLICATE: 409,
+  FAVORITE_NOT_FOUND: 404,
 };
 
 export function httpStatusForMemberError(code: string): number {

@@ -42,6 +42,9 @@ async function setupScratch(): Promise<void> {
     `CREATE DATABASE ${SCRATCH_DB} CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci`,
   );
   await legacyPrisma.$executeRawUnsafe(`CREATE TABLE ${SCRATCH_DB}.dg_users LIKE taotaro.dg_users`);
+  await legacyPrisma.$executeRawUnsafe(
+    `CREATE TABLE ${SCRATCH_DB}.dg_favorite LIKE taotaro.dg_favorite`,
+  );
   const pwd = createHash('md5').update(FIXTURE.password, 'utf8').digest('hex');
   // 内联 SQL：值全部是脚本内的受控常量（夹具账号/密码哈希），无外部输入，无注入面
   await legacyPrisma.$executeRawUnsafe(
@@ -106,11 +109,21 @@ async function call(
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   const setCookie = res.headers.get('set-cookie');
-  return {
-    status: res.status,
-    body: (await res.json()) as Res['body'],
-    setCookie,
-  };
+  // 非 JSON 响应（未捕获 500 常是空 body）不许把演练炸掉——带上下文落到 body.message，
+  // 让断言失败信息能指认服务端出了什么事（2026-10-17 收藏首跑就是这样定位的）
+  const text = await res.text();
+  let body: Res['body'];
+  try {
+    body = JSON.parse(text) as Res['body'];
+  } catch {
+    body = {
+      code: -1,
+      message: `非 JSON 响应（HTTP ${res.status}）：${text.slice(0, 300) || '<empty body>'}`,
+      data: null,
+      traceId: '',
+    };
+  }
+  return { status: res.status, body, setCookie };
 }
 
 function sessionCookie(setCookie: string | null): string | null {
@@ -185,6 +198,53 @@ async function main(): Promise<void> {
       body: { useType: 9 },
     });
     check('越界枚举 PATCH → 400（契约拒绝）', badPatch.status === 400 && badPatch.body.code === 400, badPatch.body);
+
+    console.log('[4.6] 收藏增删（旧 AddFavorite/DeleteFavorite/ListFavorite REST 化）');
+    // 夹具用户 dfflag=1 ⇒ 收藏落 type=3（代发）——默认页签（非代发）看不见它，正好验证二值过滤
+    const favCreate = await call('POST', '/api/customer/v1/favorites', {
+      cookie: cookie ?? undefined,
+      body: {
+        name: '冒烟测试商品',
+        platform: 'taobao',
+        nick: '冒烟商家',
+        price: 19.8,
+        detailUrl: 'https://item.taobao.com/item.htm?id=694784194003',
+        picture: 'http://img.alicdd.com/x.jpg',
+      },
+    });
+    check('新增收藏 → 200', favCreate.status === 200, favCreate.body);
+    const fid = (favCreate.body.data as { fid?: number } | null)?.fid;
+    check('返回 fid', typeof fid === 'number' && fid > 0);
+    check('type=3（夹具用户 dfflag=1）', (favCreate.body.data as { type?: number } | null)?.type === 3);
+    check('goodssite=淘宝', (favCreate.body.data as { goodsSite?: string } | null)?.goodsSite === '淘宝');
+    check('goodsPrice 字符串（禁浮点）', (favCreate.body.data as { goodsPrice?: string } | null)?.goodsPrice === '19.8');
+    check('createdAt ISO +08:00', /^\d{4}-\d{2}-\d{2}T[\d:]{8}\+08:00$/.test((favCreate.body.data as { createdAt?: string } | null)?.createdAt ?? ''));
+
+    const favDefault = await call('GET', '/api/customer/v1/favorites', { cookie: cookie ?? undefined });
+    check('默认列表不含代发收藏（二值过滤）', (favDefault.body.data?.items ?? []).every((f: { fid: number }) => f.fid !== fid));
+    const favDaifa = await call('GET', '/api/customer/v1/favorites?type=3', { cookie: cookie ?? undefined });
+    check('type=3 列表含该收藏', (favDaifa.body.data?.items ?? []).some((f: { fid: number }) => f.fid === fid));
+
+    const favDup = await call('POST', '/api/customer/v1/favorites', {
+      cookie: cookie ?? undefined,
+      body: {
+        name: '冒烟测试商品',
+        platform: 'taobao',
+        nick: '冒烟商家',
+        price: 19.8,
+        detailUrl: 'https://item.taobao.com/item.htm?id=694784194003',
+      },
+    });
+    check('重复 URL → 409', favDup.status === 409, favDup.body);
+
+    const favDel = await call('DELETE', `/api/customer/v1/favorites/${fid}`, { cookie: cookie ?? undefined });
+    check('删除收藏 → 200', favDel.status === 200);
+    const favDelAgain = await call('DELETE', `/api/customer/v1/favorites/${fid}`, { cookie: cookie ?? undefined });
+    check('重复删除 → 404 not_found', favDelAgain.status === 404, favDelAgain.body);
+    const favAnon = await call('POST', '/api/customer/v1/favorites', {
+      body: { name: 'x', platform: 'taobao', nick: 'x', price: 1, detailUrl: 'https://e.com/1' },
+    });
+    check('未登录新增收藏 → 401', favAnon.status === 401);
     check('cookie GET me → 200', me.status === 200 && me.body.data?.uname === FIXTURE.uname, me.body);
 
     const token = cookie?.split('=')[1] ?? '';
