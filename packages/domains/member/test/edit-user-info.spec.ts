@@ -12,24 +12,10 @@ import { describe, expect, it } from 'vitest';
 import { legacyPrisma } from '@crossbuy/db';
 import { memberPrincipal } from '@crossbuy/auth';
 import { MemberRepository } from '../src/repository';
+import { InMemoryLoginRateLimiter } from '../src/login-rate-limiter';
+import { Md5PasswordVerifier } from '../src/password-verifier';
 import { MemberServiceImpl } from '../src/service';
-
-/** 事务回滚：结果带出来，改动全部丢弃（dump 库不能被测试写脏） */
-class Rollback extends Error {}
-
-async function withRollback<T>(fn: (tx: typeof legacyPrisma) => Promise<T>): Promise<T> {
-  let result: T;
-  try {
-    await legacyPrisma.$transaction(async (tx) => {
-      result = await fn(tx as typeof legacyPrisma);
-      throw new Rollback();
-    });
-  } catch (e) {
-    if (!(e instanceof Rollback)) throw e;
-  }
-  // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-  return result!;
-}
+import { withRollback } from './helpers/rollback';
 
 describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
   it('成功路径：合法入参应写入并可读回', async () => {
@@ -39,7 +25,7 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
     });
 
     await withRollback(async (tx) => {
-      const service = new MemberServiceImpl(new MemberRepository(tx));
+      const service = new MemberServiceImpl(new MemberRepository(tx), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
       const res = await service.updateProfile(memberPrincipal(uid), {
         regType: 1,
         trueName: 'tname',
@@ -64,14 +50,14 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
   });
 
   it('无效 regType（3）应被契约拒绝 —— 源：testEditUserInfoErrorWithInvalidRegType', async () => {
-    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma));
+    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
     const res = await service.updateProfile(memberPrincipal(1), { regType: 3 });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('MEMBER_PROFILE_INVALID');
   });
 
   it('无效 useType（9）应被契约拒绝 —— 源：testEditUserInfoErrorWithInvalidUseType', async () => {
-    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma));
+    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
     const res = await service.updateProfile(memberPrincipal(1), { useType: 9 });
     expect(res.ok).toBe(false);
   });
@@ -89,7 +75,7 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
 
     for (const useType of [1, 2, 3, 4, 5]) {
       await withRollback(async (tx) => {
-        const service = new MemberServiceImpl(new MemberRepository(tx));
+        const service = new MemberServiceImpl(new MemberRepository(tx), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
         const res = await service.updateProfile(memberPrincipal(uid), { useType });
         expect(res.ok).toBe(true);
         const after = await new MemberRepository(tx).findProfile(uid);

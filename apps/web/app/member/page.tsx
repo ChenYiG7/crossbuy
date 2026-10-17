@@ -1,0 +1,50 @@
+import { cookies } from 'next/headers';
+import { getMemberService, getMemberVerifier } from '@/server/member';
+import { SESSION_COOKIE_NAME } from '@/auth/cookies';
+import { LoginForm } from './login-form';
+import { ProfileView } from './profile-view';
+
+/**
+ * 会员中心页（M1：RSC 直调域服务，不过 HTTP——docs/04 客户面 BFF+RSC 直调）。
+ *
+ * 未登录/会话失效 → 登录表单；登录成功 → 资料视图。
+ * 页面读 cookie ⇒ 天然动态渲染（禁静态化）。
+ */
+export default async function MemberPage() {
+  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  const verified = token ? await getMemberVerifier().verify(token) : null;
+
+  if (!verified || !verified.ok) {
+    return (
+      <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
+        <header className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+        </header>
+        <p className="text-sm text-muted-foreground">登录后查看会员资料与余额。</p>
+        <LoginForm message={verified && !verified.ok ? verified.error.message : undefined} />
+      </main>
+    );
+  }
+
+  const result = await getMemberService().getProfile(verified.value);
+  if (!result.ok) {
+    // 会话有效但会员已不存在（并发删号）——按未登录处理，带上原因
+    return (
+      <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
+        <header className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+        </header>
+        <LoginForm message={result.error.message} />
+      </main>
+    );
+  }
+
+  return (
+    <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
+      <header className="flex items-center gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+      </header>
+      <ProfileView profile={result.value} />
+    </main>
+  );
+}

@@ -31,6 +31,26 @@ export interface ApiError {
   details?: unknown;
 }
 
+/**
+ * 统一响应体（docs/04 §4-3）：`{ code, message, data, traceId }`。
+ * 2026-10-17 由 apps/api 上移（原 TODO(M1)）：客户面 web 路由与机器面 api 共用，
+ * 避免多处分叉。code 0 = 成功；非 0 = 业务错误码（词表随各域铺开登记到本包）。
+ */
+export interface Envelope<T> {
+  code: number;
+  message: string;
+  data: T | null;
+  traceId: string;
+}
+
+export function envelopeOk<T>(data: T, traceId: string): Envelope<T> {
+  return { code: 0, message: 'ok', data, traceId };
+}
+
+export function envelopeFail(code: number, message: string, traceId: string): Envelope<null> {
+  return { code, message, data: null, traceId };
+}
+
 /** 开放 API 业务码（旧系统 ApiResponse 约定，各域共用；成功为 200） */
 export const OpenApiCode = {
   OK: 200,

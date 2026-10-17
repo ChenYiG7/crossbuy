@@ -8,17 +8,21 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "echo \"(no tests yet)\""
+    "test": "echo \"(no tests yet)\"",
+    "smoke": "tsx scripts/smoke-member.mts"
   },
   "dependencies": {
     "@crossbuy/auth": "workspace:*",
     "@crossbuy/contract": "workspace:*",
     "@crossbuy/db": "workspace:*",
+    "@crossbuy/domain-member": "workspace:*",
     "@crossbuy/ui": "workspace:*",
     "@crossbuy/utils": "workspace:*",
+    "jose": "catalog:",
     "next": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "catalog:",
@@ -26,6 +30,7 @@
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
     "tailwindcss": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:"
   }
 }

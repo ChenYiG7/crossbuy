@@ -1,8 +1,26 @@
-import { memberProfileUpdateSchema } from '@crossbuy/contract';
+import {
+  MEMBER_STATE,
+  memberLoginSchema,
+  memberProfileUpdateSchema,
+  type MemberProfile,
+} from '@crossbuy/contract';
 import type { Principal } from '@crossbuy/auth';
 import { err, ok, type Result } from '@crossbuy/utils';
+import { money } from '@crossbuy/utils';
 import type { MemberError } from './errors';
-import type { MemberRepository } from './repository';
+import type { MemberAuthRecord, MemberProfileRow, MemberRepository } from './repository';
+import type { LoginRateLimiter } from './login-rate-limiter';
+import type { PasswordVerifier } from './password-verifier';
+
+/** 旧系统 ORDER_UNENABLE（User.php 常量，0 = 已锁定） */
+const ORDER_UNENABLE = 0;
+
+/** 登录成功产物：uid/isDf 供端上签发会话；profile 直接作响应体（旧系统登录后另查 getUserInfo） */
+export interface MemberLoginOutcome {
+  uid: number;
+  isDf: boolean;
+  profile: MemberProfile;
+}
 
 /**
  * 会员 域服务（docs/04 §3.2：域间唯一调用面，R3 拆分的搬运单元）。
@@ -26,12 +44,26 @@ export interface MemberService {
     principal: Principal,
     patch: unknown,
   ): Promise<Result<void, MemberError>>;
+
+  /**
+   * 登录（旧 `LoginMutation` 的规则复现，REST 入参）：
+   * 限流 → 账号查找（邮箱/uname）→ MD5 校验 → state 三闸 → 登录限制检查 → 落 logintime。
+   * 会话签发（JWT/cookie）在端上完成——域服务不碰传输层（docs/04 §6）。
+   */
+  login(input: unknown): Promise<Result<MemberLoginOutcome, MemberError>>;
+
+  /** 读取「我」的资料（旧 getUserInfo 的 dg_users 部分；跨域字段随属主域补齐） */
+  getProfile(principal: Principal): Promise<Result<MemberProfile, MemberError>>;
 }
 
 export class MemberServiceImpl implements MemberService {
   readonly domain = 'member' as const;
 
-  constructor(protected readonly repository: MemberRepository) {}
+  constructor(
+    protected readonly repository: MemberRepository,
+    protected readonly passwordVerifier: PasswordVerifier,
+    protected readonly rateLimiter: LoginRateLimiter,
+  ) {}
 
   async updateProfile(
     principal: Principal,
@@ -54,5 +86,149 @@ export class MemberServiceImpl implements MemberService {
 
     await this.repository.updateProfile(uid, parsed.data);
     return ok(undefined);
+  }
+
+  async login(input: unknown): Promise<Result<MemberLoginOutcome, MemberError>> {
+    const parsed = memberLoginSchema.safeParse(input);
+    if (!parsed.success) {
+      const field = parsed.error.issues[0]?.path.join('.') ?? 'input';
+      return err({
+        code: 'MEMBER_LOGIN_INVALID',
+        message: `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`,
+      });
+    }
+    const { username, password } = parsed.data;
+
+    // 1. 限流（旧代码第一道闸；所有尝试都计数，含成功）
+    if (!this.rateLimiter.attempt(`login-attempts-${username}`)) {
+      return err({ code: 'MEMBER_LOGIN_RATE_LIMITED', message: '尝试次数过多，请稍后再试' });
+    }
+
+    // 2. 账号查找 + 口令校验。未找到与密码错误**同一错误码**——禁用户枚举（旧系统同样处理）
+    const record = await this.repository.findByLoginId(username);
+    if (!record || !this.passwordVerifier.verify(password, record.password)) {
+      return err({ code: 'MEMBER_LOGIN_FAILED', message: '账号或密码错误' });
+    }
+
+    // 3. state 三闸（旧 LoginMutation 顺序，逐条对应旧错误消息）
+    const stateGate = this.checkStateGate(record);
+    if (stateGate) return err(stateGate);
+
+    // 4. 登录限制检查（旧 checkUserLoginLimit，含改库副作用）
+    if (await this.checkLoginLimit(record)) {
+      return err({ code: 'MEMBER_LOGIN_RESTRICTED', message: '账号已被限制登录' });
+    }
+
+    // 5. 落 logintime（unix epoch 秒）
+    await this.repository.touchLogintime(record.uid, Math.floor(Date.now() / 1000));
+
+    // 6. 组装（profile 直接作响应体，免端上二次查询）
+    const row = await this.repository.findMemberProfile(record.uid);
+    if (!row) {
+      // 理论上不可达（刚查到）；真出现说明并发删号，按未找到处理
+      return err({ code: 'MEMBER_NOT_FOUND', message: '会员不存在' });
+    }
+    return ok({
+      uid: record.uid,
+      isDf: (record.dfflag ?? 0) !== 0,
+      profile: this.toProfile(row),
+    });
+  }
+
+  async getProfile(principal: Principal): Promise<Result<MemberProfile, MemberError>> {
+    if (principal.kind !== 'member') {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: '非会员主体' });
+    }
+    const uid = Number(principal.subject);
+    if (!Number.isInteger(uid) || uid <= 0) {
+      return err({ code: 'MEMBER_PRINCIPAL_INVALID', message: 'Principal 非法' });
+    }
+    const row = await this.repository.findMemberProfile(uid);
+    if (!row) return err({ code: 'MEMBER_NOT_FOUND', message: '会员不存在' });
+    return ok(this.toProfile(row));
+  }
+
+  /** 旧 LoginMutation 的 state 三闸：0 未審査 / -1 审核失败 / 3 使用禁止 */
+  private checkStateGate(record: MemberAuthRecord): MemberError | null {
+    switch (record.state) {
+      case MEMBER_STATE.PENDING_REVIEW:
+        return { code: 'MEMBER_ACCOUNT_PENDING_REVIEW', message: '账号待审核' };
+      case MEMBER_STATE.REVIEW_FAILED:
+        return { code: 'MEMBER_ACCOUNT_REVIEW_FAILED', message: '账号审核未通过' };
+      case MEMBER_STATE.FORBIDDEN:
+        return { code: 'MEMBER_ACCOUNT_FORBIDDEN', message: '账号已被禁用' };
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * 旧 `User::checkUserLoginLimit()` 复现：
+   * - state=4（登录限制）→ 直接拒
+   * - orderenable=0 且 stoptime 非空且早于 7 天前 → **先改库**（state=4/orderenable=0）再拒
+   * - 其余放行。旧代码中「3 个月不活跃」两条规则与白名单均为注释状态——保持注释状态
+   */
+  private async checkLoginLimit(record: MemberAuthRecord): Promise<boolean> {
+    if (record.state === MEMBER_STATE.LOGIN_RESTRICTED) return true;
+    if (record.orderenable === ORDER_UNENABLE && record.stoptime != null && record.stoptime > 0) {
+      const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
+      if (record.stoptime < sevenDaysAgo) {
+        await this.repository.applyLoginLimit(record.uid);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 资料行 → 契约读模型（money 走 utils/money 单入口序列化；reg_extra JSON 解析） */
+  protected toProfile(row: MemberProfileRow): MemberProfile {
+    return {
+      uid: row.uid,
+      uname: row.uname,
+      email: row.email,
+      regType: row.regtype,
+      companyName: row.comname,
+      companyNameEng: row.comengname,
+      companyManager: row.commanager,
+      companyManagerEng: row.commanagereng,
+      companyCode: row.compost,
+      companyTel: row.comptel,
+      companyAddress: row.comaddress,
+      companyAddressEng: row.comaddresseng,
+      trueName: row.tname,
+      sex: row.sex,
+      zip: row.zip,
+      tel: row.tel,
+      address: row.address,
+      country: row.country,
+      qq: row.qq,
+      line: row.line,
+      wechat: row.wechat,
+      useType: row.usetype,
+      preBuyFrequency: row.prebuyfeq,
+      preBuyAmount: row.prebuyamt,
+      money: money(row.money?.toString() ?? '0'),
+      dfFlag: (row.dfflag ?? 0) !== 0,
+      avatar: row.face,
+      useInquiry: parseUseInquiry(row.reg_extra),
+      originPackageChoice: row.origin_package_choice,
+    };
+  }
+}
+
+/**
+ * reg_extra JSON → useInquiry 布尔（旧系统 `json_encode(['useInquiry' => true])` 存储）。
+ * 容错：null / 非法 JSON / 缺键 / 非 true 值一律 false（旧代码 `?? false` 的等价物）。
+ */
+export function parseUseInquiry(regExtra: string | null): boolean {
+  if (!regExtra) return false;
+  try {
+    const parsed: unknown = JSON.parse(regExtra);
+    if (parsed !== null && typeof parsed === 'object' && 'useInquiry' in parsed) {
+      return (parsed as { useInquiry?: unknown }).useInquiry === true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }

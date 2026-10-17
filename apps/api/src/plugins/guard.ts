@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import fp from 'fastify-plugin';
 import type { FastifyInstance } from 'fastify';
-import { envelopeFail } from '../envelope';
+import { envelopeFail } from '@crossbuy/contract';
 import { parseList, type ApiConfig } from '../config';
 
 /**

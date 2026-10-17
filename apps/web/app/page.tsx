@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import {
   Badge,
   Button,
@@ -37,6 +38,19 @@ export default function Home() {
           <Button>検索</Button>
           <Button variant="secondary">URL から取込</Button>
           <Button variant="ghost">クリア</Button>
+        </CardFooter>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>会员中心（M1 垂直切片）</CardTitle>
+          <CardDescription>
+            登录（旧 LoginMutation 规则复现）→ 查看资料与余额（旧 getUserInfo 的 REST 化）。
+          </CardDescription>
+        </CardHeader>
+        <CardFooter>
+          <Button asChild variant="outline">
+            <Link href="/member">前往会员中心</Link>
+          </Button>
         </CardFooter>
       </Card>
     </main>

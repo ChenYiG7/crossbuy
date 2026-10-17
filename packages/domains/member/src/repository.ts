@@ -1,3 +1,4 @@
+import { MEMBER_STATE } from '@crossbuy/contract';
 import { legacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
 
 /**
@@ -37,6 +38,63 @@ const PROFILE_COLUMN = {
 type ProfileUpdateData = Parameters<
   LegacyPrismaClient['dg_users']['update']
 >[0]['data'];
+
+/** 旧系统 ORDER_UNENABLE（User.php 常量，0 = 已锁定） */
+const ORDER_UNENABLE = 0;
+
+/**
+ * 登录查找结果（窄类型：只有登录判定所需字段）。
+ * password 哈希不出本类——校验在 service 层经 PasswordVerifier 端口完成。
+ */
+export interface MemberAuthRecord {
+  uid: number;
+  uname: string;
+  /** 旧库 MD5 无盐哈希（CHAR(32) hex） */
+  password: string;
+  email: string | null;
+  state: number | null;
+  orderenable: number | null;
+  /** unix 时间戳（秒）；null/0 = 未锁定 */
+  stoptime: number | null;
+  dfflag: number | null;
+}
+
+/**
+ * 会员资料行（findMemberProfile 的显式返回类型）。
+ * money 用最小结构类型承载 Prisma Decimal——服务层经 utils/money 单入口转字符串，
+ * 避免把 Prisma runtime 类型泄漏进行接口签名（TS2742：推断类型不可移植）。
+ */
+export interface MemberProfileRow {
+  uid: number;
+  uname: string;
+  email: string | null;
+  regtype: number | null;
+  comname: string | null;
+  comengname: string | null;
+  commanager: string | null;
+  commanagereng: string | null;
+  compost: string | null;
+  comptel: string | null;
+  comaddress: string | null;
+  comaddresseng: string | null;
+  tname: string | null;
+  sex: number | null;
+  zip: string | null;
+  tel: string | null;
+  address: string | null;
+  country: string | null;
+  qq: string | null;
+  line: string | null;
+  wechat: string | null;
+  usetype: number | null;
+  prebuyfeq: string | null;
+  prebuyamt: string | null;
+  money: { toString(): string } | null;
+  dfflag: number | null;
+  face: string | null;
+  reg_extra: string | null;
+  origin_package_choice: number | null;
+}
 
 export class MemberRepository {
   constructor(protected readonly db: LegacyPrismaClient = legacyPrisma) {}
@@ -83,6 +141,89 @@ export class MemberRepository {
         origin_package_choice: true,
         tname: true,
       },
+    });
+  }
+
+  /**
+   * 按登录账号查找会员（旧 LoginMutation 语义）：
+   * 入参是合法邮箱 → 匹配 email 列，否则匹配 uname 列（旧 `filter_var(FILTER_VALIDATE_EMAIL)`）。
+   *
+   * - 大小写不敏感由列 collation（utf8_general_ci）决定，与旧系统一致（客户端不干预）
+   * - 邮箱判定用务实正则近似 PHP filter_var（不接受无 TLD 地址等边角格式）
+   */
+  async findByLoginId(loginId: string): Promise<MemberAuthRecord | null> {
+    const byEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(loginId);
+    return this.db.dg_users.findFirst({
+      where: byEmail ? { email: loginId } : { uname: loginId },
+      select: {
+        uid: true,
+        uname: true,
+        password: true,
+        email: true,
+        state: true,
+        orderenable: true,
+        stoptime: true,
+        dfflag: true,
+      },
+    });
+  }
+
+  /**
+   * 读取会员资料全字段（旧 getUserInfo 的 dg_users 部分）。
+   * reg_extra 原样带出（JSON 文本），解析在 service 层——repository 不做业务解释。
+   */
+  async findMemberProfile(uid: number): Promise<MemberProfileRow | null> {
+    return this.db.dg_users.findUnique({
+      where: { uid },
+      select: {
+        uid: true,
+        uname: true,
+        email: true,
+        regtype: true,
+        comname: true,
+        comengname: true,
+        commanager: true,
+        commanagereng: true,
+        compost: true,
+        comptel: true,
+        comaddress: true,
+        comaddresseng: true,
+        tname: true,
+        sex: true,
+        zip: true,
+        tel: true,
+        address: true,
+        country: true,
+        qq: true,
+        line: true,
+        wechat: true,
+        usetype: true,
+        prebuyfeq: true,
+        prebuyamt: true,
+        money: true,
+        dfflag: true,
+        face: true,
+        reg_extra: true,
+        origin_package_choice: true,
+      },
+    });
+  }
+
+  /** 登录成功落 logintime（旧 LoginMutation：`time()` 写入，unix epoch 秒，UTC） */
+  async touchLogintime(uid: number, at: number): Promise<void> {
+    await this.db.dg_users.update({ where: { uid }, data: { logintime: at } });
+  }
+
+  /**
+   * 登录限制落地（旧 `User::checkUserLoginLimit()` 的副作用）：
+   * 命中「orderenable=0 且 stoptime 早于 7 天前」时，旧代码**先把用户改成
+   * state=4 / orderenable=0 再返回拒绝**——检查即写库，1:1 复现；
+   * 该怪癖的收敛方案登记在 docs/plans/08（R2）。
+   */
+  async applyLoginLimit(uid: number): Promise<void> {
+    await this.db.dg_users.update({
+      where: { uid },
+      data: { state: MEMBER_STATE.LOGIN_RESTRICTED, orderenable: ORDER_UNENABLE },
     });
   }
 }
