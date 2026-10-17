@@ -1,22 +1,36 @@
 import {
+  AddCartService,
   CartService,
   OrderRepository,
   OrderServiceImpl,
   PlaceOrderService,
   runInOrderTransaction,
+  type AddCartMemberPort,
+  type AddCartSideEffectPort,
+  type AlibabaShopPort,
   type BenefitPort,
   type CartService as CartServiceType,
   type CurrencyPort,
   type DaifaSendOrderPort,
+  type FrontendUrlPort,
   type GoodsPriceRefreshPort,
+  type GoodsUrlParserPort,
   type MemberFactorsPort,
   type OrderService,
+  type PlatformGoodsInfoPort,
   type PlaceOrderBenefitPort,
   type PlaceOrderSideEffectPort,
   type ProcessLockPort,
   type SkuTranslationPort,
+  type SupplierProductPort,
+  type SupplierShopPort,
 } from '@crossbuy/domain-order';
 import { FinanceServiceImpl, FinanceRepository } from '@crossbuy/domain-finance';
+import {
+  PurchaseRepository,
+  SupplierCatalogServiceImpl,
+  type CatalogLockPort,
+} from '@crossbuy/domain-purchase';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 import { getMemberService } from './member';
 
@@ -72,6 +86,126 @@ export function getCartService(): CartServiceType {
     });
   })();
   return cartService;
+}
+
+// ---------------------------------------------------------------------------
+// 加购链路组合根（旧 AddCartMutation）
+// ---------------------------------------------------------------------------
+
+/**
+ * 商品 URL 解析（旧 `ContentParser::parse` —— 淘宝/1688 双解析器 + 1 分钟 Cache）。
+ *
+ * ⚠ R1 是**正则兜底**实现（S39）：旧解析器是独立库（含页面抓取与类型排序权重），
+ * 未迁移；只覆盖最常见的 `id=`/`offer/{id}.html`/`item.htm?id=` 形态，取不到就回退
+ * `''`（= 旧「无法解析 goodsid，跳过平台实价覆盖」分支，不阻断加购）。
+ * 迁移后只换本函数。
+ */
+function createUrlParser(): GoodsUrlParserPort {
+  return {
+    async parse(url) {
+      const itemId =
+        /[?&]id=(\d+)/.exec(url)?.[1] ??
+        /offer\/(\d+)\.html/.exec(url)?.[1] ??
+        /item\.htm\?[^#]*\bid=(\d+)/.exec(url)?.[1] ??
+        '';
+      const miId = /[?&]mi_id=([^&]+)/.exec(url)?.[1] ?? '';
+      if (itemId === '') return [];
+      return [{ detail: { itemId, miId: miId === '' ? null : miId } }];
+    },
+  };
+}
+
+/** 进程内目录锁（旧 `Cache::lock(Product::syncLockKey, 10)->block(5)`；多实例前换 Redis，TODO(#16)） */
+function createCatalogLock(): CatalogLockPort {
+  const held = new Map<string, number>();
+  return {
+    async withLock(key, ttlSeconds, waitSeconds, fn) {
+      const until = held.get(key);
+      if (until !== undefined && until > Date.now()) {
+        // 旧 block(5)：等不到就抛 LockTimeoutException（这里返回 acquired=false）
+        const deadline = Date.now() + waitSeconds * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 50));
+          const nowUntil = held.get(key);
+          if (nowUntil === undefined || nowUntil <= Date.now()) break;
+        }
+        const stillHeld = held.get(key);
+        if (stillHeld !== undefined && stillHeld > Date.now()) return { acquired: false };
+      }
+      held.set(key, Date.now() + ttlSeconds * 1000);
+      try {
+        return { acquired: true, value: await fn() };
+      } finally {
+        held.delete(key);
+      }
+    },
+  };
+}
+
+let addCartService: AddCartService | null = null;
+
+export function getAddCartService(): AddCartService {
+  addCartService ??= (() => {
+    const repository = new OrderRepository();
+    const memberPort: AddCartMemberPort = {
+      getMoneyFactors: async (uid) => {
+        const result = await getMemberService().getMoneyFactors(uid);
+        return result.ok ? result.value : null;
+      },
+    };
+    // 平台商品详情：R1 SDK（淘宝/1688）未迁移 → 恒 null（S40，= 旧「拉取失败保留前端价」）
+    const platformGoods: PlatformGoodsInfoPort = { fetch: async () => null };
+    // 1688 店铺反解：R1 SDK 未迁移 → 恒 null（S41，整段映射逻辑不触发）
+    const alibabaShop: AlibabaShopPort = {
+      searchShopNameByGoodsId: async () => null,
+      decryptOpenidFromFenxiaoApi: async () => null,
+    };
+    // 供应商商品/店铺：v2_supplier_product / v2_supplier_shop 属主 = purchase 域（表唯一属主）
+    const catalog = new SupplierCatalogServiceImpl({
+      repository: new PurchaseRepository(),
+      lockPort: createCatalogLock(),
+    });
+    const supplierProduct: SupplierProductPort = {
+      resolveOrCreate: (input) => catalog.resolveOrCreateProduct(input),
+    };
+    const supplierShop: SupplierShopPort = {
+      findByOpenId: (appid, openid) => catalog.findShopByOpenId(appid, openid),
+      create: (appid, openid, title) => catalog.createShop({ appid, openid, title }),
+      update: (id, patch) => catalog.updateShop(id, patch),
+    };
+    // 加购后 Job：队列未接线 → no-op（TODO(#16)，随 worker 真 Job 落地）
+    const sideEffects: AddCartSideEffectPort = {
+      enqueueSyncSupplierProduct: async () => undefined,
+      enqueueSubscribeSupplierProduct: async () => undefined,
+      enqueueCompletionGoodsInfoForCart: async () => undefined,
+      enqueueTranslateCartGoodsInfo: async () => undefined,
+    };
+    // 旧 getFrontendUrl($path, $dfflag, false)（is1688Japan=false 分支）
+    const frontendUrl: FrontendUrlPort = {
+      build: (path, isDf) => {
+        const host = isDf
+          ? (process.env.PUBLIC_MZK_URL_PREFIX ?? 'https://mzk-v2.yiwutaro.com')
+          : (process.env.PUBLIC_URL_PREFIX ?? 'https://www.yiwutaro.com');
+        return `${host.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+      },
+    };
+    return new AddCartService({
+      repository,
+      memberPort,
+      urlParser: createUrlParser(),
+      platformGoods,
+      alibabaShop,
+      supplierProduct,
+      supplierShop,
+      sideEffects,
+      frontendUrl,
+      // 旧 env('ALIBABA_FENXIAO_APPID')
+      alibabaFenxiaoAppid: Number(process.env.ALIBABA_FENXIAO_APPID ?? 0),
+      // 旧 env('CART_MAX_COUNT', 10000)
+      cartMaxCount: Number(process.env.CART_MAX_COUNT ?? 10000),
+    });
+  })();
+  return addCartService;
 }
 
 // ---------------------------------------------------------------------------

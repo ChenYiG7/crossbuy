@@ -45,6 +45,11 @@ async function setupScratch(): Promise<void> {
   await legacyPrisma.$executeRawUnsafe(
     `CREATE TABLE ${SCRATCH_DB}.dg_favorite LIKE taotaro.dg_favorite`,
   );
+  // 加购链路（旧 AddCartMutation）：dg_cart + v2_supplier_product（后者经 purchase 域端口写）
+  await legacyPrisma.$executeRawUnsafe(`CREATE TABLE ${SCRATCH_DB}.dg_cart LIKE taotaro.dg_cart`);
+  await legacyPrisma.$executeRawUnsafe(
+    `CREATE TABLE ${SCRATCH_DB}.v2_supplier_product LIKE taotaro.v2_supplier_product`,
+  );
   const pwd = createHash('md5').update(FIXTURE.password, 'utf8').digest('hex');
   // 内联 SQL：值全部是脚本内的受控常量（夹具账号/密码哈希），无外部输入，无注入面
   await legacyPrisma.$executeRawUnsafe(
@@ -250,6 +255,86 @@ async function main(): Promise<void> {
     const token = cookie?.split('=')[1] ?? '';
     const bearer = await call('GET', '/api/customer/v1/member/me', { bearer: token });
     check('Bearer GET me → 200', bearer.status === 200, bearer.body);
+
+    console.log('[4.7] 加购（旧 addCart GraphQL → POST /api/customer/v1/carts）');
+    const cartAnon = await call('POST', '/api/customer/v1/carts', {
+      body: { goodsList: [{ platform: 'taobao', title: 'x', quantity: 1 }] },
+    });
+    check('未登录加购 → 401', cartAnon.status === 401, cartAnon.body);
+
+    const cartNoList = await call('POST', '/api/customer/v1/carts', { cookie: cookie ?? undefined, body: {} });
+    check(
+      '缺 goodsList → 400 CART_GOODS_LIST_REQUIRED',
+      cartNoList.status === 400 && cartNoList.body.message === 'goodsList is required',
+      cartNoList.body,
+    );
+
+    const cartAdd = await call('POST', '/api/customer/v1/carts', {
+      cookie: cookie ?? undefined,
+      body: {
+        goodsList: [
+          {
+            platform: 'taobao',
+            url: 'https://item.taobao.com/item.htm?id=694784194003',
+            title: '演练加购商品',
+            shopNick: '演练商家',
+            price: 88.5,
+            quantity: 3,
+            props: [{ name: '色', value: '赤' }],
+            addFrom: 1,
+          },
+        ],
+        returnCartId: true,
+      },
+    });
+    check('加购 → 200', cartAdd.status === 200, cartAdd.body);
+    const cartData = cartAdd.body.data as { result?: string; cartIds?: number[] } | null;
+    check('returnCartId → result 为 gid 串', /^\d+$/.test(cartData?.result ?? ''), cartData);
+    check('cartIds 返回 1 个', cartData?.cartIds?.length === 1);
+
+    // 直查 scratch 库核对落库列（不依赖列表接口，避免与列表切片互相耦合）
+    const rows = await legacyPrisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
+      `SELECT type, goodssite, goodsid, goodsprice, goodsnum, uname, sku_name, add_from, yanhuofba
+         FROM ${SCRATCH_DB}.dg_cart WHERE uname = '${FIXTURE.uname}'`,
+    );
+    check('落库 1 行', rows.length === 1, rows);
+    // 夹具用户 dfflag=1 ⇒ 代发(3)；goodsid 由 URL 正则兜底解析（S39）
+    check('type=3（夹具 dfflag=1 → 代发）', rows[0]?.['type'] === 3, rows[0]);
+    check('goodssite=淘宝 / goodsid 已解析', rows[0]?.['goodssite'] === '淘宝' && String(rows[0]?.['goodsid']) === '694784194003', rows[0]);
+    check('goodsprice=88.5 / goodsnum=3', Number(rows[0]?.['goodsprice']) === 88.5 && Number(rows[0]?.['goodsnum']) === 3, rows[0]);
+    check('uname 取会员当前值（S37 冗余列）', String(rows[0]?.['uname']) === FIXTURE.uname, rows[0]);
+    check(
+      'sku_name 为旧 HTML 串',
+      String(rows[0]?.['sku_name']) === '<font color=red>色:</font><font color=green> 赤 </font>',
+      rows[0],
+    );
+    check('add_from=1 原样落库', Number(rows[0]?.['add_from']) === 1, rows[0]);
+    check('yanhuofba 未传 → 落空串（S43）', rows[0]?.['yanhuofba'] === '', rows[0]);
+
+    const cartZhuan = await call('POST', '/api/customer/v1/carts', {
+      cookie: cookie ?? undefined,
+      body: {
+        goodsList: [{ platform: 'transshipment', title: '转运品', quantity: 1, sendPrice: 42.5, expressNo: 'EX1' }],
+      },
+    });
+    check('转运加购 → 200 且 result=done', cartZhuan.status === 200 && (cartZhuan.body.data as { result?: string } | null)?.result === 'done', cartZhuan.body);
+    const zhuanRows = await legacyPrisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
+      `SELECT type, siteurl, goodsseller, sendprice FROM ${SCRATCH_DB}.dg_cart
+         WHERE uname = '${FIXTURE.uname}' AND goodssite = '転送サービス'`,
+    );
+    check('转运行 type=2 / siteurl=### / goodsseller 默认 shipforme',
+      zhuanRows[0]?.['type'] === 2 && zhuanRows[0]?.['siteurl'] === '###' && zhuanRows[0]?.['goodsseller'] === 'shipforme',
+      zhuanRows[0]);
+
+    const cartValidate = await call('POST', '/api/customer/v1/carts', {
+      cookie: cookie ?? undefined,
+      body: { goodsList: [{ platform: 'taobao', title: 'x', quantity: 1 }], isValidate: 1 },
+    });
+    check('isValidate=1 → 空串短路（旧怪癖）', (cartValidate.body.data as { result?: string } | null)?.result === '', cartValidate.body);
+    const afterValidate = await legacyPrisma.$queryRawUnsafe<Array<{ c: bigint }>>(
+      `SELECT COUNT(*) AS c FROM ${SCRATCH_DB}.dg_cart WHERE uname = '${FIXTURE.uname}'`,
+    );
+    check('isValidate=1 不落库', Number(afterValidate[0]?.['c'] ?? 0) === 2, afterValidate[0]);
 
     console.log('[5] RSC 会员页');
     const page = await fetch(`${BASE}/member`, { headers: { cookie: cookie ?? '' } });

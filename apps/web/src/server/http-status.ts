@@ -37,6 +37,16 @@ const STATUS_BY_CODE: Record<string, number> = {
   ORDER_SKU_CREATING: 409,
   ORDER_INSUFFICIENT_BALANCE: 400,
   ORDER_PLACE_INPUT_INVALID: 400,
+  // 加购面
+  CART_GOODS_LIST_REQUIRED: 400,
+  /** 行数上限 / 最低起订量：调用方可修正后重试 */
+  CART_MAX_COUNT_REACHED: 409,
+  CART_BELOW_MIN_ORDER_QUANTITY: 400,
+  /** 再买一单：平台链接失效（旧 UserError 同层） */
+  CART_GOODS_OFF_SHELF: 409,
+  CART_GOODS_URL_MISMATCH: 400,
+  /** 分布式锁抢不到（旧 service_busy）——「稍后重试」语义 */
+  CART_SERVICE_BUSY: 503,
 };
 
 export function httpStatusForMemberError(code: string): number {

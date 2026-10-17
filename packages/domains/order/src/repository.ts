@@ -25,6 +25,43 @@ export type CartForOrderRow = Awaited<ReturnType<OrderRepository['listCartsForOr
 /** 建单入参（旧 `Order::create($order)`：$order = cart 全列（去 gid/anonymous）+ 覆盖项） */
 export type CreateOrderData = LegacyPrisma.dg_orderCreateInput;
 
+/**
+ * 加购入参（旧 `Cart::create($cart)`：prepareCarts 组装的列 + 平台实价覆盖后的值）。
+ * 只需给业务列，24 个无默认串列由 `CART_NO_DEFAULT_EMPTY_COLS` 补 `''`。
+ */
+export type CreateCartData = Partial<LegacyPrisma.dg_cartCreateInput>;
+
+/**
+ * dg_cart 中**无默认值且 NOT NULL** 的串列（information_schema 核实 24 列）。
+ * 旧系统靠 MySQL 非严格模式落 `''`，此处显式等价复现（见 createCart 注释）。
+ */
+const CART_NO_DEFAULT_EMPTY_COLS = {
+  yanhuofba: '', yanhuojinyun: '', yanhuozengzhi: '', yanhuoasin: '', yanhuofnsku: '',
+  baozhuang: '', hbbaozhuang: '', baonum: '', SKU: '', FNSKU: '', name: '', amazon: '',
+  putong: '', fuzhuang: '', tiebiao: '', huanbaoz: '', qita: '',
+  var1: '', var2: '', var3: '', var4: '', var5: '', var6: '', var7: '',
+} as const;
+
+/**
+ * 旧 `Cart::$fillable` 白名单（正本 `haiou/backend/app/Models/Cart.php:30-107`）。
+ * ★ `Cart::create($cart)` 只落白名单内的键，其余**静默丢弃**（不是报错）——
+ *   例：prepareCarts 塞进来的 `miId`（dg_cart 无此列）就是这样被丢掉的。
+ *   改列名必须同步改这里，否则 R1 与旧系统会静默分叉。
+ */
+export const CART_FILLABLE: ReadonlySet<string> = new Set([
+  'tid', 'anonymous', 'uid', 'uname', 'supplier_product_id', 'goodsurl', 'goodsname',
+  'goodsprice', 'one_piece_price', 'offer_price', 'retail_price', 'sendprice', 'goodsnum',
+  'goodsimg', 'goodssize', 'goodscolor', 'goodsseller', 'min_order_quantity', 'sellerurl',
+  'goodssite', 'siteurl', 'expressno', 'type', 'goodsremark', 'addtime', 'goodsid',
+  'proprice', 'TermQty', 'TermPrice', 'TermShipping', 'inspection', 'ship', 'sku_name',
+  'yanhuofba', 'yanhuojinyun', 'yanhuozengzhi', 'yanhuoasin', 'yanhuofnsku',
+  'baozhuang', 'hbbaozhuang', 'baonum', 'SKU', 'FNSKU', 'shangpin_fnsku', 'shangpin_sku',
+  'name', 'shangpin_name', 'shangpin_amazon', 'amazon', 'putong', 'fuzhuang', 'tiebiao',
+  'huanbaoz', 'qita', 'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7', 'var8',
+  'var9', 'var10', 'var11', 'var12', 'outid', 'goods_name_trans', 'sku_trans',
+  'add_from', 'add_from_memo',
+]);
+
 export class OrderRepository {
   // db 对域内 service/amount-sync 开放（组装 where 与分页查询共用连接）；域外仍禁直触
   constructor(public readonly db: LegacyPrismaClient = legacyPrisma) {}
@@ -721,6 +758,71 @@ export class OrderRepository {
       select: { oid: true },
     });
     return rows.map((r) => Number(r.oid));
+  }
+
+  // -----------------------------------------------------------------------
+  // 加购链路（旧 AddCartMutation）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 旧 `Cart::countForUser`：dfflag 分流 type（DF=3 / 普通=[1,2]）后 count。
+   * ⚠ 与列表的分流同源但口径独立——行数上限守卫只认这一口径。
+   */
+  async countUserCarts(db: Db, uid: number, types: number[]): Promise<number> {
+    return db.dg_cart.count({ where: { uid, type: { in: types } } });
+  }
+
+  /**
+   * 旧 `handleSkuDuplication` 的 `Cart::where(uid)->whereIn(goodsid)->get()`。
+   * 列集 = 判定所需：gid/goodsid/sku_name/goodsnum + compareExtraFields 的 17 列。
+   */
+  async listCartsByGoodsIds(db: Db, uid: number, goodsIds: string[]): Promise<Array<{
+    gid: number; goodsid: string | null; sku_name: string; goodsnum: number;
+    yanhuofba: string; yanhuoasin: string; yanhuofnsku: string; outid: string | null;
+    goodsremark: string | null;
+    var1: string; var2: string; var3: string; var4: string; var5: string; var6: string;
+    var7: string; var8: string | null; var9: string | null; var10: string | null;
+    var11: string | null; var12: string | null;
+  }>> {
+    if (goodsIds.length === 0) return [];
+    return db.dg_cart.findMany({
+      where: { uid, goodsid: { in: goodsIds } },
+      select: {
+        gid: true, goodsid: true, sku_name: true, goodsnum: true,
+        yanhuofba: true, yanhuoasin: true, yanhuofnsku: true, outid: true,
+        goodsremark: true,
+        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
+        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+      },
+    });
+  }
+
+  /**
+   * 旧 `Cart::create($cart)`。
+   *
+   * ⚠ **24 个无默认 NOT NULL 串列必须显式落 `''`**：旧 Eloquent 不传这些列，靠
+   * MySQL **非严格模式**自动填 `''`（S25 同族怪癖）；Prisma 要求显式传值，
+   * 落 `''` 才是 1:1 等价（落 null 会被 Prisma 拒、落空格才是错）。
+   */
+  async createCart(db: Db, data: CreateCartData): Promise<{ gid: number }> {
+    const filtered: Record<string, unknown> = { ...CART_NO_DEFAULT_EMPTY_COLS };
+    for (const [key, value] of Object.entries(data)) {
+      // 旧 Eloquent `Cart::create` 有 $fillable 白名单：**未知键静默丢弃**（不报错）。
+      // 实例：prepareCarts 会往 $cart 里塞 `miId`（dg_cart 无此列），正是靠 fillable 丢掉的。
+      if (value === undefined || !CART_FILLABLE.has(key)) continue;
+      filtered[key] = value;
+    }
+    const row = await db.dg_cart.create({
+      data: filtered as LegacyPrisma.dg_cartCreateInput,
+      select: { gid: true },
+    });
+    return { gid: row.gid };
+  }
+
+  /** 旧合并模式的 `Cart::whereIn('gid', $duplicatedGids)->delete()`（硬删，无软删） */
+  async deleteCarts(db: Db, gids: number[]): Promise<void> {
+    if (gids.length === 0) return;
+    await db.dg_cart.deleteMany({ where: { gid: { in: gids } } });
   }
 
   /**

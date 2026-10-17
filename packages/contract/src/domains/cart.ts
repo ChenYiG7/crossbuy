@@ -112,3 +112,86 @@ export const cartMoneyQuerySchema = z.object({
   ids: z.string().min(1).max(1024),
 });
 export type CartMoneyQuery = z.infer<typeof cartMoneyQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// 加购（旧 AddCartMutation + GoodsInfoInputType 1:1）
+// ---------------------------------------------------------------------------
+
+/**
+ * 加购商品行（旧 GoodsInfoInputType 全字段 1:1）。
+ *
+ * ⚠ 旧 GraphQL 用 `alias` 把外部名映射到 DB 列名（FBA→yanhuofba、addFrom→add_from…）；
+ * REST 面**保留外部名**（客户端契约不变），映射在域内 prepareCarts 完成。
+ * `props` 的 name/value 允许 null：旧代码显式跳过 `''`/null 项（怪癖 S40）。
+ */
+export const goodsInfoInputSchema = z.object({
+  /** taobao / 1688 / transshipment，其他原样落 goodssite */
+  platform: z.string().min(1),
+  productId: z.number().int().optional(),
+  url: z.string().optional(),
+  shopNick: z.string().optional(),
+  title: z.string(),
+  img: z.string().optional(),
+  price: z.number().optional(),
+  onePiecePrice: z.number().optional(),
+  offerPrice: z.number().optional(),
+  /** 一件零售价；未设置 = null（旧注释：不会转成 0） */
+  retailPrice: z.number().optional(),
+  promotionPrice: z.number().optional(),
+  onePieceFreePostage: z.number().int().optional(),
+  /** 阶梯价 JSON 字符串（[{"price":"6.5","startQuantity":3,...}]） */
+  priceRange: z.string().optional(),
+  /** 混批 JSON 字符串（{"generalHunpi":false,"mixAmount":800,"mixNumber":5}） */
+  sellerMixSetting: z.string().optional(),
+  quantity: z.number().int(),
+  props: z.array(z.object({ name: z.string().nullable(), value: z.string().nullable() })).optional(),
+  skuId: z.string().optional(),
+  minOrderQuantity: z.number().int().optional(),
+  sendPrice: z.number().optional(),
+  remark: z.string().optional(),
+  expressNo: z.string().optional(),
+  FBA: z.string().optional(),
+  ASIN: z.string().optional(),
+  FNSKU: z.string().optional(),
+  outId: z.string().optional(),
+  ecommerceOrderItemUniqueId: z.string().optional(),
+  var1: z.string().optional(),
+  var2: z.string().optional(),
+  var3: z.string().optional(),
+  var4: z.string().optional(),
+  var5: z.string().optional(),
+  var6: z.string().optional(),
+  var7: z.string().optional(),
+  var8: z.string().optional(),
+  var9: z.string().optional(),
+  var10: z.string().optional(),
+  var11: z.string().optional(),
+  var12: z.string().optional(),
+  /** 来源：0老网站/1新网站/2下单插件/3订单列表再买一单/4收藏夹再买一单/5新UI链接下单/6新UI订单列表再买一单/7新UI收藏夹再买一单/8OpenAPI/10无在库导入/11Excel导入 */
+  addFrom: z.number().int().optional(),
+  addFromMemo: z.string().optional(),
+});
+export type GoodsInfoInput = z.infer<typeof goodsInfoInputSchema>;
+
+/** 加购入参（旧 addCart args 1:1） */
+export const addCartSchema = z.object({
+  goodsList: z.array(goodsInfoInputSchema).min(1),
+  /** null/未传 = 跳过校验与合并直接创建；1 = 仅校验（旧实现直接返回空串）；2 = 合并重复数量 */
+  isValidate: z.number().int().nullable().optional(),
+  /** true = 返回购物车 gid 集合（逗号分隔），false/未传 = 'done' */
+  returnCartId: z.boolean().optional(),
+  /** 开放接口下单：最低起订量按同一商品全部 SKU 合计数量判断 */
+  checkProductMinOrderQuantity: z.boolean().optional(),
+});
+export type AddCartInput = z.infer<typeof addCartSchema>;
+
+/**
+ * 加购出参（旧返回 String：'done' / gid 串 / 再买一单跳转 URL）。
+ * REST 面保持 `result` 原字符串（1:1），额外结构化给出 `cartIds` 与 `redirectUrl`。
+ */
+export const addCartResultSchema = z.object({
+  result: z.string(),
+  cartIds: z.array(z.number().int()),
+  redirectUrl: z.string().nullable(),
+});
+export type AddCartResult = z.infer<typeof addCartResultSchema>;

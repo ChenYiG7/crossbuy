@@ -73,7 +73,12 @@ async function seedProduct(tx: Tx, input: Record<string, unknown>) {
 
 function makeFactorsPort(user: { dfflag: number; dffee: number; utype: number }): MemberFactorsPort {
   return {
-    getMoneyFactors: async () => ({ isDf: user.dfflag === 1, dffee: user.dffee, utype: user.utype }),
+    getMoneyFactors: async () => ({
+      isDf: user.dfflag === 1,
+      dffee: user.dffee,
+      utype: user.utype,
+      uname: `u_${user.dfflag}_${user.utype}`,
+    }),
   };
 }
 

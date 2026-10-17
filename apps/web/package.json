@@ -18,6 +18,7 @@
     "@crossbuy/domain-finance": "workspace:*",
     "@crossbuy/domain-member": "workspace:*",
     "@crossbuy/domain-order": "workspace:*",
+    "@crossbuy/domain-purchase": "workspace:*",
     "@crossbuy/domain-send-order": "workspace:*",
     "@crossbuy/ui": "workspace:*",
     "@crossbuy/utils": "workspace:*",

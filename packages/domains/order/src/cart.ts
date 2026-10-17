@@ -14,7 +14,9 @@ import type { OrderRepository } from './repository';
 
 /**
  * cart 读路径（旧 ListCartQuery + GetCartMoneyQuery + Cart::countMoney 族 1:1）。
- * dg_cart / v2_supplier_product 属主 = order 域（docs/plans/07 §四）——service 落本域。
+ * dg_cart 属主 = order 域（docs/plans/07 §四）——service 落本域。
+ * ⚠ 本文件**直读**的 `v2_supplier_product` / `v2_supplier_shop` 属主其实是 **purchase**
+ *   （同上 §四 high 置信）——属主违规的历史包袱，已登记 TODO(#17)，收口前不动结构。
  *
  * 语义锚点：
  * - 旧 Cart::countMoney 会把 `deducted_service_fee` 写回 $cart->extend——**纯内存态**
@@ -44,7 +46,7 @@ export interface CurrencyPort {
  */
 export interface MemberFactorsPort {
   /** 旧 $user 的 dfflag/dffee/utype（不存在 = null） */
-  getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number } | null>;
+  getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null>;
 }
 
 /** round2（PHP round；金额恒正） */

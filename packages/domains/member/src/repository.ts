@@ -430,14 +430,15 @@ export class MemberRepository {
    * 会员金额因子（旧 $user 的 dfflag/dffee/utype；购物车金额/服务费计算用）。
    * dg_users 属主读口的窄投影——跨域消费走 order 域的 MemberFactorsPort。
    */
-  async getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number } | null> {
+  async getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null> {
     const row = await this.db.dg_users.findUnique({
       where: { uid },
-      select: { dfflag: true, dffee: true, utype: true },
+      // uname：加购链路 `Cart::create` 的冗余列来源（旧 `$user->uname`，见 docs/plans/08 S37 同族）
+      select: { dfflag: true, dffee: true, utype: true, uname: true },
     });
     if (!row) return null;
     // dffee 列是 Decimal（金额单入口纪律：读入即 number 化的窄投影在此收口）
-    return { isDf: (row.dfflag ?? 0) === 1, dffee: Number(row.dffee ?? 0), utype: row.utype ?? 0 };
+    return { isDf: (row.dfflag ?? 0) === 1, dffee: Number(row.dffee ?? 0), utype: row.utype ?? 0, uname: row.uname ?? null };
   }
 
   /** appid + openid 查 oauth 绑定（旧 OauthLogin::with(['user'])->where(appid)->where(openid)->first()） */
