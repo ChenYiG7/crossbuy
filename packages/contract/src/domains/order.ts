@@ -65,6 +65,85 @@ export const ORDER_CANCELABLE_STATUSES: readonly OrderStatusCode[] = [
 /** 提交运单的唯一入口态 */
 export const ORDER_SUBMIT_SEND_STATUS: OrderStatusCode = OrderStatus.ARRIVE_CHINA;
 
+/**
+ * 「旧代码无 from 白名单」目标分支的来源全集：全局守卫仅禁终态 [10,11]
+ * （BatchUpdateOrder:250），dump 实测 state=8 零行（S17 死状态无存量）→ 8 不进 from 表。
+ * 各目标仍有**分支附加守卫**（→4 需 expressno、→6/→11 增值售后单 sendprice>0 禁止等），
+ * 附加守卫在 service 层落，不占迁移表。
+ */
+const ORDER_FROM_ANY_ACTIVE: readonly OrderStatusCode[] = [
+  OrderStatus.WAIT_CREATE,
+  OrderStatus.PAID,
+  OrderStatus.SEND,
+  OrderStatus.ARRIVE_CHINA,
+  OrderStatus.DELIVERY,
+  OrderStatus.INVALID,
+  OrderStatus.CHECKING,
+  OrderStatus.AFTER_SALE,
+  OrderStatus.AFTER_SALE_WAIT_CHECK,
+];
+
+/**
+ * 订单状态迁移白名单（集中式迁移表，§4.4）——**键 = 目标态，值 = 允许的来源态**。
+ *
+ * 正本：docs/plans/09-交易链路状态机.md §1.1（2026-10-17 旧代码 85 处写点全量核实，
+ * from 守卫逐分支对过 BatchUpdateOrder.php 源码）。有 from 白名单的分支按白名单原文
+ * 收录（→1/→2/→5/→9/→12/→10）；无白名单的分支（→3/→4/→6/→7/→11）按旧真实守卫
+ * （仅禁终态）收录为全活跃态——这是 **1:1 保真**不是放宽；R2 收敛时再收紧（S19）。
+ */
+export const ORDER_STATUS_TRANSITIONS: Readonly<Record<OrderStatusCode, readonly OrderStatusCode[]>> = {
+  /** 回改重新下单：6→1（BatchUpdateOrder:436 白名单仅 6，PAID 被注释）；2/9→1（BatchUpdateOrderState:92） */
+  [OrderStatus.WAIT_CREATE]: [OrderStatus.PAID, OrderStatus.INVALID, OrderStatus.AFTER_SALE],
+  /** 1→2（1688 支付 webhook / admin 手动确认，白名单仅 1）；3/9→2（BatchUpdateOrderState:98 回改） */
+  [OrderStatus.PAID]: [OrderStatus.WAIT_CREATE, OrderStatus.SEND, OrderStatus.AFTER_SALE],
+  /** webhook 发货仅 2→3；admin 批量编辑分支无 from 校验（仅写 waytime）→ 旧真实守卫 = 仅禁终态 */
+  [OrderStatus.SEND]: [...ORDER_FROM_ANY_ACTIVE],
+  /** admin 入库分支无 from 白名单（需全单 expressno + 禁终态）；5→4 取消运单回退同经此表 */
+  [OrderStatus.ARRIVE_CHINA]: [...ORDER_FROM_ANY_ACTIVE],
+  /** 4→5 用户提交配送（行锁）；admin 白名单原文 [3,4,7,9,12,5]（BatchUpdateOrder:462-469，含 5 自环） */
+  [OrderStatus.DELIVERY]: [
+    OrderStatus.SEND,
+    OrderStatus.ARRIVE_CHINA,
+    OrderStatus.DELIVERY,
+    OrderStatus.CHECKING,
+    OrderStatus.AFTER_SALE,
+    OrderStatus.AFTER_SALE_WAIT_CHECK,
+  ],
+  /** 拉无效分支无 from 白名单（检品员禁 + 增值/售后单 sendprice>0 禁）；9→6 售后处理流含在全集 */
+  [OrderStatus.INVALID]: [...ORDER_FROM_ANY_ACTIVE],
+  /** 增值检品分支无 from 白名单（仅写 incretime） */
+  [OrderStatus.CHECKING]: [...ORDER_FROM_ANY_ACTIVE],
+  /** 8 = 死状态（S17）：全库零写点、dump 零行——读得到写不进，任何迁移都不允许进 8 */
+  [OrderStatus.FORBIDDEN_AIRLINE]: [],
+  /** admin 白名单原文 [2,3,4,7,5,12]（:512-519）+ 12→9 确认售后（ConfirmAfterSalesForm 必须 from=12） */
+  [OrderStatus.AFTER_SALE]: [
+    OrderStatus.PAID,
+    OrderStatus.SEND,
+    OrderStatus.ARRIVE_CHINA,
+    OrderStatus.DELIVERY,
+    OrderStatus.CHECKING,
+    OrderStatus.AFTER_SALE_WAIT_CHECK,
+  ],
+  /** **10 唯一入口 = 用户本人取消订单**（1/6→10，OrderCancelService 行锁 + 返金）；admin 无直写 10 的路径 */
+  [OrderStatus.INVALID_REFUNDED]: [OrderStatus.WAIT_CREATE, OrderStatus.INVALID],
+  /** admin 废弃分支无 from 白名单（专用权限 + 增值/售后 sendprice>0 禁）；**6→11 允许**（代码核实） */
+  [OrderStatus.INVALID_DISUSED]: [...ORDER_FROM_ANY_ACTIVE],
+  /** admin 白名单原文 [2,3,4,7,5]（:489-495 + 同单号级联）+ BatchSetAfterSales 9→12 打回（须有检品记录） */
+  [OrderStatus.AFTER_SALE_WAIT_CHECK]: [
+    OrderStatus.PAID,
+    OrderStatus.SEND,
+    OrderStatus.ARRIVE_CHINA,
+    OrderStatus.DELIVERY,
+    OrderStatus.CHECKING,
+    OrderStatus.AFTER_SALE,
+  ],
+};
+
+/** 迁移判定（service 层状态命令的唯一合法入口，§4.4） */
+export function canTransitionOrderStatus(from: OrderStatusCode, to: OrderStatusCode): boolean {
+  return ORDER_STATUS_TRANSITIONS[to].includes(from);
+}
+
 /** 订单类型（旧 type 列：1 代购 / 2 转运 / 3 一件代发） */
 export const OrderType = {
   /** 1 代购 */
@@ -251,10 +330,11 @@ export const orderUpdateSchema = orderCreateSchema.partial();
 export type OrderUpdate = z.infer<typeof orderUpdateSchema>;
 
 /**
- * 订单状态迁移命令（新系统集中式迁移表，§4.4）。
- * ⚠ 旧系统没有迁移表白名单，5/6 态写入点未定位全——
- *   本 schema 是唯一合法迁移入口，service 层按白名单拒绝非法迁移；
- *   未核实迁移（如 →5/6）在灰度前补核实前一律拒。
+ * 订单状态迁移命令（集中式迁移表白名单，§4.4）。
+ * 迁移合法性按本文件 `ORDER_STATUS_TRANSITIONS`（docs/plans/09 §1.1 全量核实正本）判定，
+ * service 层用 `canTransitionOrderStatus` 拒绝表外迁移；
+ * ⚠ →5/→6/→7 等旧系统无 from 白名单的 admin 面，收紧见白名单注释——
+ *   灰度期双跑 diff 打出合法被拒路径时按核实结果补表放行，禁凭感觉扩表。
  */
 export const orderStatusChangeSchema = z.object({
   orderId: z.number().int().positive(),

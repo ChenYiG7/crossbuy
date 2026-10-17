@@ -18,7 +18,7 @@ import { pageQuerySchema, type Money, type PageResult } from '../core';
 // 一、词表（schema 注释即拍板表）
 // ---------------------------------------------------------------------------
 
-/** 运单 8 态状态机（SendOrder.php 定稿） */
+/** 运单 8 态状态机（SendOrder.php 定稿；迁移正本 docs/plans/09 §2） */
 export const SendOrderStatus = {
   /** 1 待处理（唯一可取消态） */
   WAITING: 1,
@@ -28,13 +28,13 @@ export const SendOrderStatus = {
   COMPLETED: 3,
   /** 4 无效运单 */
   INVALID: 4,
-  /** 5 处理中（写入点未定位全，迁移表白名单暂拒） */
+  /** 5 处理中（admin 打包；客户要求修改发票时 7→5 退回担当，行锁） */
   PROCESSING: 5,
-  /** 6 待审核（写入点未定位全，迁移表白名单暂拒） */
+  /** 6 待审核（⚠ 全库无写点——旧遗留值，读得到写不进） */
   PENDING_CHECK: 6,
-  /** 7 待付款（支付 7→8） */
+  /** 7 待付款（admin「发送发票」入口置入；砍价即时返金在此触发） */
   PENDING_PAY: 7,
-  /** 8 待邮寄（支付成功后） */
+  /** 8 待邮寄（用户支付运费 7→8） */
   PENDING_SHIP: 8,
 } as const;
 export type SendOrderStatusCode = (typeof SendOrderStatus)[keyof typeof SendOrderStatus];
@@ -47,6 +47,52 @@ export const SEND_ORDER_PAY_TRANSITION: { from: SendOrderStatusCode; to: SendOrd
   from: SendOrderStatus.PENDING_PAY,
   to: SendOrderStatus.PENDING_SHIP,
 };
+
+/**
+ * 「旧 admin 批量工具无 from 守卫」目标分支的来源全集（S19 弱守卫保真）：
+ * dump 实测 state=6 零行（遗留死值无存量）→ 6 不进 from 表。
+ * 用户面强守卫路径（付运费 7→8、确认收货 2→3、发票修订 7→5）在 service 层另有
+ * 行锁 + 状态校验，这里只是合法矩阵的并集。
+ */
+const SEND_ORDER_FROM_ANY_ACTIVE: readonly SendOrderStatusCode[] = [
+  SendOrderStatus.WAITING,
+  SendOrderStatus.SHIPPED,
+  SendOrderStatus.COMPLETED,
+  SendOrderStatus.INVALID,
+  SendOrderStatus.PROCESSING,
+  SendOrderStatus.PENDING_PAY,
+  SendOrderStatus.PENDING_SHIP,
+];
+
+/**
+ * 运单状态迁移白名单（键 = 目标态，值 = 允许来源态）——docs/plans/09 §2.1 核实正本。
+ * 有强守卫的入口按守卫原文收录（→7/→8）；admin 批量工具无守卫的分支（→2/→3/→4/→5）
+ * 按旧真实行为收录为全活跃态——1:1 保真，R2 收敛时收紧（S19）。
+ */
+export const SEND_ORDER_STATUS_TRANSITIONS: Readonly<Record<SendOrderStatusCode, readonly SendOrderStatusCode[]>> = {
+  /** 创建初态；无迁移写点（订单回改联动把运单改回 1 的源态未核实完整，暂拒——见 09 §2.1 A 组） */
+  [SendOrderStatus.WAITING]: [],
+  /** admin 批量邮寄（DG 无守卫；DF 仅 state≠2 幂等校验）→ 旧真实行为 = 除自身外全活跃态 */
+  [SendOrderStatus.SHIPPED]: SEND_ORDER_FROM_ANY_ACTIVE.filter((s) => s !== SendOrderStatus.SHIPPED),
+  /** 用户确认收货（行锁，必须 2，DF 当天发货不可当天确认）；admin 批量完成无守卫 */
+  [SendOrderStatus.COMPLETED]: [...SEND_ORDER_FROM_ANY_ACTIVE],
+  /** 订单拉无效联动（DF 拆分）/ admin 批量 / 删运单（旧无守卫） */
+  [SendOrderStatus.INVALID]: [...SEND_ORDER_FROM_ANY_ACTIVE],
+  /** admin 批量打包（旧无守卫）；客户要求修改发票 7→5 退回担当（行锁 + 发票必须已发送） */
+  [SendOrderStatus.PROCESSING]: [...SEND_ORDER_FROM_ANY_ACTIVE],
+  /** 6 = 待审核：全库无写点、dump 零行（旧遗留死值）——读得到写不进 */
+  [SendOrderStatus.PENDING_CHECK]: [],
+  /** admin「发送发票」守卫原文：禁 {2,3,4,8}（EditFapiao:1195-1203）→ 允许 1/5/6；6 dump 零行不收录；
+   *  砍价即时返金挂在此写点（bargainstate=0 且 bargainprice>0 → ACTION_11） */
+  [SendOrderStatus.PENDING_PAY]: [SendOrderStatus.WAITING, SendOrderStatus.PROCESSING],
+  /** 用户支付运费（SendOrderPayService：行锁 + 必须 state=7 + 余额≥totalfee） */
+  [SendOrderStatus.PENDING_SHIP]: [SendOrderStatus.PENDING_PAY],
+};
+
+/** 迁移判定（service 层状态命令的唯一合法入口） */
+export function canTransitionSendOrderStatus(from: SendOrderStatusCode, to: SendOrderStatusCode): boolean {
+  return SEND_ORDER_STATUS_TRANSITIONS[to].includes(from);
+}
 
 /** 作业子状态 0-9（prostate，与 status 并存的两条流，禁混枚举） */
 export const ProstateCode = {
@@ -345,8 +391,10 @@ export type SendOrderSave = z.infer<typeof sendOrderSaveSchema>;
 
 /**
  * 运单状态迁移命令（集中式迁移表白名单，§4.4）。
- * 已核实迁移：取消仅 1；支付 7→8；收货→3；出库/评价要求 3。
- * ⚠ 5/6 态写入点未定位全——未核实迁移一律拒（灰度前补核实）。
+ * 合法性按 `SEND_ORDER_STATUS_TRANSITIONS`（docs/plans/09 §2.1 核实正本）判定，
+ * service 层用 `canTransitionSendOrderStatus` 拒绝表外迁移；
+ * 资金动作写点对齐：→2（DF 批量邮寄 = 扣运费 + action=11 返金）、7→8（付运费）、
+ * →7（发送发票 = 砍价即时返金）——返金幂等 = action=11 流水 remark 反查（S14 同族）。
  */
 export const sendOrderStatusChangeSchema = z.object({
   sendOrderId: z.number().int().positive(),
