@@ -1,64 +1,45 @@
 # 项目长期记忆 — crossbuy（淘太郎平台重写）
 
-> 本文件只留**跨会话必带**的结论与红线；细节在 `docs/plans/*`、`.workbuddy/memory/YYYY-MM-DD.md`。
+> 只留**跨会话必带**的结论与红线；细节在 `docs/plans/*`（含 `08-R2优化清单.md` = 怪癖 S1~S56 正本）、`TODO.md`、`.workbuddy/memory/YYYY-MM-DD.md`。**进度细节勿写回本文件**——记当日日志即可。
 
-## 是什么 / 总纲（docs/04 为现行总纲）
-面向日本市场的中国商品代购平台 `yiwutaro.com` 全栈重写（`D:/Work/project/own/crossbuy`）。旧系统 `D:/Work/project/haiou/`（Laravel12+dcat-admin+GraphQL、Astro/Deno/Vue、mzk-frontend）**生产运行中、只读参考、绝不改不提交**；过渡期新旧共用同一 MySQL。
-- **R1 复现期（当前）**：数据库**不动**——Prisma introspect 旧表直接读写（零新表/零回填/零双写）。防腐层 = repository 是旧表唯一触点（时间戳 Asia/Shanghai、collation 按 `utf8_general_ci` 语义、金额保持旧精度、MD5 密码 1:1——**argon2id 透明升级 R1 不可行**：旧列 `CHAR(32)` 装不下 ~97 字符哈希且禁加列，端口已留）。接口面：客户面在 web/mzk（BFF+RSC 直调）、后台面在 admin、机器面独立 `apps/api`（Fastify）；域逻辑全下沉 `packages/domains/*`；PHP 唯一写方直到域绞杀；按域灰度、URL/SEO 1:1 平移。里程碑 M0 基建→M1 member→M2 交易→M3 履约→M4 后台+finance→M5 PHP 退役。
-- **R2 优化期（用户择机启动）**：数据库重构 = 60 模型新表 + T0/T1 回填（资产原样启用），代码层仅 repository 从 legacy 切 redesign schema。
-- **R3 平台化**：认证中心 + 系统拆分（admin/oms/wms/财务/CRM）+ 账本四方对账。拆分纪律现在执行：表唯一属主、域间走 service 接口 + 契约事件、contract 无框架类型。
+## 总纲（docs/04 现行）
+日本市场中国商品代购平台 `yiwutaro.com` 全栈重写（`D:/Work/project/own/crossbuy`）。旧系统 `D:/Work/project/haiou/`（Laravel12+dcat-admin+GraphQL、Astro/Deno/Vue、mzk-frontend）**生产运行中、只读参考、绝不改不提交**；过渡期新旧共用同一 MySQL。
+- **R1 复现期（当前）**：数据库不动，Prisma introspect 旧表直接读写；repository = 旧表唯一触点（时间戳 Asia/Shanghai、collation 按 `utf8_general_ci` 语义、金额旧精度、MD5 密码 1:1——argon2id 升级 R1 不可行，端口已留）。接口面：客户面 web/mzk（BFF+RSC）、后台 admin、机器面 `apps/api`（Fastify）；域逻辑全下沉 `packages/domains/*`；PHP 唯一写方直到域绞杀；按域灰度、URL/SEO 1:1。里程碑 M0 基建→M1 member→M2 交易→M3 履约→M4 后台+finance→M5 PHP 退役。
+- **R2 优化期（择机）**：60 模型新表 + T0/T1 回填（资产原样启用），仅 repository 切 redesign schema。**R3 平台化**：认证中心 + 系统拆分 + 四方对账；拆分纪律现在执行（表唯一属主、域间 service 接口、contract 无框架类型）。
 
-## 技术栈（定版 2026-10-12）
-全 TS：Next.js 15 App Router（`apps/{web,mzk,admin}`）+ Tailwind 4/shadcn；`apps/worker`=Node+BullMQ/Redis；Prisma 6+MySQL 8；zod 契约；decimal.js 金额单入口；pnpm+Turborepo（`packages/{ui,db,contract,config,auth,utils}`）。WMS 独立项目，主系统只留 `wms-gateway`。信息源优先级：`AGENTS.md > docs/07 > TODO.md > docs/01~06 > 源码注释 > 代码`。
+## 技术栈 / 铁律
+全 TS：Next.js 15 App Router（`apps/{web,mzk,admin}`）+ Tailwind 4/shadcn；`apps/worker`=Node+BullMQ/Redis；Prisma 6+MySQL 8；zod 契约；decimal.js 金额单入口；pnpm+Turborepo（`packages/{ui,db,contract,config,auth,utils}`）。信息源优先级：`AGENTS.md > docs/07 > TODO.md > docs/01~06 > 源码注释 > 代码`。
+铁律：禁 Big Bang｜按域垂直切片｜共用旧表、写入口按域切换｜金额服务端重算+Decimal+唯一写入口｜webhook/队列幂等｜部署粒度 = app 级｜FBA=业务线非域。
 
-## 迁移铁律
-禁 Big Bang｜按域垂直切片端到端跑通再切｜**共用旧表、写入口按域切换**（PHP 唯一写方直到域绞杀）｜金额服务端重算+Decimal+唯一写入口｜webhook/队列消费幂等｜**部署粒度 = app 级**（五 app 五部署单元，域写路径变更才协同发该域写方进程；新域准入三判据；FBA=业务线非域）。
+## 环境速查
+- 生产 PolarDB `taotaro` 经跳板机 `114.215.206.28` 端口转发；生产 `datapro` 只读 ⇒ DDL/DML 必须 DBA。密码只从 `C:/Users/13621/.taotaro-db.pass`/环境变量取。
+- 本机 MySQL/Redis 默认没起；MySQL 会**中途自己停**。MySQL 启动：`"D:/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysqld.exe" --defaults-file="D:/Program Files/FlyEnv-Data/server/mysql/my-9.7.cnf" --console`；Redis：`"D:/Program Files/FlyEnv-Data/app/redis-8.10.2/Redis-8.10.2-Windows-x64-msys2/redis-server.exe" redis.conf`。库就绪前跑 smoke 会挂到超时不报错。
+- MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
 
-## 环境
-- 生产 PolarDB `taotaro`（测试 `taotaro_test` 账号 `wms_app`）需经跳板机 `114.215.206.28` 端口转发；生产账号 `datapro` **只读** ⇒ DDL/DML 必须 DBA 执行。密码只从 `C:/Users/13621/.taotaro-db.pass`/环境变量取，**不入代码与文档**。
-- 本机 `taotaro` = 旧 dump 尾切片（dg_users 74 列 vs 生产 75、5,021 会员、160/174 表）⇒ 演练脚本逐表择优取源 + 审计表 + 安全守卫。
-- **本机 FlyEnv MySQL 默认没启动**，测试报 `Can't reach database server` 时先起：`"D:/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysqld.exe" --defaults-file="D:/Program Files/FlyEnv-Data/server/mysql/my-9.7.cnf" --console`。⚠ **它会中途自己停**（实测会话跑到一半 3306 就没监听了）；且若在库就绪**之前**启动 smoke，smoke 会一直挂到超时而不报错。
-- **Redis 同样默认没起**（`@crossbuy/cache` 测试需要）：`"D:/Program Files/FlyEnv-Data/app/redis-8.10.2/Redis-8.10.2-Windows-x64-msys2/redis-server.exe" redis.conf`。
-- MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 字符串套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
+## 进度指针（2026-10-18；细节写当日日志，勿改此段）
+- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②+/17/#11f 均已收口（详见 2026-10-18 日志）。
+- **下一步**：① **1688 详情 SDK 迁移（#18 半阻塞，优先）**→ 解 chrome `trade_type=1`；② #16③ 两处 SDK 端口（S34 实时价 / S35 规格翻译）；③ M1 双跑 diff（staging）；④ git push（**30 提交待推，用户手动**）。
 
-## 进度（2026-10-17）
-- **M0 基建基本完成**：legacy introspect（生产 179 模型，双 generator 双 client，`pull:legacy`=pull+`post-pull-fixup.mjs` 含头部自愈）｜11 域包骨架 + ESLint 边界规则（`scripts/boundary-probe.mjs` 破坏验证 5/5）｜auth Principal/TokenVerifier｜180 表属主映射（`scripts/classify-table-owners.mjs`，未归类=0 硬门禁）｜apps/api（Fastify，24 断言）｜Tailwind 4 + shadcn｜Vitest 基线（真实 MySQL，事务回滚）｜部署管线（per-app standalone/tsup + `scripts/deploy.mjs` + 影响半径）。剩余：vendor 冷备（需公司存储）。
-- **M1 member 切片**：登录全闸门/资料读/资料编辑 22 字段/收藏增删/admin 只读用户列表 + jose JWT 会话 + 53 单测 + smoke 44 断言。剩余：PHP↔TS 双跑 diff + nginx 灰度（依赖 M0.8）。
-- **M2 交易链路：已闭环**（契约迁移白名单、取消、列表 20 项筛选、1688 支付/物流 webhook、发货回传、运单列表、购物车读写、加购、下单、**chrome 回传** 全部 1:1，order 域 129 单测）。剩余两块都卡 SDK：chrome 的 GET(3)/GET_STATE_PAID(7)/CREATE_1688_ORDER(8) 与淘宝 API 改单 = TODO #18（其中 1688 详情 SDK 是**半阻塞**：不迁则 chrome 回传 `trade_type=1` 一律不可用）；淘宝全球购三族 = M3。
-- **#16① + #7 / #16② + #17 已收口（2026-10-18）**：#16① = 新增 `@crossbuy/cache`（Redis 分布式锁 + 冷却 `CooldownStore` + `IdempotencyStore`），下单/加购两处进程内 Map 闸门改 Redis，无 `REDIS_URL` 回退内存**并打 WARNING**；17 单测跑真 Redis。#7 = 新增 `@crossbuy/jobs`（队列名注册表 + 共享连接 + 默认 Job 选项 `attempts:3/指数退避`）+ `apps/worker` 真实 BullMQ Worker（取代 ping 冒烟），首个真 Job = 下单成功邮件（orderCreated）：`enqueueOrderCreated` 经 `bullmq.Queue.add`（jobId=`order-created:{uid}:{sortedIds}` 天然去重）→ worker `processOrderCreated` → `runningIdempotent`（`IdempotencyStore` = `SET key 1 NX PX`，30 天 TTL；渠道失败先 `forget` 再 throw 让 BullMQ 重试）→ `NotifyChannel`（dev 控制台通道）→ 邮件；completed/failed 日志 + SIGTERM/SIGINT 优雅 drain + `waitForRedis` 启动守卫。cache 24 例、worker 5 例（4 单测 + 1 真 BullMQ+Redis 集成）、web smoke 全过。剩余 #16③（两处 SDK 端口：实时价 `GoodsPriceRefreshPort` / 1688 翻译 `SkuTranslationPort`，S34/S35）与 #16② 另三个投递（翻译/商品补全/MNS，仍 no-op 随 #18 SDK 迁移）。★ web `next build` 仍受本机 `.next/trace` EPERM 阻断（编译本身通过、smoke 已验证功能），见血泪坑 #13。
-- **#17 order 域直读 purchase 属主表已收口（2026-10-18，方案①）**：`v2_supplier_product`/`v2_supplier_shop`（属主 = purchase）的三处 order 域直读全部改走 `SupplierCatalogPort` 只读端口。方案① = **读移出事务 + 端口**（弃②跨域 opaque 事务句柄）：原来是参考数据读，与购物车行锁无一致性要求，旧「在 tx 内」只是 Laravel 单连接副产物。contract 加 `SupplierProductRead`/`SupplierShopRead`（**snake_case 原始列形状**，区别于 camelCase 的 `SupplierProductSummary`——故意保持列形以便价格计算零改动）；`lockCartsForUpdate` 只锁 `dg_cart FOR UPDATE`；`buildOrderData` 从 ctx.products/shopMap 推 shopId/goodsSeller。门禁：order 域 129 例全过（阶梯价/混批走新端口）、web smoke 全过、boundary 5/5、typecheck 四包全绿。**order 域测试盲区**：tsconfig include 只有 `src/**` ⇒ 测试文件无类型门禁，只能靠 vitest 跑出来；跨域包（purchase 等）靠 vitest alias 解析，不在 package.json deps 也能跑。
-- **#6 ESLint/Prettier 全量接线已完成（2026-10-18，`90b3028`+`61056cf`）**：146 个不合规文件一次性 prettier 重排（format:check 零欠账，生成物/.workbuddy 未卷入）；eslint flat config 接 react-hooks（用 `configs['recommended-latest']`）与 next coreWebVitals（作用域 apps+ui，边界守卫同场验证）；`.github/workflows/ci.yml` 落地（install frozen → typecheck → lint → format:check → boundary-probe → **md-stars 守卫** → contract smoke；DB/Redis 套件不进 CI = 需 legacy dump 库）。门禁 27/27 typecheck+lint、全测试包绿。顺修 worker 集成测试幂等键跨 run 污染（业务数据随机化）、contract 未用 import、scripts 5 处未用变量。**prettier markdown emphasis 坑见血泪坑 #15**。
-- **#11f OEM action 逆向补读已完成（2026-10-18）**：`Record::$oemPaytypeActionMap` paytype→action：`3→14 商品購入/5→15 国内運賃/4→16 国際運賃/7→17 倉庫保管料/11→18 その他/8→19 オプション料金決済/12→20 撮影費用/6→22 賠償/10→23 取引中止`，兜底 action=0；角色门 = `oem_business_manager`（两写入点：ReviewManualCharge 审核 / RechargeRecord 直充）；**paytype=10 创建路径另置 `orderenable=0`+`stoptime`（审核路径没有，不对称）**。`0017` 九行占位 `OEM_SERVICE_FEE_{n}` 已换真实 flow_type 并重跑演练验证（ODKU 自愈、994,279 分录/6,475 单据守恒、0018 = 29 PASS/0 FAIL/2 INFO）。顺带解 #3b：12=その他、13=AI機能を使用。
-
-## 血泪坑（按代价排序）
-1. **ODKU 只适用于「撞键=同一实体重复投递」**：业务属性型唯一键（username）撞键=两个实体，ODKU 会**静默整行覆盖**（实测吞 5 账号、清零 2 笔余额、零报错）⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
-2. **校验脚本会造假绿**：`ROW_COUNT()` 在 `DEALLOCATE` 后被重置为 0；`grep -c FAIL` 会数进 SQL 字面量；`2>/dev/null` 把 `ERROR 2003` 吞成「0 行」。⇒ 用结果列精确统计，任何「0/空」都要第二来源交叉核对。**「跑绿」≠「守卫有效」**——守卫要主动破坏一次看它 `rc=1`。
-3. TEMPORARY 表不能承载回填输入；校验 expected 按当前源实时算，禁写死快照。
-4. 带 member 必需关系的表回填要 `JOIN member` 过滤外键孤儿（favorite 240/browse 3389/benefit 3/log 68）。
-5. `dg_users` 有 id 空洞 ⇒ 顶自增用 `MAX(id)+1`。
-6. 口径清扫时非金额列别盲替换（`float_rate`/`order_weight`/`low_multiple`；`v2_ecommerce_shop.currency` 是外部平台结算币种）。
-7. 已演练通过的列定义别顺手改。
-8. **Windows+monorepo+Prisma 文件追踪三连坑**：nft 把 dotenv 的 `~` 求值成 `C:\Users\<user>\**\*` 并 glob 整个 home → EACCES（编译成功、死在 trace；没 bundle Prisma 的 app 构建绿是**假绿**）；`NEXT_PRIVATE_OUTPUT_TRACE_ROOT` env 设了白设，必须设 `outputFileTracingRoot` **配置字段**；nft 的 ignore 在**跨盘符**失效 ⇒ 正解 = build 期把 USERPROFILE/HOME 重定向到**同盘**。相位只能用函数式配置入参拿。修法全文见 `apps/web/next.config.ts`；mzk/admin bundle Prisma 时要复制。
-9. `next.config.ts` 的 JSDoc 禁出现 `*/` 序列（写 glob `/**\/*` 会提前终止块注释）。
-10. tsx 跑 `.ts` 顶层 await（非 ESM 包）报 `ERR_REQUIRE_ASYNC_MODULE` ⇒ 独立 smoke 用 `.mts`。
-11. **ioredis `enableOfflineQueue:false` + `lazyConnect:true` ⇒ 进程启动后第一个命令必失败**（`Stream isn't writeable`）。要么显式 `waitForRedis()`（已封装在 `@crossbuy/cache`），要么别这么配。分布式锁的释放**必须带 token 比对**（Lua），否则超时后的旧持锁者会删掉新持锁者的锁，互斥被击穿且日志全「正常」。
-12. `turbo run test --force` 会连带重跑 `db#generate`，本机撞 **EPERM 重命名 `query_engine-windows.dll.node`**（文件被占用）⇒ 要未缓存的测试结果就进各包直接 `pnpm exec vitest run`。mzk 构建偶发 `EPERM symlink`（standalone 拷贝）**重跑即过**，别当代码问题查。
-13. **web `next build` 受本机 `.next/trace` EPERM 阻断**（Windows 实时防护锁文件，连 `dangerouslyDisableSandbox:true` 仍 EPERM，证明是文件锁非沙箱）。编译本身正常通过（4.5s，仅 bullmq `@valkey/valkey-glide` 可选依赖的无害警告），但 `flushAllTraces` 在 standalone 拷贝**之前**刷 trace 文件会崩，导致 standalone 产物不出。验证编译的办法：① `pnpm --filter @crossbuy/web smoke` 全断言通过即证明功能正确；② 把 `next.config.ts` 的 `output` 临时改掉构建一次再还原。**这是环境问题不是代码缺陷**，根治需把 `.next` 排除出杀软实时扫描、或在无锁的机器上构建。
-14. **域包 tsconfig `include` 只有 `src/**` ⇒ 测试文件没有类型门禁**：`pnpm typecheck` 绿 ≠ 测试代码类型对（如 `calculateTierPrices(rows, array)` 这种入参形状错误 typecheck 看不见，只能 vitest 跑炸）。跨域包在测试里 import 也不需要写进 package.json deps（vitest alias 直接指源码）——但 alias 漏配就是运行时 `Failed to resolve import`。**测试文件的类型正确性只能靠跑**，改测试入参来源时逐个核对返回类型（#17 就因 replace_all 把返回 Map 的方法换成返回数组而挂 2 例）。
-15. **prettier 会把 markdown 裸文里成对的单星号当强调，标准化成 `_`**（`*em*`→`_em_`）——本仓 glob 写法（`docs/*`/`dg_*`/`v2_ecommerce_*`）裸写即被 `pnpm format` 静默改写（#6 实测 2 文件 3 处），**且 format:check 查不出来**（转换后文件是「合规」的）。检测唯一可靠方法 = 全仓 md「星号/下划线守恒」比对。修复 = 恢复星号并**包反引号**（code span 受保护）。防线 = `scripts/check-md-stars.mjs`（CI 第 7 步，`pnpm check:md-stars`）：剥 code span/围栏/**bold**/转义 `\*` 后裸文残留单星号即 rc=1；实现顺序必须**先剥转义再剥 bold**（bold 内含 `\*` 会挡住加粗正则误报）。**今后写文档：glob 星号一律进 code span**。
-16. **Windows mysql CLI 默认 gbk 客户端字符集**：管道喂含 CJK 字面量的 SQL 报 `ERROR 3854 Cannot convert ... from gbk to utf8mb3`。跑 `0016/0017/0018` 等含中日文注释/字面量的迁移脚本**必须** `mysql --default-character-set=utf8mb4 -uroot -proot <db> < file.sql`。另：本机 `crossbuy_t1v` 演练库常驻（0015 新表 + 0016 源表 + 0017 回填后的 994,279 分录态），改 finance 段 SQL 后直接重跑 0017→0018 验证（ODKU 幂等自愈，含 `flow_type=VALUES(flow_type)` 镜像列）。
+## 血泪坑（浓缩；原文全在 2026-10-15~18 日志）
+1. ODKU 只适用「撞键=同一实体」；业务属性唯一键（username）撞键=两实体 ⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
+2. 校验脚本假绿三坑（`ROW_COUNT()` 重置 / `grep -c` 数进字面量 / `2>/dev/null` 吞 ERROR 2003）；**跑绿≠守卫有效，守卫要破坏一次看 rc=1**。
+3. T1 族：TEMPORARY 不能当回填输入；expected 按当前源实时算；带 member 必需关系的表回填 `JOIN member` 过滤孤儿；`dg_users` 顶自增用 `MAX(id)+1`；非金额列别盲替换（`float_rate`/`order_weight`/`low_multiple`）。
+4. Windows+monorepo：nft 跨盘符坑正解见 `apps/web/next.config.ts`（`outputFileTracingRoot` 配置字段 + build 期重定向 USERPROFILE/HOME 同盘）；**web `next build` 受 `.next/trace` EPERM 阻断**（环境问题，用 `pnpm --filter @crossbuy/web smoke` 验功能）；`turbo run test --force` 撞 Prisma 引擎 EPERM ⇒ 进各包直接 `pnpm exec vitest run`；mzk EPERM symlink 重跑即过。
+5. **域包测试文件无类型门禁**（tsconfig include 只有 `src/**`）——测试类型对不对只能靠 vitest 跑；跨域包靠 vitest alias，不必进 deps 但漏配 = 运行时解析失败。
+6. ioredis `enableOfflineQueue:false+lazyConnect:true` ⇒ 首命令必失败 ⇒ `waitForRedis()`（已封装 `@crossbuy/cache`）；分布式锁释放必须 Lua token 比对。
+7. **prettier 会把 md 裸文成对单星号改 `_` 且 format:check 查不出** ⇒ glob 星号一律进 code span；守卫 `scripts/check-md-stars.mjs` 已上线（CI 第 7 步）。
+8. Windows mysql CLI 默认 gbk ⇒ 跑含 CJK 的 SQL（0016/0017/0018）**必须** `--default-character-set=utf8mb4`。本机 `crossbuy_t1v` 演练库常驻（994,279 分录态），改 finance SQL 直接重跑 0017→0018 验证（ODKU 幂等自愈）。
+9. 无本机符号链接权限 ⇒ standalone 构建死在 symlink 属环境；tsx 跑顶层 await `.ts` 报 `ERR_REQUIRE_ASYNC_MODULE` ⇒ smoke 用 `.mts`。
 
 ## 工具链红线
-- ★ **Prisma 产物 `src/generated/**` 在源码树**，turbo 缓存命中会跳过生成却仍报成功 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json` 让 db 的 build/typecheck 都 `dependsOn:["^build","generate"]`；db 在最上游 ⇒ **build 过 ≠ typecheck 过**）；db 的 build 脚本内不再调 generate，保留 `prebuild`/`pretypecheck` 给直接 pnpm 调用兜底（turbo 不触发生命周期钩子）。
-- ★ **package.json 是严格 JSON 禁 `//` 注释**（turbo.json/tsconfig.json 支持 jsonc 是特例），pnpm 会报 `ELIFECYCLE` 且错误信息指向注释文字本身。
-- **`.gitignore` 整体忽略 `.workbuddy/*` 但放行 `memory/` 与 `skills/`**——这两个是工具链固定路径，不可搬；改后用 `git check-ignore -v` 双向验证。
-- **技能**在 `.workbuddy/skills/`（6 个：verification-before-completion / systematic-debugging / test-driven-development / writing-plans / executing-plans / finishing-a-development-branch）。★ **项目专属补丁正本是 `scripts/import-claude-skills.mjs` 的 `PROJECT_PATCHES`**，绝不直接改 skills 目录（重跑会整目录覆写）。项目级技能需重启会话才进可调用列表，刷不出时直接读 SKILL.md。
+- Prisma 产物 `src/generated/**` 在源码树 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json`）；**db build 过 ≠ typecheck 过**。
+- `package.json` 严格 JSON 禁注释（turbo.json/tsconfig 支持注释是特例）。
+- `.gitignore` 忽略 `.workbuddy/*` 但**放行 `memory/` 与 `skills/`**（工具链固定路径不可搬）。
+- 技能（6 个）在 `.workbuddy/skills/`；**项目专属补丁正本 = `scripts/import-claude-skills.mjs` 的 `PROJECT_PATCHES`**，绝不直接改 skills 目录。
 
-## 旧系统继承的结论（重写必须规避）
-- **零对账**：`Σ流水=余额` 无校验，`dg_record` 链断 7.3%（36,482 环）/55% 会员 ⇒ 新系统必须**逐环校验**。WorldFirst `v2_worldfirst_*` 五表生产实测**全部 0 行**（空壳死表）。
-- 旧「幂等列」不可信（`dg_record.idempotency_key` 全 NULL 零读写）；判重全是「先查后插」⇒ 新幂等 = 唯一键 + 命令侧算 key。
-- 后门/裸奔：`skip_price_check`、后台改价、`dg_rechargerecord` 可改 money/state/汇率反算、`dg_huilv` 全字段可手改、PayPal 回调仅 2s `Cache::lock`、月费/仓储费 Job 无锁可扣成负、**充值「初审通过即入账」**。
-- 领域硬伤：`bargainprice` 在 Order/SendOrder 语义不同、`goodsprice` vs `goodsprice1`、各域 status 独立状态机不可跨域假设。
-- `dg_users.money` decimal(10,2) 实测 max 99,999,350.04（距上限 65 元，溢出风险）。
-- 会员主表 `dg_users`；`v2_address`/`v2_area` 是行政区划字典（非收货地址）；`dg_record`=余额流水（type 方向+action 原因+accountmoney 快照），`finance_order_cash_flow`=财务代付动作流水。
-- 团队：2-3 名 Java 背景员工接管，兼职张（现主力）将离开 ⇒ 知识盘点是重写前置。`own/` 下 `agent`/`ec-erp`/`system-kit` 是个人项目，勿动。
+## 旧系统继承结论（重写必须规避）
+- 零对账：`Σ流水=余额` 无校验，`dg_record` 链断 7.3%/55% 会员 ⇒ 新系统逐环校验。WorldFirst 五表生产实测全 0 行（空壳死表）。
+- 旧幂等列不可信（全 NULL）；判重全是先查后插 ⇒ 新幂等 = 唯一键 upsert + 命令侧算 key。
+- 后门缺陷族（#11a 七条，对策落 `finance-schema.md`）：PayPal 仅 2s 锁、后台改 money/state/汇率、`dg_huilv` 可手改、初审即入账、月费/仓储费 Job 无锁、MYR 段 ≈ 套日元汇率（701 行 RATE_DRIFT）。
+- 领域硬伤：`bargainprice` 在 Order/SendOrder 语义不同、`goodsprice` vs `goodsprice1`、各域 status 独立状态机不可跨域假设；`dg_users.money` decimal(10,2) 濒上限。
+- 团队：2-3 名 Java 背景员工接管，兼职张（现主力）将离开。`own/` 下 `agent`/`ec-erp`/`system-kit` 是个人项目，勿动。
