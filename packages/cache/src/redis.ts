@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import Redis from 'ioredis';
-import type { CooldownStore, DistributedLock, WithLockOptions, WithLockResult } from './types';
+import type { CooldownStore, DistributedLock, IdempotencyStore, WithLockOptions, WithLockResult } from './types';
 
 /**
  * Redis 连接（锁/冷却专用）。
@@ -131,6 +131,25 @@ export function createRedisCooldown(redis: Redis): CooldownStore {
     async put(key, ttlMs) {
       await waitForRedis(redis);
       await redis.set(key, '1', 'PX', ttlMs);
+    },
+  };
+}
+
+/** Redis 幂等标记（SET key 1 NX PX 抢占） */
+export function createRedisIdempotency(redis: Redis): IdempotencyStore {
+  return {
+    async claim(key, ttlMs) {
+      await waitForRedis(redis);
+      // NX = 只在未占用时落标记；PX = 毫秒级兜底过期
+      return (await redis.set(key, '1', 'PX', ttlMs, 'NX')) === 'OK';
+    },
+    async has(key) {
+      await waitForRedis(redis);
+      return (await redis.exists(key)) === 1;
+    },
+    async forget(key) {
+      await waitForRedis(redis);
+      await redis.del(key);
     },
   };
 }

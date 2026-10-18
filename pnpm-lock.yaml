@@ -335,12 +335,18 @@ importers:
       '@crossbuy/domain-send-order':
         specifier: workspace:*
         version: link:../../packages/domains/send-order
+      '@crossbuy/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
       '@crossbuy/ui':
         specifier: workspace:*
         version: link:../../packages/ui
       '@crossbuy/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      bullmq:
+        specifier: 'catalog:'
+        version: 5.81.5
       jose:
         specifier: 'catalog:'
         version: 6.2.12
@@ -381,9 +387,18 @@ importers:
 
   apps/worker:
     dependencies:
+      '@crossbuy/cache':
+        specifier: workspace:*
+        version: link:../../packages/cache
       '@crossbuy/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@crossbuy/jobs':
+        specifier: workspace:*
+        version: link:../../packages/jobs
+      '@crossbuy/notify':
+        specifier: workspace:*
+        version: link:../../packages/notify
       bullmq:
         specifier: 'catalog:'
         version: 5.81.5
@@ -734,6 +749,19 @@ importers:
       '@crossbuy/utils':
         specifier: workspace:*
         version: link:../../utils
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/jobs:
+    dependencies:
+      bullmq:
+        specifier: 'catalog:'
+        version: 5.81.5
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

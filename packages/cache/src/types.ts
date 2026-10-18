@@ -44,3 +44,22 @@ export interface CooldownStore {
   has(key: string): Promise<boolean>;
   put(key: string, ttlMs: number): Promise<void>;
 }
+
+/**
+ * 幂等标记（处理「这事刚做过，别重做」——和冷却的区别：冷却是时间窗，幂等是「已完成」标记）。
+ *
+ * 用途：队列消费的幂等护栏。BullMQ 的 jobId 只能拦「同一 jobId 重复入队」，拦不住
+ * 「不同 jobId 但代表同一件事」（如重试 / 上游重复投递 / 跨连接重放）。`claim` 用
+ * `SET key 1 NX PX`——抢到标记 = 第一次处理；抢不到 = 已经处理过，直接跳过。
+ *
+ * ⚠ ttlMs 必须远大于「同一件事可能重复到达的最大时间窗」（订单邮件取 30 天），
+ * 否则标记过期后重复事件会二次触发。过期不是正常释放路径，只是兜底防永久堆积。
+ */
+export interface IdempotencyStore {
+  /** 抢占「已完成」标记；成功（第一次）返回 true，已被占用（重复）返回 false */
+  claim(key: string, ttlMs: number): Promise<boolean>;
+  /** 该 key 是否仍被占用（用于测试 / 排查） */
+  has(key: string): Promise<boolean>;
+  /** 主动清除（测试隔离 / 手动补救） */
+  forget(key: string): Promise<void>;
+}

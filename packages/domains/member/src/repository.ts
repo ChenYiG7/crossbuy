@@ -462,6 +462,12 @@ export class MemberRepository {
     return row !== null;
   }
 
+  /** 只读：按 uid 取会员邮箱（下单成功邮件收件人解析用；web 组合根在入队前调用，worker 不再反向依赖 member 域） */
+  async findEmailByUid(uid: number): Promise<string | null> {
+    const row = await this.db.dg_users.findFirst({ where: { uid }, select: { email: true } });
+    return row?.email ?? null;
+  }
+
   /**
    * 建档用户 + oauth 绑定（旧 tryGetUser 的 User::create + OauthLogin::create 1:1）。
    * ⚠ card 生产 NOT NULL 无默认（非严格模式落 ''）——显式补 '' 等价；memberid 留 NULL

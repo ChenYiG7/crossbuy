@@ -47,9 +47,11 @@ const nextConfig = (phase: string): NextConfig => {
     // 内部包走源码（exports 指向 src/index.ts），让 Next 一并转译
     transpilePackages: [
       '@crossbuy/auth',
+      '@crossbuy/cache',
       '@crossbuy/contract',
       '@crossbuy/db',
       '@crossbuy/domain-member',
+      '@crossbuy/jobs',
       '@crossbuy/ui',
       '@crossbuy/utils',
     ],

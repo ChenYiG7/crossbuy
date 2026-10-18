@@ -17,13 +17,15 @@
 ## 环境
 - 生产 PolarDB `taotaro`（测试 `taotaro_test` 账号 `wms_app`）需经跳板机 `114.215.206.28` 端口转发；生产账号 `datapro` **只读** ⇒ DDL/DML 必须 DBA 执行。密码只从 `C:/Users/13621/.taotaro-db.pass`/环境变量取，**不入代码与文档**。
 - 本机 `taotaro` = 旧 dump 尾切片（dg_users 74 列 vs 生产 75、5,021 会员、160/174 表）⇒ 演练脚本逐表择优取源 + 审计表 + 安全守卫。
-- **本机 FlyEnv MySQL 默认没启动**，测试报 `Can't reach database server` 时先起：`"D:/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysqld.exe" --defaults-file="D:/Program Files/FlyEnv-Data/server/mysql/my-9.7.cnf" --console`。
+- **本机 FlyEnv MySQL 默认没启动**，测试报 `Can't reach database server` 时先起：`"D:/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysqld.exe" --defaults-file="D:/Program Files/FlyEnv-Data/server/mysql/my-9.7.cnf" --console`。⚠ **它会中途自己停**（实测会话跑到一半 3306 就没监听了）；且若在库就绪**之前**启动 smoke，smoke 会一直挂到超时而不报错。
+- **Redis 同样默认没起**（`@crossbuy/cache` 测试需要）：`"D:/Program Files/FlyEnv-Data/app/redis-8.10.2/Redis-8.10.2-Windows-x64-msys2/redis-server.exe" redis.conf`。
 - MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 字符串套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
 
 ## 进度（2026-10-17）
 - **M0 基建基本完成**：legacy introspect（生产 179 模型，双 generator 双 client，`pull:legacy`=pull+`post-pull-fixup.mjs` 含头部自愈）｜11 域包骨架 + ESLint 边界规则（`scripts/boundary-probe.mjs` 破坏验证 5/5）｜auth Principal/TokenVerifier｜180 表属主映射（`scripts/classify-table-owners.mjs`，未归类=0 硬门禁）｜apps/api（Fastify，24 断言）｜Tailwind 4 + shadcn｜Vitest 基线（真实 MySQL，事务回滚）｜部署管线（per-app standalone/tsup + `scripts/deploy.mjs` + 影响半径）。剩余：vendor 冷备（需公司存储）。
 - **M1 member 切片**：登录全闸门/资料读/资料编辑 22 字段/收藏增删/admin 只读用户列表 + jose JWT 会话 + 53 单测 + smoke 44 断言。剩余：PHP↔TS 双跑 diff + nginx 灰度（依赖 M0.8）。
-- **M2 交易链路**：契约迁移白名单、取消订单、订单列表 20 项筛选、1688 支付/物流 webhook、发货回传、运单列表、购物车读路径（列表+金额）、**下单主体 1:1** 已落地。进行中：加购 `AddCartMutation`。待：chrome `validateAndSave` 回传、淘宝全球购三族（M3）。
+- **M2 交易链路：已闭环**（契约迁移白名单、取消、列表 20 项筛选、1688 支付/物流 webhook、发货回传、运单列表、购物车读写、加购、下单、**chrome 回传** 全部 1:1，order 域 129 单测）。剩余两块都卡 SDK：chrome 的 GET(3)/GET_STATE_PAID(7)/CREATE_1688_ORDER(8) 与淘宝 API 改单 = TODO #18（其中 1688 详情 SDK 是**半阻塞**：不迁则 chrome 回传 `trade_type=1` 一律不可用）；淘宝全球购三族 = M3。
+- **#16① 已收口**：新增 `@crossbuy/cache`（Redis 分布式锁 + 冷却），下单/加购两处进程内 Map 闸门改 Redis，无 `REDIS_URL` 回退内存**并打 WARNING**；17 单测跑真 Redis。剩余 #16②（下单四个副作用投递接 worker 真 Job = #7）与 #16③（两处 SDK 端口）。
 
 ## 血泪坑（按代价排序）
 1. **ODKU 只适用于「撞键=同一实体重复投递」**：业务属性型唯一键（username）撞键=两个实体，ODKU 会**静默整行覆盖**（实测吞 5 账号、清零 2 笔余额、零报错）⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
@@ -36,6 +38,8 @@
 8. **Windows+monorepo+Prisma 文件追踪三连坑**：nft 把 dotenv 的 `~` 求值成 `C:\Users\<user>\**\*` 并 glob 整个 home → EACCES（编译成功、死在 trace；没 bundle Prisma 的 app 构建绿是**假绿**）；`NEXT_PRIVATE_OUTPUT_TRACE_ROOT` env 设了白设，必须设 `outputFileTracingRoot` **配置字段**；nft 的 ignore 在**跨盘符**失效 ⇒ 正解 = build 期把 USERPROFILE/HOME 重定向到**同盘**。相位只能用函数式配置入参拿。修法全文见 `apps/web/next.config.ts`；mzk/admin bundle Prisma 时要复制。
 9. `next.config.ts` 的 JSDoc 禁出现 `*/` 序列（写 glob `/**\/*` 会提前终止块注释）。
 10. tsx 跑 `.ts` 顶层 await（非 ESM 包）报 `ERR_REQUIRE_ASYNC_MODULE` ⇒ 独立 smoke 用 `.mts`。
+11. **ioredis `enableOfflineQueue:false` + `lazyConnect:true` ⇒ 进程启动后第一个命令必失败**（`Stream isn't writeable`）。要么显式 `waitForRedis()`（已封装在 `@crossbuy/cache`），要么别这么配。分布式锁的释放**必须带 token 比对**（Lua），否则超时后的旧持锁者会删掉新持锁者的锁，互斥被击穿且日志全「正常」。
+12. `turbo run test --force` 会连带重跑 `db#generate`，本机撞 **EPERM 重命名 `query_engine-windows.dll.node`**（文件被占用）⇒ 要未缓存的测试结果就进各包直接 `pnpm exec vitest run`。mzk 构建偶发 `EPERM symlink`（standalone 拷贝）**重跑即过**，别当代码问题查。
 
 ## 工具链红线
 - ★ **Prisma 产物 `src/generated/**` 在源码树**，turbo 缓存命中会跳过生成却仍报成功 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json` 让 db 的 build/typecheck 都 `dependsOn:["^build","generate"]`；db 在最上游 ⇒ **build 过 ≠ typecheck 过**）；db 的 build 脚本内不再调 generate，保留 `prebuild`/`pretypecheck` 给直接 pnpm 调用兜底（turbo 不触发生命周期钩子）。

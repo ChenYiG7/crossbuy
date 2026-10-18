@@ -28,3 +28,33 @@ export interface NotifyChannel {
   readonly kind: NotifyChannelKind;
   send(notification: Notification): Promise<NotifyResult>;
 }
+
+/** 极简日志接口（dev 通道用，避免 notify 包直接依赖 pino） */
+export interface NotifyLogger {
+  info(message: string, meta?: unknown): void;
+  warn(message: string, meta?: unknown): void;
+}
+
+const consoleLogger: NotifyLogger = {
+  info: (m, meta) => console.log(m, meta ?? ''),
+  warn: (m, meta) => console.warn(m, meta ?? ''),
+};
+
+/**
+ * dev 邮件通道（R1 占位，对标旧系统「开发环境不真发邮件」）。
+ *
+ * 不连任何 SMTP，只把待发通知打到日志并返回 `ok`——真实 SMTP 通道（R2/R3）按同接口替换，
+ * 域/worker 代码零改动。失败只走 Result，禁抛异常承载分支（docs/07 铁律）。
+ */
+export function createConsoleNotifyChannel(logger: NotifyLogger = consoleLogger): NotifyChannel {
+  return {
+    kind: 'email',
+    async send(notification: Notification): Promise<NotifyResult> {
+      logger.info(`[notify:${notification.channel}] → ${notification.target}`, {
+        title: notification.title ?? '',
+        body: notification.body,
+      });
+      return { ok: true };
+    },
+  };
+}

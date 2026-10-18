@@ -9,10 +9,13 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "echo \"(no tests yet)\""
+    "test": "vitest run"
   },
   "dependencies": {
+    "@crossbuy/cache": "workspace:*",
     "@crossbuy/config": "workspace:*",
+    "@crossbuy/jobs": "workspace:*",
+    "@crossbuy/notify": "workspace:*",
     "bullmq": "catalog:",
     "pino": "catalog:"
   },

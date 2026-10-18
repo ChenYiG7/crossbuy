@@ -7,6 +7,9 @@ import {
   type CooldownStore,
   type DistributedLock,
 } from '@crossbuy/cache';
+import { Queue } from 'bullmq';
+import { createConnection, DEFAULT_JOB_OPTIONS, QUEUES } from '@crossbuy/jobs';
+import { MemberRepository } from '@crossbuy/domain-member';
 import {
   AddCartService,
   CartService,
@@ -298,6 +301,27 @@ function createProcessLock(): ProcessLockPort {
   };
 }
 
+// 下单成功邮件队列（#16② enqueueOrderCreated 入队；worker 消费后发信）。
+// 与 gate 同一 REDIS_URL；无配置则降级为「不发邮件」（副作用 best-effort，绝不阻断下单事务）。
+let orderCreatedQueue: Queue | null = null;
+let orderQueueWarned = false;
+function getOrderCreatedQueue(): Queue | null {
+  const url = process.env.REDIS_URL;
+  if (!url) {
+    if (!orderQueueWarned) {
+      orderQueueWarned = true;
+      console.warn(
+        '[order] REDIS_URL 未配置 → 下单成功邮件将不发送（enqueueOrderCreated 降级为 no-op，不阻断下单）',
+      );
+    }
+    return null;
+  }
+  if (!orderCreatedQueue) {
+    orderCreatedQueue = new Queue(QUEUES.orderCreated, { connection: createConnection(url) });
+  }
+  return orderCreatedQueue;
+}
+
 let placeOrderService: PlaceOrderService | null = null;
 
 export function getPlaceOrderService(): PlaceOrderService {
@@ -312,10 +336,28 @@ export function getPlaceOrderService(): PlaceOrderService {
       previewFeeDeduct: async () => null,
       useFeeDeductBenefit: async () => undefined,
     };
-    // 事务后副作用：队列/邮件/MNS 未接线 → no-op（TODO(#16)：随 M0.7 worker 真 Job 落地）
+    // 事务后副作用：#16② enqueueOrderCreated 已接真队列（订单创建邮件，worker 消费发信）；
+    // 其余三端口仍待 SDK 迁移（翻译 / 商品信息补全 依赖 1688/淘宝 SDK，S34/S35）。
     const sideEffects: PlaceOrderSideEffectPort = {
       enqueueCartToOrderEmail: async () => undefined,
-      enqueueOrderCreated: async () => undefined,
+      enqueueOrderCreated: async (input) => {
+        const queue = getOrderCreatedQueue();
+        if (!queue) return;
+        // 收件人邮箱在 web 侧解析（组合根已能取 member），随队携带 → worker 保持无状态、不反向依赖 member 域
+        const email = await new MemberRepository().findEmailByUid(input.uid);
+        if (!email) return;
+        const ids = [...input.orderIds].sort((a, b) => a - b).join(',');
+        try {
+          await queue.add(
+            'order-created',
+            { uid: input.uid, orderIds: input.orderIds, totalJpy: input.money.totalMoney, email },
+            { jobId: `order-created:${input.uid}:${ids}`, ...DEFAULT_JOB_OPTIONS },
+          );
+        } catch (e) {
+          // 入队失败不阻断已提交的下单：邮件是 best-effort，记日志可补
+          console.error('[order] enqueueOrderCreated 入队失败（邮件可能漏发，可补偿）：', (e as Error).message);
+        }
+      },
       enqueueCompletionGoodsInfo: async () => undefined,
       enqueueTranslateOrderGoodsInfo: async () => undefined,
     };

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CooldownStore, DistributedLock, WithLockOptions, WithLockResult } from './types';
+import type { CooldownStore, DistributedLock, IdempotencyStore, WithLockOptions, WithLockResult } from './types';
 
 /**
  * 进程内实现（**单实例正确，多实例无效**）。
@@ -75,6 +75,29 @@ export function createInMemoryCooldown(): CooldownStore {
     },
     async put(key, ttlMs) {
       until.set(key, Date.now() + ttlMs);
+    },
+  };
+}
+
+export function createInMemoryIdempotency(): IdempotencyStore {
+  const until = new Map<string, number>();
+  const sweep = (key: string): void => {
+    const expiry = until.get(key);
+    if (expiry !== undefined && expiry <= Date.now()) until.delete(key);
+  };
+  return {
+    async claim(key, ttlMs) {
+      sweep(key);
+      if (until.has(key)) return false;
+      until.set(key, Date.now() + ttlMs);
+      return true;
+    },
+    async has(key) {
+      sweep(key);
+      return until.has(key);
+    },
+    async forget(key) {
+      until.delete(key);
     },
   };
 }
