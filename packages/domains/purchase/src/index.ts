@@ -4,3 +4,4 @@ export * from './service';
 export * from './supplier-catalog';
 export * from './alibaba-sdk';
 export * from './alibaba-access';
+export * from './content-parser';

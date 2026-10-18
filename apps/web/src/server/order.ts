@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import * as nodeHttp from 'node:http';
+import * as nodeHttps from 'node:https';
 import {
   createInMemoryCooldown,
   createInMemoryLock,
@@ -43,10 +46,12 @@ import {
 import { FinanceServiceImpl, FinanceRepository } from '@crossbuy/domain-finance';
 import {
   AlibabaAccessServiceImpl,
+  ContentParserFacade,
   PurchaseRepository,
   SupplierCatalogServiceImpl,
   type AlibabaAccessService,
   type CatalogLockPort,
+  type HttpGetPort,
   type SupplierCatalogService,
 } from '@crossbuy/domain-purchase';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
@@ -129,22 +134,78 @@ export function getCartService(): CartServiceType {
 /**
  * 商品 URL 解析（旧 `ContentParser::parse` —— 淘宝/1688 双解析器 + 1 分钟 Cache）。
  *
- * ⚠ R1 是**正则兜底**实现（S39）：旧解析器是独立库（含页面抓取与类型排序权重），
- * 未迁移；只覆盖最常见的 `id=`/`offer/{id}.html`/`item.htm?id=` 形态，取不到就回退
- * `''`（= 旧「无法解析 goodsid，跳过平台实价覆盖」分支，不阻断加购）。
- * 迁移后只换本函数。
+ * 2026-10-18 S39 收口：旧 ContentParsers 三件套已 1:1 迁入
+ * `@crossbuy/domain-purchase`（Taobao/Alibaba/门面；九形态正则 + e.tb.cn /
+ * qr.1688.com 短链二次解析）；此处组合根负责旧 `Cache::remember` 语义：
+ * key = `parse_content_v2:{md5(content)}`，TTL 1 分钟，Redis 优先、无 REDIS_URL
+ * 回退内存（打 WARNING，绝不静默）。
  */
 function createUrlParser(): GoodsUrlParserPort {
+  const cache: TtlCache =
+    process.env.REDIS_URL != null
+      ? createRedisTtlCache(createRedis(process.env.REDIS_URL))
+      : (console.warn('[urlParser] 无 REDIS_URL，URL 解析缓存回退进程内（多实例下仅本进程命中）'),
+        createInMemoryTtlCache());
+  const http = createHttpGetPort();
   return {
     async parse(url) {
-      const itemId =
-        /[?&]id=(\d+)/.exec(url)?.[1] ??
-        /offer\/(\d+)\.html/.exec(url)?.[1] ??
-        /item\.htm\?[^#]*\bid=(\d+)/.exec(url)?.[1] ??
-        '';
-      const miId = /[?&]mi_id=([^&]+)/.exec(url)?.[1] ?? '';
-      if (itemId === '') return [];
-      return [{ detail: { itemId, miId: miId === '' ? null : miId } }];
+      // 旧 Cache::remember：命中直接返回（空数组也是有效缓存值）
+      const cacheKey = `parse_content_v2:${createHash('md5').update(url).digest('hex')}`;
+      const cached = await cache.get(cacheKey);
+      if (cached !== null)
+        return JSON.parse(cached) as Array<{
+          detail?: { itemId?: string | null; miId?: string | null };
+        }>;
+      const items = await ContentParserFacade.parse(url, '', {}, http);
+      // 端口形状投影（detail 可能为 null —— unknown/link 类型）
+      const projected = items.map((item) => ({
+        detail: item.detail
+          ? { itemId: item.detail.itemId ?? null, miId: item.detail.miId ?? null }
+          : undefined,
+      }));
+      await cache.put(cacheKey, JSON.stringify(projected), 60_000);
+      return projected;
+    },
+  };
+}
+
+/**
+ * 短链解析 HTTP GET（旧 Guzzle `allow_redirects => false` + 桌面 UA）。
+ *
+ * ⚠ 用 node:http/https 而非 fetch：fetch `redirect:'manual'` 返回 opaqueredirect
+ * （读不到 body），而不跟随重定向**且读 3xx 页面 body** 正是短链解析所需
+ * （旧 Alibaba/Taobao shortLinkParser 对 302 页内容做正则提取）。
+ * 旧 Guzzle 默认 http_errors=true：4xx/5xx 抛异常 <=> 此处 statusCode>=400 抛。
+ */
+function createHttpGetPort(): HttpGetPort {
+  return {
+    get(url, options) {
+      const u = new URL(url);
+      const mod = u.protocol === 'http:' ? nodeHttp : nodeHttps;
+      return new Promise<string>((resolve, reject) => {
+        const req = mod.request(
+          url,
+          {
+            method: 'GET',
+            headers: options?.userAgent ? { 'User-Agent': options.userAgent } : {},
+          },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => {
+              const body = Buffer.concat(chunks).toString('utf8');
+              // 旧 Guzzle http_errors：4xx/5xx 抛（3xx 因 allow_redirects=false 不跟，照常返回 body）
+              if ((res.statusCode ?? 0) >= 400) {
+                reject(new Error(`HTTP ${res.statusCode ?? 0} for ${url}`));
+                return;
+              }
+              resolve(body);
+            });
+          },
+        );
+        req.on('error', reject);
+        req.end();
+      });
     },
   };
 }
