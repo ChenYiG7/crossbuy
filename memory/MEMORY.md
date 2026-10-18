@@ -17,8 +17,8 @@
 - MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
 
 ## 进度指针（2026-10-18；细节写当日日志，勿改此段）
-- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②/#17/#11f/**1688 详情 SDK 迁移（#18 半阻塞解除）** 均已收口（详见 2026-10-18 日志）。
-- **下一步**：① #18 剩余四块（③1688 建单随后台采购面；④ 淘宝全球购改单需 taobao SDK，S35 同依赖）；② #16③ 两处 SDK 端口（S34 实时价 / S35 规格翻译，等 taobao SDK）；③ M1 双跑 diff（staging）；④ git push（**30+ 提交待推，用户手动**）。
+- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②/#17/#11f/**1688 详情 SDK 迁移（#18 半阻塞解除）**/**S35 规格翻译** 均已收口（详见 2026-10-18 日志）。
+- **下一步**：① #18 剩余四块——③1688 建单随后台采购面（M3）；④ 淘宝全球购改单需 **taobao SDK**（唯一真实技术阻塞）；② #16③ 剩 S34（实时价 `GoodsPriceRefreshPort`——旧 `RefreshOrderGoodsPricesService` 还需 `getFormatGoodsInfo` 淘宝侧 + ContentParser 链接解析）与另三个副作用投递（翻译/商品补全/MNS）；③ M1 双跑 diff（staging）；④ git push（**30+ 提交待推，用户手动**）。
 
 ## 血泪坑（浓缩；原文全在 2026-10-15~18 日志）
 1. ODKU 只适用「撞键=同一实体」；业务属性唯一键（username）撞键=两实体 ⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
