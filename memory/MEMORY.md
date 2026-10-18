@@ -25,7 +25,7 @@
 - **M0 基建基本完成**：legacy introspect（生产 179 模型，双 generator 双 client，`pull:legacy`=pull+`post-pull-fixup.mjs` 含头部自愈）｜11 域包骨架 + ESLint 边界规则（`scripts/boundary-probe.mjs` 破坏验证 5/5）｜auth Principal/TokenVerifier｜180 表属主映射（`scripts/classify-table-owners.mjs`，未归类=0 硬门禁）｜apps/api（Fastify，24 断言）｜Tailwind 4 + shadcn｜Vitest 基线（真实 MySQL，事务回滚）｜部署管线（per-app standalone/tsup + `scripts/deploy.mjs` + 影响半径）。剩余：vendor 冷备（需公司存储）。
 - **M1 member 切片**：登录全闸门/资料读/资料编辑 22 字段/收藏增删/admin 只读用户列表 + jose JWT 会话 + 53 单测 + smoke 44 断言。剩余：PHP↔TS 双跑 diff + nginx 灰度（依赖 M0.8）。
 - **M2 交易链路：已闭环**（契约迁移白名单、取消、列表 20 项筛选、1688 支付/物流 webhook、发货回传、运单列表、购物车读写、加购、下单、**chrome 回传** 全部 1:1，order 域 129 单测）。剩余两块都卡 SDK：chrome 的 GET(3)/GET_STATE_PAID(7)/CREATE_1688_ORDER(8) 与淘宝 API 改单 = TODO #18（其中 1688 详情 SDK 是**半阻塞**：不迁则 chrome 回传 `trade_type=1` 一律不可用）；淘宝全球购三族 = M3。
-- **#16① 已收口**：新增 `@crossbuy/cache`（Redis 分布式锁 + 冷却），下单/加购两处进程内 Map 闸门改 Redis，无 `REDIS_URL` 回退内存**并打 WARNING**；17 单测跑真 Redis。剩余 #16②（下单四个副作用投递接 worker 真 Job = #7）与 #16③（两处 SDK 端口）。
+- **#16① + #7 / #16② 已收口（2026-10-18）**：#16① = 新增 `@crossbuy/cache`（Redis 分布式锁 + 冷却 `CooldownStore` + `IdempotencyStore`），下单/加购两处进程内 Map 闸门改 Redis，无 `REDIS_URL` 回退内存**并打 WARNING**；17 单测跑真 Redis。#7 = 新增 `@crossbuy/jobs`（队列名注册表 + 共享连接 + 默认 Job 选项 `attempts:3/指数退避`）+ `apps/worker` 真实 BullMQ Worker（取代 ping 冒烟），首个真 Job = 下单成功邮件（orderCreated）：`enqueueOrderCreated` 经 `bullmq.Queue.add`（jobId=`order-created:{uid}:{sortedIds}` 天然去重）→ worker `processOrderCreated` → `runningIdempotent`（`IdempotencyStore` = `SET key 1 NX PX`，30 天 TTL；渠道失败先 `forget` 再 throw 让 BullMQ 重试）→ `NotifyChannel`（dev 控制台通道）→ 邮件；completed/failed 日志 + SIGTERM/SIGINT 优雅 drain + `waitForRedis` 启动守卫。cache 24 例、worker 5 例（4 单测 + 1 真 BullMQ+Redis 集成）、web smoke 全过。剩余 #16③（两处 SDK 端口：实时价 `GoodsPriceRefreshPort` / 1688 翻译 `SkuTranslationPort`，S34/S35）与 #16② 另三个投递（翻译/商品补全/MNS，仍 no-op 随 #18 SDK 迁移）。★ web `next build` 仍受本机 `.next/trace` EPERM 阻断（编译本身通过、smoke 已验证功能），见血泪坑 #13。
 
 ## 血泪坑（按代价排序）
 1. **ODKU 只适用于「撞键=同一实体重复投递」**：业务属性型唯一键（username）撞键=两个实体，ODKU 会**静默整行覆盖**（实测吞 5 账号、清零 2 笔余额、零报错）⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
@@ -40,6 +40,7 @@
 10. tsx 跑 `.ts` 顶层 await（非 ESM 包）报 `ERR_REQUIRE_ASYNC_MODULE` ⇒ 独立 smoke 用 `.mts`。
 11. **ioredis `enableOfflineQueue:false` + `lazyConnect:true` ⇒ 进程启动后第一个命令必失败**（`Stream isn't writeable`）。要么显式 `waitForRedis()`（已封装在 `@crossbuy/cache`），要么别这么配。分布式锁的释放**必须带 token 比对**（Lua），否则超时后的旧持锁者会删掉新持锁者的锁，互斥被击穿且日志全「正常」。
 12. `turbo run test --force` 会连带重跑 `db#generate`，本机撞 **EPERM 重命名 `query_engine-windows.dll.node`**（文件被占用）⇒ 要未缓存的测试结果就进各包直接 `pnpm exec vitest run`。mzk 构建偶发 `EPERM symlink`（standalone 拷贝）**重跑即过**，别当代码问题查。
+13. **web `next build` 受本机 `.next/trace` EPERM 阻断**（Windows 实时防护锁文件，连 `dangerouslyDisableSandbox:true` 仍 EPERM，证明是文件锁非沙箱）。编译本身正常通过（4.5s，仅 bullmq `@valkey/valkey-glide` 可选依赖的无害警告），但 `flushAllTraces` 在 standalone 拷贝**之前**刷 trace 文件会崩，导致 standalone 产物不出。验证编译的办法：① `pnpm --filter @crossbuy/web smoke` 全断言通过即证明功能正确；② 把 `next.config.ts` 的 `output` 临时改掉构建一次再还原。**这是环境问题不是代码缺陷**，根治需把 `.next` 排除出杀软实时扫描、或在无锁的机器上构建。
 
 ## 工具链红线
 - ★ **Prisma 产物 `src/generated/**` 在源码树**，turbo 缓存命中会跳过生成却仍报成功 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json` 让 db 的 build/typecheck 都 `dependsOn:["^build","generate"]`；db 在最上游 ⇒ **build 过 ≠ typecheck 过**）；db 的 build 脚本内不再调 generate，保留 `prebuild`/`pretypecheck` 给直接 pnpm 调用兜底（turbo 不触发生命周期钩子）。
