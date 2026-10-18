@@ -17,8 +17,8 @@
 - MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
 
 ## 进度指针（2026-10-18；细节写当日日志，勿改此段）
-- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②+/17/#11f 均已收口（详见 2026-10-18 日志）。
-- **下一步**：① **1688 详情 SDK 迁移（#18 半阻塞，优先）**→ 解 chrome `trade_type=1`；② #16③ 两处 SDK 端口（S34 实时价 / S35 规格翻译）；③ M1 双跑 diff（staging）；④ git push（**30 提交待推，用户手动**）。
+- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②/#17/#11f/**1688 详情 SDK 迁移（#18 半阻塞解除）** 均已收口（详见 2026-10-18 日志）。
+- **下一步**：① #18 剩余四块（③1688 建单随后台采购面；④ 淘宝全球购改单需 taobao SDK，S35 同依赖）；② #16③ 两处 SDK 端口（S34 实时价 / S35 规格翻译，等 taobao SDK）；③ M1 双跑 diff（staging）；④ git push（**30+ 提交待推，用户手动**）。
 
 ## 血泪坑（浓缩；原文全在 2026-10-15~18 日志）
 1. ODKU 只适用「撞键=同一实体」；业务属性唯一键（username）撞键=两实体 ⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。
@@ -30,6 +30,7 @@
 7. **prettier 会把 md 裸文成对单星号改 `_` 且 format:check 查不出** ⇒ glob 星号一律进 code span；守卫 `scripts/check-md-stars.mjs` 已上线（CI 第 7 步）。
 8. Windows mysql CLI 默认 gbk ⇒ 跑含 CJK 的 SQL（0016/0017/0018）**必须** `--default-character-set=utf8mb4`。本机 `crossbuy_t1v` 演练库常驻（994,279 分录态），改 finance SQL 直接重跑 0017→0018 验证（ODKU 幂等自愈）。
 9. 无本机符号链接权限 ⇒ standalone 构建死在 symlink 属环境；tsx 跑顶层 await `.ts` 报 `ERR_REQUIRE_ASYNC_MODULE` ⇒ smoke 用 `.mts`。
+10. **web smoke 后台跑会「假卡死」**：smoke 脚本派生的 `next start` **不被回收**，主体早已结束但孤儿 server 占着 stdout 管道 ⇒ `... | tail` 永远等不到 EOF（表象：数十分钟无输出）。修法：PowerShell `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` 找 `next start` PID 杀掉即 flush 出真实结果。
 
 ## 工具链红线
 - Prisma 产物 `src/generated/**` 在源码树 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json`）；**db build 过 ≠ typecheck 过**。
