@@ -20,6 +20,7 @@
     "@crossbuy/domain-admin": "workspace:*",
     "@crossbuy/domain-member": "workspace:*",
     "@crossbuy/domain-order": "workspace:*",
+    "@crossbuy/domain-purchase": "workspace:*",
     "@crossbuy/domain-send-order": "workspace:*",
     "@crossbuy/utils": "workspace:*",
     "@fastify/swagger": "^9.9.2",

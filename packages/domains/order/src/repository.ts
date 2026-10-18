@@ -1113,6 +1113,26 @@ export class OrderRepository {
     await db.dg_order.updateMany({ where: { oid: { in: oids } }, data });
   }
 
+  /**
+   * 旧 `PlatformSubAccount::getAlibabaSdkByTradeId` 的前置查询（OrderAutoCreated::…）
+   * —— `v2_order_auto_created` 属主 = **order** 域（docs/plans/07 §四 high），
+   *   order 域提供读法，purchase 域的 1688 SDK 选组经**端口**消费（域间禁横向 import）。
+   * 1:1 细节：
+   * - `platform_trade_id` 强转字符串（旧 (string) 强转防大数值全表扫——列是 VarChar(50)）
+   * - `type = TYPE_1688(1)`、`platform_sub_account_id > 0`、`.first()`（无 orderBy，天然序）
+   */
+  async findAutoCreatedSubAccountId(tradeId: string): Promise<number | null> {
+    const row = await legacyPrisma.v2_order_auto_created.findFirst({
+      where: {
+        platform_trade_id: String(tradeId),
+        type: 1,
+        platform_sub_account_id: { gt: 0 },
+      },
+      select: { platform_sub_account_id: true },
+    });
+    return row?.platform_sub_account_id ?? null;
+  }
+
   /** 单行更新（金额承载单）——旧 `Order::updateOrder($oid, $data)` 的落库部分 */
   async updateOrderForChrome(
     db: Db,

@@ -151,9 +151,14 @@ export default tseslint.config(
     files: ['apps/**/*.{ts,tsx,js,jsx}', 'packages/ui/**/*.{ts,tsx,js,jsx}'],
     ...reactHooks.configs['recommended-latest'],
   },
-  // next core-web-vitals：仅 Next app（packages/ui 无 next 运行时；api/worker 是 Node）
+  // next core-web-vitals：仅 Next app（web/mzk/admin；api 是 Fastify、worker 是 Node、
+  // packages/ui 无 next 运行时——它们不该被 next 规则扫，故不写 apps/*/**）
   {
-    files: ['apps/*/**/*.{ts,tsx,js,jsx}'],
+    files: [
+      'apps/web/**/*.{ts,tsx,js,jsx}',
+      'apps/mzk/**/*.{ts,tsx,js,jsx}',
+      'apps/admin/**/*.{ts,tsx,js,jsx}',
+    ],
     ...nextPlugin.flatConfig.coreWebVitals,
   },
 );

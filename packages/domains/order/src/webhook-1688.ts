@@ -9,7 +9,10 @@ import type { Db } from './repository';
  */
 export interface AlibabaOrderClient {
   /** 拉取 1688 订单详情（旧 TradeInfoGetRequest；失败 = null，由调用方 markFailed(retryable)） */
-  getOrderDetail(tid: string): Promise<Record<string, unknown> | null>;
+  getOrderDetail(tid: string): Promise<{
+    baseInfo: Record<string, unknown>;
+    productItems: unknown[];
+  } | null>;
 }
 
 /** 事件处理结果（service 层；HTTP 状态码映射在 apps/api 路由） */

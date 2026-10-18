@@ -9,8 +9,14 @@ import {
   type AlibabaOrderClient,
   type AlibabaOrderDetailPort,
   type OauthUserPort,
+  type PlatformProductItem,
   type SendOrderPort,
 } from '@crossbuy/domain-order';
+import {
+  AlibabaAccessServiceImpl,
+  AlibabaSdkClient,
+  PurchaseRepository,
+} from '@crossbuy/domain-purchase';
 import {
   InMemoryLoginRateLimiter,
   Md5PasswordVerifier,
@@ -28,15 +34,56 @@ import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send
 /**
  * apps/api 组合根（webhook 面）：域实现在这里接线，路由只拿接口。
  *
- * ⚠ AlibabaOrderClient R1 现状：真实 1688 SDK（签名协议）迁移未完成——默认实现
- * 返回 null（getOrderDetail failed → 503 retryable），即「SDK 不可用 → 上游重试」
- * 的正确语义；SDK 迁移后替换本实现（S24/TODO 登记）。快照/状态推进/信封语义已 1:1。
+ * ★ AlibabaOrderClient/AlibabaOrderDetailPort（S24/S48 收口，2026-10-18）：
+ * 真实 1688 SDK（旧 Libraries\Alibaba.php 签名协议）已迁移至 `@crossbuy/domain-purchase`
+ * （`AlibabaSdkClient` + `AlibabaAccessServiceImpl`）。凭证走 env
+ * （`ALIBABA_FENXIAO_{APPID,APPKEY,TOKEN,_HK_*,_FRS_TOKEN}`，值不落代码/文档）；
+ * 订单→子账号选组经 order 域 `findAutoCreatedSubAccountId` + purchase 域
+ * `v2_platform_sub_account` 两级查表（属主各异，端口拼装在此）。env 未配置 ⇒ SDK
+ * 实现按旧 !isSuccess 分支落 40000/失败信封（webhook 面 = 503 retryable 语义正确）。
  */
 
-/** R1 占位客户端：SDK 迁移前恒失败（503 retryable 语义正确） */
-const notImplementedAlibabaClient: AlibabaOrderClient = {
-  async getOrderDetail() {
-    return null;
+/**
+ * chrome/webhook-1688 共用的 1688 详情接入（旧 `resolveAlibabaSdkByTradeId` +
+ * `Alibaba::getOrderDetail` 合体）。
+ *
+ * ⚠ 两个端口形状的差别只在外层信封：
+ * - chrome 的 `AlibabaOrderDetailPort`：成功 ⇒ {baseInfo, productItems}；失败 null（旧 !isSuccess）
+ * - webhook 的 `AlibabaOrderClient`：成功 ⇒ 原始 detail（亦含 baseInfo/productItems，S24 快照消费）；失败 null
+ *   同一 SDK 结果（`AlibabaSdkResult`）映射到两种形状——信封 `resp`（失败细节）在两个端口的
+ *   呼叫方语义里都不发往上游，丢弃（旧 markFailed 里 $result 进日志，R1 组合根留原样）。
+ */
+let alibabaAccess: AlibabaAccessServiceImpl | null = null;
+
+function getAlibabaAccess(): AlibabaAccessServiceImpl {
+  alibabaAccess ??= (() => {
+    const purchaseRepo = new PurchaseRepository();
+    const orderRepo = new OrderRepository(); // 只用 findAutoCreatedSubAccountId（order 属主表）
+    return new AlibabaAccessServiceImpl(
+      {
+        findAutoCreatedSubAccountId: (tradeId) => orderRepo.findAutoCreatedSubAccountId(tradeId),
+        findSubAccountById: (id) => purchaseRepo.findSubAccountById(id),
+        findSubAccountByUsername: (username) => purchaseRepo.findSubAccountByUsername(username),
+        upsertSubAccountToken: (username, accessToken) =>
+          purchaseRepo.upsertSubAccountToken(username, accessToken, new Date()),
+        envGet: (key) => process.env[key],
+      },
+      new AlibabaSdkClient(),
+    );
+  })();
+  return alibabaAccess;
+}
+
+/** webhook-1688 的详情客户端（旧 `$sdk->getOrderDetail($tid)`→`$orderDataFromApi['data']`） */
+const alibabaOrderClient: AlibabaOrderClient = {
+  async getOrderDetail(tid) {
+    const res = await getAlibabaAccess().getOrderDetail(tid);
+    if (res.code !== 200) return null;
+    // 相应快照消费方（platform-snapshot / webhook 判空）各自兜宽形态 ⇒ 组合根归一
+    return {
+      baseInfo: (res.data.baseInfo ?? {}) as Record<string, unknown>,
+      productItems: (res.data.productItems ?? []) as unknown[],
+    };
   },
 };
 
@@ -48,7 +95,7 @@ export function getWebhook1688Service(): Webhook1688Service {
     const repo = new OrderRepository();
     return new Webhook1688Service({
       db: repo.db,
-      alibaba: notImplementedAlibabaClient,
+      alibaba: alibabaOrderClient,
       recordSnapshot: record1688Snapshot,
       update1688PaidOrders: (db, tid, payTimeSec, nowSec) =>
         repo.update1688PaidOrders(db, tid, payTimeSec, nowSec),
@@ -125,10 +172,16 @@ export interface RiskLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
 }
 
-/** chrome 回传的 1688 详情端口：SDK 未迁移 → 恒 null（= 旧 !isSuccess 分支，S48） */
-const notImplementedChromeAlibaba: AlibabaOrderDetailPort = {
-  async getOrderDetail() {
-    return null;
+/** chrome 回传的 1688 详情端口：真实 SDK（S48 收口；fetch 失败/env 缺失 = null ⇒ 旧 !isSuccess 分支） */
+const chromeAlibabaOrderDetailPort: AlibabaOrderDetailPort = {
+  async getOrderDetail(tradeId) {
+    const res = await getAlibabaAccess().getOrderDetail(tradeId);
+    if (res.code !== 200) return null;
+    // PlatformProductItem = 宽形态（[key: string]: unknown 吸收平台漂移键）⇒ 兼容
+    return {
+      baseInfo: (res.data.baseInfo ?? {}) as Record<string, unknown>,
+      productItems: (res.data.productItems ?? []) as PlatformProductItem[],
+    };
   },
 };
 
@@ -148,7 +201,7 @@ export function getChromeService(log: RiskLogger): ChromeService {
     const repo = new OrderRepository();
     return new ChromeService({
       repository: repo,
-      alibaba: notImplementedChromeAlibaba,
+      alibaba: chromeAlibabaOrderDetailPort,
       recordSnapshot: async (tid, detail, stage) => {
         await record1688Snapshot(
           repo.db,

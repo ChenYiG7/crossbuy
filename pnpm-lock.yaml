@@ -228,6 +228,9 @@ importers:
       '@crossbuy/domain-order':
         specifier: workspace:*
         version: link:../../packages/domains/order
+      '@crossbuy/domain-purchase':
+        specifier: workspace:*
+        version: link:../../packages/domains/purchase
       '@crossbuy/domain-send-order':
         specifier: workspace:*
         version: link:../../packages/domains/send-order

@@ -166,6 +166,72 @@ export class PurchaseRepository {
       select: { id: true, title: true, nickname: true },
     });
   }
+
+  // -----------------------------------------------------------------------
+  // 1688 SDK：子账号池（旧 PlatformSubAccount 读面）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 旧 `PlatformSubAccount::getInitParamByMemberId`：按 member_id 查子账号行（取 token）。
+   * `v2_platform_sub_account.type` 判别值 = 'alibaba'（旧 TYPE_ALIBABA）。
+   */
+  async findSubAccountByMemberId(
+    memberId: string,
+  ): Promise<{ id: number; username: string; token: string | null } | null> {
+    return this.db.v2_platform_sub_account.findFirst({
+      where: { member_id: memberId, type: 'alibaba', deleted_at: null },
+      select: { id: true, username: true, token: true },
+    });
+  }
+
+  /** 旧 `PlatformSubAccount::find($id)`（getAlibabaSdkByTradeId 的二级查询；软删行 = 查不到） */
+  async findSubAccountById(
+    id: number,
+  ): Promise<{ username: string; member_id: string; token: string | null } | null> {
+    return this.db.v2_platform_sub_account.findFirst({
+      where: { id, type: 'alibaba', deleted_at: null },
+      select: { username: true, member_id: true, token: true },
+    });
+  }
+
+  /**
+   * 旧 `PlatformSubAccount::getInitParamBySubAccount` 的 username 面（查行给 env 选组用）。
+   */
+  async findSubAccountByUsername(
+    username: string,
+  ): Promise<{ id: number; username: string; token: string | null } | null> {
+    return this.db.v2_platform_sub_account.findFirst({
+      where: { username, type: 'alibaba', deleted_at: null },
+      select: { id: true, username: true, token: true },
+    });
+  }
+
+  /**
+   * 旧 `PlatformSubAccount::updateOrCreate(['username'=>$account,'type'=>TYPE_ALIBABA],
+   *   ['token'=>['accessToken'=>$token]])`。
+   * ⚠ 旧 updateOrCreate 唯一键 = (username, type)——**表上并无该唯一索引**，先查后插在并发
+   *   下会插重复行；1:1 保留该行为语义（本实现 = 先查再 update/或报错，不静默覆盖）。
+   *   upsert 不允许新建行：appid/member_id 为 NOT NULL 无默认，凭 username 无法合法 INSERT。
+   */
+  async upsertSubAccountToken(username: string, accessToken: string, now: Date): Promise<void> {
+    const tokenJson = JSON.stringify({ accessToken });
+    const existing = await this.db.v2_platform_sub_account.findFirst({
+      where: { username, type: 'alibaba', deleted_at: null },
+      select: { id: true },
+    });
+    if (existing) {
+      await this.db.v2_platform_sub_account.updateMany({
+        where: { id: existing.id },
+        data: { token: tokenJson, updated_at: now },
+      });
+      return;
+    }
+    // 无既有行：旧 updateOrCreate 会 INSERT——username/appid/member_id 三列 NOT NULL 无默认，
+    // 旧代码此时必有 appid/member_id 吗？不一定（addSubAccount 兜底路径）——R1 保守：
+    // 缺 appid/member_id 的 INSERT 会撞 DB 非空约束，按旧语义裸 SQL 是 0000 报错同样失败；
+    // 这里抛出明确错误让上层记日志（不静默）。
+    throw new Error(`upsertSubAccountToken: 账号不存在无法新建（username=${username}）`);
+  }
 }
 
 /** 旧 Product::STOCK_STATUS_ON_SALE */
