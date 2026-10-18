@@ -1,4 +1,5 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import type { TtlCache } from '@crossbuy/cache';
 
 /**
  * 1688 开放平台 SDK 客户端（旧 `App\Libraries\Alibaba.php` 的**订单详情/子账号令牌**子集 1:1）。
@@ -29,6 +30,12 @@ import { createHmac } from 'node:crypto';
  *   未命中 → getOauthAccount → 失败再 addSubAccount → `Arr::first($result['data'])['accessToken']`
  *   / `$result['data'][0]['accessToken']` 取 token → updateOrCreate 回表。
  *   ⚠ addSubAccount 兜底已含；createOrder/markMemo 等建单面方法属 TODO(#18)③，不提前实现。
+ * - `getItemDetailFromFenxiaoApi`（Alibaba.php:316-376）：分销商品详情，入参
+ *   `offerDetailParam: {offerId:(int)$itemId, country:'ja'}`；**无 PEMISSION_ERROR 轮换**
+ *   （旧该方法内不换 token）；缓存 = Laravel Cache 1h（key 含 sdkInitParam 的 md5，
+ *   值 = 原始响应体串，仅成功响应落缓存）；SKU 兜底 =
+ *   `EnsureAlibabaProductSkuInfosService::fillIfMissing`（一个品无 productSkuInfos 时
+ *   按商品级数据补默认 SKU，1:1 移植在本文件模块级）。
  *
  * 凭证纪律：appid/appkey/token 一律经入参注入（来源 = env 或账号表，**不落代码不落文档**）。
  */
@@ -60,6 +67,15 @@ export interface AlibabaOrderDetailPayload {
 /** 接口响应里的子账号授权项（旧 `returnValue[]`；accessToken 为所需键） */
 export interface SubAccountAuthItem {
   accessToken?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * 分销商品详情 payload（旧 `$data['result']` 形态：`{result: {...商品字段...}, ...}`；
+ * 键随平台返回漂移，取宽形态——消费方只认 `result.productSkuInfos` 等固定路径）。
+ */
+export interface FenxiaoProductDetail {
+  result?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -329,6 +345,75 @@ export class AlibabaSdkClient {
   }
 
   // -----------------------------------------------------------------------
+  // getItemDetailFromFenxiaoApi（旧 Alibaba.php:316-376 1:1）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 旧 `Alibaba::getItemDetailFromFenxiaoApi($itemId, $extra, $useCache)`。
+   *
+   * API = `com.alibaba.fenxiao.crossborder/product.search.queryProductDetail`，
+   * 入参 `offerDetailParam: {offerId: (int)$itemId, country: 'ja'}`。
+   *
+   * 缓存（旧 Laravel Cache，1:1）：key = `1688-kj-detial-use-fenxiao-api` +
+   * md5(json_encode(sdkInitParam)) + itemId；TTL 1h；**值 = 原始响应体字符串**
+   * （命中后解码走与实时路径完全相同的 decode）。`useCache=false` ⇒ 先 forget 再查
+   * （旧 `Cache::forget` 语义）。仅当**实时**响应解析出非空 `result.result` 时才 put
+   * （旧 `!empty($item)` 条件）——失败响应不落缓存。
+   * ⚠ md5 输入按 PHP json_encode 键序 appid→appkey→token 构造；PHP 默认把 `/` 转义成
+   *   `\/` 而 JS 不转——token 含 `/` 时与旧 key 不一致（后果仅缓存 miss，不影响正确性）。
+   *
+   * SKU 兜底：平台对「一个品」可能不返回 productSkuInfos ⇒ `fillMissingSkuInfos`
+   * （旧 EnsureAlibabaProductSkuInfosService::fillIfMissing）按商品级数据补默认 SKU。
+   *
+   * @param credentials 旧 `new Alibaba()` 默认构造 = 主组 env 三件套；**fenxiao 路径无
+   *   PEMISSION_ERROR 轮换**（旧该方法内不换 token，1:1——与 getOrderDetail 不同）。
+   * @returns 200 = `{result}`（旧 `$data['result']` 整层）；40000 = 旧信封
+   *   （msg = `result.message` ?? '商品可能不存在。'；resp = 解码后的整个响应）。
+   */
+  async getItemDetailFromFenxiaoApi(
+    itemId: string,
+    credentials: AlibabaSdkCredentials,
+    cache?: TtlCache,
+    useCache = true,
+  ): Promise<AlibabaSdkResult<FenxiaoProductDetail>> {
+    if (itemId === '') {
+      return { code: 40000, msg: '商品 id 有误。' };
+    }
+
+    // 旧 (int)$itemId 强转：'123abc' → 123、非数值串 → 0
+    const offerId = Number.parseInt(itemId, 10);
+    const params: Record<string, unknown> = {
+      offerDetailParam: { offerId: Number.isNaN(offerId) ? 0 : offerId, country: 'ja' },
+    };
+
+    const cacheKey = `1688-kj-detial-use-fenxiao-api${fenxiaoCacheKeySalt(credentials)}${itemId}`;
+
+    let respStr: string | null = null;
+    if (cache) {
+      if (!useCache) {
+        await cache.forget(cacheKey); // 旧 Cache::forget
+      } else {
+        respStr = await cache.get(cacheKey);
+      }
+    }
+
+    if (respStr === null || respStr === '') {
+      const raw = await this.execute(
+        'com.alibaba.fenxiao.crossborder/product.search.queryProductDetail',
+        params,
+        credentials,
+      );
+      respStr = raw.original ?? '';
+      // 旧 put 条件：实时响应（execute 信封里的 resp）解析出非空 result.result 且 original 非空
+      if (respStr !== '' && cache && extractFenxiaoItem(raw.resp) !== null) {
+        await cache.put(cacheKey, respStr, FENXIAO_CACHE_TTL_MS);
+      }
+    }
+
+    return decodeFenxiaoDetail(respStr);
+  }
+
+  // -----------------------------------------------------------------------
   // 内部工具
   // -----------------------------------------------------------------------
 
@@ -406,4 +491,210 @@ function firstAccessToken(items: SubAccountAuthItem[]): string | null {
     if (typeof token === 'string' && token !== '') return token;
   }
   return null;
+}
+
+// -------------------------------------------------------------------------
+// 分销详情解码 + SKU 兜底（旧 getItemDetailFromFenxiaoApi 尾段 +
+// EnsureAlibabaProductSkuInfosService 的 1:1 移植）
+// -------------------------------------------------------------------------
+
+/** 旧 `Cache::put($cacheKey, $value, 60 * 60)` */
+const FENXIAO_CACHE_TTL_MS = 60 * 60 * 1000;
+
+/** 旧 `md5(json_encode($this->sdkInitParam))`（键序 appid→appkey→token，1:1） */
+function fenxiaoCacheKeySalt(credentials: AlibabaSdkCredentials): string {
+  const json = JSON.stringify({
+    appid: credentials.appid,
+    appkey: credentials.appkey,
+    token: credentials.token,
+  });
+  return createHash('md5').update(json).digest('hex');
+}
+
+/** 旧 `Arr::get($data, 'result.result')`（!empty 判定；实时 put 缓存的条件） */
+function extractFenxiaoItem(resp: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (resp === null || typeof resp !== 'object') return null;
+  const result = resp['result'];
+  if (result === null || typeof result !== 'object' || Array.isArray(result)) return null;
+  const item = (result as Record<string, unknown>)['result'];
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return null;
+  if (Object.keys(item as object).length === 0) return null; // PHP !empty({}) = false
+  return item as Record<string, unknown>;
+}
+
+/**
+ * 旧尾段：json_decode 原始响应 → `result.result` → fillIfMissing → 信封。
+ * 缓存命中与实时响应**共用**本解码（旧代码两条路径汇合到同一段，1:1）。
+ */
+function decodeFenxiaoDetail(respStr: string): AlibabaSdkResult<FenxiaoProductDetail> {
+  let data: Record<string, unknown> | null = null;
+  if (respStr !== '') {
+    try {
+      const parsed: unknown = JSON.parse(respStr);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        data = parsed as Record<string, unknown>;
+      }
+    } catch {
+      data = null; // 旧 json_decode 失败 → null 同义
+    }
+  }
+
+  const result = data !== null ? data['result'] : null;
+  const resultObj =
+    result !== null && typeof result === 'object' && !Array.isArray(result)
+      ? (result as Record<string, unknown>)
+      : null;
+  const item = resultObj !== null ? resultObj['result'] : null;
+
+  // 旧 `!empty($item) && is_array($item)`：空对象不算（PHP !empty({}) = false）
+  if (
+    item !== null &&
+    typeof item === 'object' &&
+    !Array.isArray(item) &&
+    Object.keys(item as object).length > 0
+  ) {
+    const filled = fillMissingSkuInfos(item as Record<string, unknown>);
+    // 旧 `$data['result']['result'] = $item; return ['code'=>200,'data'=>$data['result']]`
+    // ⇒ result 层其余键（若有）原样带回
+    return { code: 200, data: { ...(resultObj ?? {}), result: filled } };
+  }
+
+  const message = resultObj !== null ? resultObj['message'] : null;
+  return {
+    code: 40000,
+    msg: message === null || message === undefined ? '商品可能不存在。' : String(message),
+    resp: data ?? undefined,
+  };
+}
+
+const DEFAULT_ATTRIBUTE_ID = 0;
+const DEFAULT_ATTRIBUTE_NAME = '规格';
+const DEFAULT_ATTRIBUTE_NAME_TRANS = '規格';
+const DEFAULT_ATTRIBUTE_VALUE = '默认';
+const DEFAULT_ATTRIBUTE_VALUE_TRANS = 'デフォルト';
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+/** 旧 `(string)` 强转（null/undefined → ''；不追求 PHP 的 array→'Array' 边角） */
+function strOf(value: unknown): string {
+  return value === null || value === undefined ? '' : String(value);
+}
+
+/** 旧 PHP 8 `== 0` 松比较：0 / '0' / '' / null / false / '0.00' 都算零（'abc' 在 PHP 8 不算） */
+function isLooseZero(value: unknown): boolean {
+  if (value === null || value === undefined || value === '') return true;
+  if (typeof value === 'boolean') return value === false;
+  const n = Number(value);
+  return !Number.isNaN(n) && n === 0;
+}
+
+/**
+ * 旧 `EnsureAlibabaProductSkuInfosService::fillIfMissing`：分销详情对「一个品」可能
+ * 不返回 productSkuInfos ⇒ 按商品级数据（saleInfo/fenxiao/image/cargoNumber）补一条
+ * 默认 SKU（skuId = offerId，规格 = productAttribute 首项或「規格:デフォルト」）。
+ */
+export function fillMissingSkuInfos(product: Record<string, unknown>): Record<string, unknown> {
+  const skuInfos = product['productSkuInfos'];
+  if (Array.isArray(skuInfos) && skuInfos.length > 0) return product;
+  return { ...product, productSkuInfos: [buildDefaultSku(product)] };
+}
+
+function buildDefaultSku(product: Record<string, unknown>): Record<string, unknown> {
+  const saleInfo = asRecord(product['productSaleInfo']);
+  const fenxiao = asRecord(saleInfo['fenxiaoSaleInfo']);
+  const images = asArray(asRecord(product['productImage'])['images']);
+  const imageUrl = strOf(images[0]);
+  const price = resolveWholesalePrice(saleInfo, fenxiao);
+  const cargoNumber = strOf(product['productCargoNumber']);
+
+  const sku: Record<string, unknown> = {
+    skuId: product['offerId'] ?? '',
+    amountOnSale: saleInfo['amountOnSale'] ?? 0,
+    price,
+    consignPrice: saleInfo['consignPrice'] ?? price,
+    cargoNumber,
+    skuAttributes: resolveSkuAttributes(product, imageUrl),
+  };
+
+  const retailPrice = saleInfo['retailPrice'];
+  if (retailPrice !== null && retailPrice !== undefined && retailPrice !== '') {
+    sku['retailPrice'] = retailPrice;
+  }
+  const promotionPrice = saleInfo['promotionPrice'];
+  if (promotionPrice !== null && promotionPrice !== undefined && promotionPrice !== '') {
+    sku['promotionPrice'] = promotionPrice;
+  }
+
+  const fenxiaoPriceInfo: Record<string, unknown> = { offerPrice: fenxiao['offerPrice'] ?? price };
+  const onePiecePrice = fenxiao['onePiecePrice'];
+  if (onePiecePrice !== null && onePiecePrice !== undefined && onePiecePrice !== '') {
+    fenxiaoPriceInfo['onePiecePrice'] = onePiecePrice;
+  }
+  sku['fenxiaoPriceInfo'] = fenxiaoPriceInfo;
+  if (Object.keys(fenxiao).length > 0) {
+    sku['fenxiaoSaleInfo'] = fenxiao;
+  }
+
+  return sku;
+}
+
+/** 旧 resolveWholesalePrice：price → consignPrice → fenxiao.offerPrice → priceRangeList[0].price */
+function resolveWholesalePrice(
+  saleInfo: Record<string, unknown>,
+  fenxiao: Record<string, unknown>,
+): unknown {
+  let price: unknown = saleInfo['price'] ?? 0;
+  if (isLooseZero(price)) price = saleInfo['consignPrice'] ?? 0;
+  if (isLooseZero(price)) price = fenxiao['offerPrice'] ?? 0;
+  if (isLooseZero(price)) {
+    const ranges = asArray(saleInfo['priceRangeList']);
+    price = asRecord(ranges[0])['price'] ?? 0;
+  }
+  return price;
+}
+
+/** 旧 resolveSkuAttributes：productAttribute 首条完整属性 → 单元素数组；否则默认規格 */
+function resolveSkuAttributes(
+  product: Record<string, unknown>,
+  imageUrl: string,
+): Array<Record<string, unknown>> {
+  const attributes = asArray(product['productAttribute']);
+  for (const attr of attributes) {
+    const row = asRecord(attr);
+    const name = strOf(row['attributeName']).trim();
+    const value = strOf(row['value']).trim();
+    if (name === '' || value === '') continue;
+
+    const nameTrans = strOf(row['attributeNameTrans']).trim();
+    const valueTrans = strOf(row['valueTrans']).trim();
+    return [
+      {
+        attributeId: row['attributeId'] ?? DEFAULT_ATTRIBUTE_ID,
+        attributeName: name,
+        attributeNameTrans: nameTrans !== '' ? nameTrans : name,
+        value,
+        valueTrans: valueTrans !== '' ? valueTrans : value,
+        skuImageUrl: imageUrl,
+      },
+    ];
+  }
+
+  return [
+    {
+      attributeId: DEFAULT_ATTRIBUTE_ID,
+      attributeName: DEFAULT_ATTRIBUTE_NAME,
+      attributeNameTrans: DEFAULT_ATTRIBUTE_NAME_TRANS,
+      value: DEFAULT_ATTRIBUTE_VALUE,
+      valueTrans: DEFAULT_ATTRIBUTE_VALUE_TRANS,
+      skuImageUrl: imageUrl,
+    },
+  ];
 }

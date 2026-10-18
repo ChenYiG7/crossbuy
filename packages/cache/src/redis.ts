@@ -4,6 +4,7 @@ import type {
   CooldownStore,
   DistributedLock,
   IdempotencyStore,
+  TtlCache,
   WithLockOptions,
   WithLockResult,
 } from './types';
@@ -152,6 +153,24 @@ export function createRedisIdempotency(redis: Redis): IdempotencyStore {
     async has(key) {
       await waitForRedis(redis);
       return (await redis.exists(key)) === 1;
+    },
+    async forget(key) {
+      await waitForRedis(redis);
+      await redis.del(key);
+    },
+  };
+}
+
+/** Redis TTL 缓存（GET / SET PX / DEL；旧 Laravel Cache 三件套的等价面） */
+export function createRedisTtlCache(redis: Redis): TtlCache {
+  return {
+    async get(key) {
+      await waitForRedis(redis);
+      return await redis.get(key);
+    },
+    async put(key, value, ttlMs) {
+      await waitForRedis(redis);
+      await redis.set(key, value, 'PX', ttlMs);
     },
     async forget(key) {
       await waitForRedis(redis);

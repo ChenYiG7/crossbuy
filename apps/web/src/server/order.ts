@@ -1,11 +1,14 @@
 import {
   createInMemoryCooldown,
   createInMemoryLock,
+  createInMemoryTtlCache,
   createRedis,
   createRedisCooldown,
   createRedisLock,
+  createRedisTtlCache,
   type CooldownStore,
   type DistributedLock,
+  type TtlCache,
 } from '@crossbuy/cache';
 import { Queue } from 'bullmq';
 import { createConnection, DEFAULT_JOB_OPTIONS, QUEUES } from '@crossbuy/jobs';
@@ -39,8 +42,10 @@ import {
 } from '@crossbuy/domain-order';
 import { FinanceServiceImpl, FinanceRepository } from '@crossbuy/domain-finance';
 import {
+  AlibabaAccessServiceImpl,
   PurchaseRepository,
   SupplierCatalogServiceImpl,
+  type AlibabaAccessService,
   type CatalogLockPort,
   type SupplierCatalogService,
 } from '@crossbuy/domain-purchase';
@@ -346,6 +351,121 @@ function getOrderCreatedQueue(): Queue | null {
   return orderCreatedQueue;
 }
 
+// ---------------------------------------------------------------------------
+// 1688 SDK 接入（purchase 域）： fenxiao 分销详情缓存 + 规格翻译端口（S35 收口）
+// ---------------------------------------------------------------------------
+
+/**
+ * 分销详情 TTL 缓存（旧 Laravel `Cache` 1h，依托 @crossbuy/cache）。
+ * 与闸门同一 REDIS_URL；无配置退内存 + WARNING（ degradation 只降命中率，不涉正确性，
+ * 与闸门的 fail-closed 不同——但同样绝不静默）。
+ */
+let fenxiaoCacheResolved: TtlCache | null = null;
+function resolveFenxiaoCache(): TtlCache {
+  if (fenxiaoCacheResolved) return fenxiaoCacheResolved;
+  const redis = resolveRedis();
+  if (redis) {
+    fenxiaoCacheResolved = createRedisTtlCache(redis);
+    return fenxiaoCacheResolved;
+  }
+  console.warn(
+    '[order] REDIS_URL 未配置 → 1688 分销详情缓存退化为**进程内**实现（多实例各算各的命中率，不影响正确性）',
+  );
+  fenxiaoCacheResolved = createInMemoryTtlCache();
+  return fenxiaoCacheResolved;
+}
+
+/**
+ * purchase 域 1688 接入面单例（stateless，仅持依赖）。
+ * 凭证链：主组 env（fenxiao 详情恒主组、无轮换）→ findAutoCreatedSubAccountId 端口给
+ * 订单面（getOrderDetail）用；本组合根里 web 只消费 fenxiao 详情（规格翻译）。
+ */
+let alibabaAccessService: AlibabaAccessService | null = null;
+function getAlibabaAccess(): AlibabaAccessService {
+  alibabaAccessService ??= (() => {
+    const purchaseRepo = new PurchaseRepository();
+    const orderRepo = new OrderRepository(); // 只用 findAutoCreatedSubAccountId（order 属主表）
+    return new AlibabaAccessServiceImpl({
+      findAutoCreatedSubAccountId: (tradeId) => orderRepo.findAutoCreatedSubAccountId(tradeId),
+      findSubAccountById: (id) => purchaseRepo.findSubAccountById(id),
+      findSubAccountByUsername: (username) => purchaseRepo.findSubAccountByUsername(username),
+      upsertSubAccountToken: (username, accessToken) =>
+        purchaseRepo.upsertSubAccountToken(username, accessToken, new Date()),
+      envGet: (key) => process.env[key],
+      fenxiaoCache: resolveFenxiaoCache(),
+    });
+  })();
+  return alibabaAccessService;
+}
+
+/** 旧 PHP `empty()`：'' / '0' / 0 / null / false 都算空（CreateOrderFromCartService:443 同义） */
+function phpEmpty(value: unknown): boolean {
+  if (value === null || value === undefined || value === false) return true;
+  return value === '' || value === '0' || value === 0;
+}
+
+/**
+ * 规格翻译端口实现（旧 `CreateOrderFromCartService::getAlibabaSkuAttributes` 1:1）：
+ * fenxiao 分销详情 → `productSkuInfos` 匹配 skuId → 其 `skuAttributes` → `[{name,value}]`。
+ *
+ * - memo（旧 `$this->propTranslationMaps`）：key = `goodsId:skuId`，失败/未命中都记
+ *   `[]`，同一请求不重复打网关。★ 旧 memo 每请求重建故无上限；本类是单例 ⇒ 加
+ *   1000 条上限清空兜底（防长生命周期累积，语义只影响命中率不影响正确性）。
+ * - 空 skuId ⇒ 直接 `[]` 不发请求（旧同）；网关失败/凭证缺失 ⇒ `[]`（旧 catch 同）。
+ * - name/value 用旧 `empty()` 判跳过（'0' 也算空——1:1 不修）。
+ */
+class FenxiaoSkuTranslationPort implements SkuTranslationPort {
+  private readonly memo = new Map<string, Array<{ name: string; value: string }>>();
+  private static readonly MEMO_LIMIT = 1000;
+
+  constructor(private readonly access: AlibabaAccessService) {}
+
+  async attributesFor(
+    goodsId: string,
+    skuId: string,
+  ): Promise<Array<{ name: string; value: string }> | null> {
+    const memoKey = `${goodsId}:${skuId}`;
+    const cached = this.memo.get(memoKey);
+    if (cached !== undefined) return cached;
+    if (this.memo.size >= FenxiaoSkuTranslationPort.MEMO_LIMIT) this.memo.clear();
+
+    const props: Array<{ name: string; value: string }> = [];
+    if (skuId !== '') {
+      const res = await this.access.getFenxiaoDetail(goodsId);
+      if (res.code === 200) {
+        const skuInfos = res.data.result?.['productSkuInfos'];
+        if (Array.isArray(skuInfos)) {
+          for (const skuInfo of skuInfos) {
+            const row =
+              skuInfo !== null && typeof skuInfo === 'object'
+                ? (skuInfo as Record<string, unknown>)
+                : null;
+            if (row === null) continue;
+            if (String(row['skuId'] ?? '') !== skuId) continue; // 旧 (string) 强转比对
+            const attributes = row['skuAttributes'];
+            if (Array.isArray(attributes)) {
+              for (const attr of attributes) {
+                const a =
+                  attr !== null && typeof attr === 'object'
+                    ? (attr as Record<string, unknown>)
+                    : null;
+                if (a === null) continue;
+                const name = a['attributeName'];
+                const value = a['value'];
+                if (phpEmpty(name) || phpEmpty(value)) continue;
+                props.push({ name: String(name), value: String(value) });
+              }
+            }
+            break; // 旧命中 skuId 即 break（无 attributes 也断，不再找同名 SKU）
+          }
+        }
+      }
+    }
+    this.memo.set(memoKey, props);
+    return props;
+  }
+}
+
 let placeOrderService: PlaceOrderService | null = null;
 
 export function getPlaceOrderService(): PlaceOrderService {
@@ -353,8 +473,10 @@ export function getPlaceOrderService(): PlaceOrderService {
     const repository = new OrderRepository();
     // 实时价刷新：R1 SDK（淘宝/1688 商品详情）未迁移 → no-op（S34 登记）
     const goodsPriceRefreshPort: GoodsPriceRefreshPort = { refresh: async () => undefined };
-    // 规格翻译：R1 SDK 未迁移 → 恒 null（= 旧「获取失败」分支，跳过归一化不阻断下单）
-    const skuTranslationPort: SkuTranslationPort = { attributesFor: async () => null };
+    // 规格翻译：fenxiao 分销详情 SDK 已接线（S35 收口，2026-10-18）；失败 ⇒ []（旧分支）
+    const skuTranslationPort: SkuTranslationPort = new FenxiaoSkuTranslationPort(
+      getAlibabaAccess(),
+    );
     // 权益：benefit 域 R1 未迁移 → 恒 null / no-op（S35 登记）
     const benefitPort: PlaceOrderBenefitPort = {
       previewFeeDeduct: async () => null,

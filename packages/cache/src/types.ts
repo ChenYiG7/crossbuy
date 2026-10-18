@@ -63,3 +63,17 @@ export interface IdempotencyStore {
   /** 主动清除（测试隔离 / 手动补救） */
   forget(key: string): Promise<void>;
 }
+
+/**
+ * 通用 TTL 缓存（旧 Laravel `Cache::get/put/forget` 的最小子集，值 = 字符串）。
+ *
+ * 与 CooldownStore 的区别：冷却只存「做过没有」的标记，这里存**内容**（如 1688 分销
+ * 详情的原始响应体）。`get` 未命中 / 已过期返回 `null`；`put` 的 ttlMs 到期自动失效。
+ *
+ * ⚠ 多实例部署要共享缓存（命中率）必须用 Redis 实现；内存实现只在单实例/本地开发用。
+ */
+export interface TtlCache {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string, ttlMs: number): Promise<void>;
+  forget(key: string): Promise<void>;
+}

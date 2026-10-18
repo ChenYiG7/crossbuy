@@ -50,7 +50,9 @@ export interface GoodsPriceRefreshPort {
 
 /**
  * 1688 规格翻译（旧 Alibaba::getItemDetailFromFenxiaoApi 的 skuAttributes）。
- * R1 SDK 未迁移 → 恒 null（= 旧「获取失败」分支，跳过归一化，不阻断下单）。
+ * 组合根实现 = FenxiaoSkuTranslationPort（fenxiao 分销详情 → productSkuInfos 匹配
+ * skuId → [{name,value}]）；失败 ⇒ [] / 未命中 ⇒ []（旧 getAlibabaSkuAttributes
+ * catch 分支，跳过归一化不阻断下单）。
  */
 export interface SkuTranslationPort {
   attributesFor(

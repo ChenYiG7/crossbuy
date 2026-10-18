@@ -689,6 +689,9 @@ importers:
       '@crossbuy/auth':
         specifier: workspace:*
         version: link:../../auth
+      '@crossbuy/cache':
+        specifier: workspace:*
+        version: link:../../cache
       '@crossbuy/contract':
         specifier: workspace:*
         version: link:../../contract

@@ -1,7 +1,9 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { createInMemoryTtlCache } from '@crossbuy/cache';
 import {
   AlibabaSdkClient,
+  fillMissingSkuInfos,
   type AlibabaHttpPort,
   type AlibabaSdkCredentials,
 } from '../src/alibaba-sdk';
@@ -12,6 +14,8 @@ import {
  *   ② execute：数组 json_encode、null 剔除、网络失败 → 超时信封
  *   ③ getOrderDetail：result 提取（PHP !empty 口径）、PEMISSION_ERROR 单跳轮换、
  *      非权限错不轮换、msg 拼接、空凭证链直落信封
+ *   ④ getItemDetailFromFenxiaoApi：请求形态（offerId int 强转）、信封、SKU 兜底
+ *      （fillMissingSkuInfos）、1h 缓存（命中/不落失败/useCache=false/凭证分 key）
  */
 
 /** 固定时钟（毫秒恒定，签名可重算比对） */
@@ -330,5 +334,259 @@ describe('getOauthTokenByAccount（旧 Alibaba.php:1601 1:1）', () => {
     );
     expect(res.code).toBe(40000);
     expect(res.msg).toBe('b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getItemDetailFromFenxiaoApi（旧 Alibaba.php:316-376 1:1）
+// ---------------------------------------------------------------------------
+
+const FENXIAO_API = 'com.alibaba.fenxiao.crossborder/product.search.queryProductDetail';
+
+/** 构造 fenxiao 详情成功响应体（旧网关 body 形态：result.result = 商品） */
+function fenxiaoBody(result: Record<string, unknown>): string {
+  return JSON.stringify({ result: { result } });
+}
+
+function fenxiaoClient(
+  handler: (url: string, form: Record<string, string>) => Promise<{ ok: boolean; body: string }>,
+): AlibabaSdkClient {
+  return new AlibabaSdkClient({
+    http: { postForm: (url, form) => handler(url, form) },
+    now: FIXED_NOW,
+  });
+}
+
+describe('getItemDetailFromFenxiaoApi 请求形态（旧 :326-331）', () => {
+  it('API 名 + offerDetailParam{offerId:int, country:ja} + 无 token 轮换（单次请求）', async () => {
+    let calls = 0;
+    let captured: { url: string; form: Record<string, string> } | null = null;
+    const client = fenxiaoClient(async (url, form) => {
+      calls += 1;
+      captured = { url, form };
+      return { ok: true, body: fenxiaoBody({ offerId: 12345, subject: 'x' }) };
+    });
+
+    const res = await client.getItemDetailFromFenxiaoApi('12345', CREDENTIALS);
+    expect(res.code).toBe(200);
+    expect(calls).toBe(1); // fenxiao 路径无 PEMISSION_ERROR 轮换（与 getOrderDetail 不同）
+    expect(captured!.url).toContain(FENXIAO_API);
+    expect(captured!.url.endsWith('/1000001?')).toBe(true);
+    expect(captured!.form['offerDetailParam']).toBe('{"offerId":12345,"country":"ja"}');
+  });
+
+  it('offerId 走旧 (int) 强转：12abc→12、abc→0', async () => {
+    for (const [input, expected] of [
+      ['12abc', 12],
+      ['abc', 0],
+    ] as const) {
+      let form: Record<string, string> | null = null;
+      const client = fenxiaoClient(async (_url, f) => {
+        form = f;
+        return { ok: true, body: fenxiaoBody({ offerId: 1 }) };
+      });
+      await client.getItemDetailFromFenxiaoApi(input, CREDENTIALS);
+      expect(JSON.parse(form!['offerDetailParam']!).offerId).toBe(expected);
+    }
+  });
+
+  it('空 itemId → 商品 id 有误（不打网关）', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: fenxiaoBody({ offerId: 1 }) };
+    });
+    const res = await client.getItemDetailFromFenxiaoApi('', CREDENTIALS);
+    expect(res.code).toBe(40000);
+    expect(res.msg).toBe('商品 id 有误。');
+    expect(calls).toBe(0);
+  });
+});
+
+describe('getItemDetailFromFenxiaoApi 信封（旧 :358-376）', () => {
+  it('成功：code 200 + data.result = 商品（productSkuInfos 原样带回）', async () => {
+    const product = {
+      offerId: 99,
+      subject: '测试商品',
+      productSkuInfos: [{ skuId: 's1', skuAttributes: [{ attributeName: '颜色', value: '红' }] }],
+    };
+    const client = fenxiaoClient(async () => ({ ok: true, body: fenxiaoBody(product) }));
+    const res = await client.getItemDetailFromFenxiaoApi('99', CREDENTIALS);
+    expect(res.code).toBe(200);
+    expect(res.data.result).toEqual(product);
+  });
+
+  it('失败：result.result 空 → 40000，msg = result.message ?? 商品可能不存在。', async () => {
+    const client = fenxiaoClient(async () => ({
+      ok: true,
+      body: JSON.stringify({ result: { message: 'offer 不存在' } }),
+    }));
+    const res = await client.getItemDetailFromFenxiaoApi('7', CREDENTIALS);
+    expect(res.code).toBe(40000);
+    expect(res.msg).toBe('offer 不存在');
+    expect(res.resp).toEqual({ result: { message: 'offer 不存在' } });
+
+    // 无 message ⇒ 默认文案
+    const client2 = fenxiaoClient(async () => ({ ok: true, body: JSON.stringify({ result: {} }) }));
+    const res2 = await client2.getItemDetailFromFenxiaoApi('7', CREDENTIALS);
+    expect(res2.code).toBe(40000);
+    expect(res2.msg).toBe('商品可能不存在。');
+  });
+
+  it('响应体非 JSON / 空体 → 解码失败同义 40000 默认文案', async () => {
+    const client = fenxiaoClient(async () => ({ ok: true, body: 'not-json' }));
+    const res = await client.getItemDetailFromFenxiaoApi('7', CREDENTIALS);
+    expect(res.code).toBe(40000);
+    expect(res.msg).toBe('商品可能不存在。');
+  });
+});
+
+describe('fillMissingSkuInfos（旧 EnsureAlibabaProductSkuInfosService 1:1）', () => {
+  it('已有 productSkuInfos ⇒ 原样返回（不补）', () => {
+    const product = { offerId: 1, productSkuInfos: [{ skuId: 's' }] };
+    expect(fillMissingSkuInfos(product)).toBe(product); // 同一引用，旧 return $product
+  });
+
+  it('缺 productSkuInfos ⇒ 补默认 SKU（skuId=offerId，規格:デフォルト）', () => {
+    const filled = fillMissingSkuInfos({ offerId: '555', productCargoNumber: 'CN-1' });
+    const sku = filled['productSkuInfos'] as Array<Record<string, unknown>>;
+    expect(sku).toHaveLength(1);
+    expect(sku[0]!['skuId']).toBe('555');
+    expect(sku[0]!['cargoNumber']).toBe('CN-1');
+    expect(sku[0]!['skuAttributes']).toEqual([
+      {
+        attributeId: 0,
+        attributeName: '规格',
+        attributeNameTrans: '規格',
+        value: '默认',
+        valueTrans: 'デフォルト',
+        skuImageUrl: '',
+      },
+    ]);
+  });
+
+  it('批发价解析链：price → consignPrice → fenxiao.offerPrice → priceRangeList[0]', () => {
+    const skuOf = (saleInfo: Record<string, unknown>): unknown =>
+      (
+        fillMissingSkuInfos({ offerId: 1, productSaleInfo: saleInfo })['productSkuInfos'] as Array<
+          Record<string, unknown>
+        >
+      )[0]!['price'];
+
+    expect(skuOf({ price: 12.5 })).toBe(12.5);
+    expect(skuOf({ price: 0, consignPrice: '9.90' })).toBe('9.90'); // 旧 ==0 松比较：'0' 也过
+    expect(skuOf({ price: '0', consignPrice: 0, fenxiaoSaleInfo: { offerPrice: 7 } })).toBe(7);
+    expect(skuOf({ price: 0, consignPrice: 0, priceRangeList: [{ price: 3.3 }] })).toBe(3.3);
+  });
+
+  it('默认 SKU 的规格取 productAttribute 首条完整属性（含 trans 回退）', () => {
+    const filled = fillMissingSkuInfos({
+      offerId: 1,
+      productAttribute: [
+        { attributeName: '   ', value: 'x' }, // 空 name 跳过
+        { attributeName: 'サイズ', value: 'M' }, // 首条完整属性
+        { attributeName: '色', value: '赤' },
+      ],
+      productImage: { images: ['img-1.jpg'] },
+    });
+    const sku = (filled['productSkuInfos'] as Array<Record<string, unknown>>)[0]!;
+    expect(sku['skuAttributes']).toEqual([
+      {
+        attributeId: 0,
+        attributeName: 'サイズ',
+        attributeNameTrans: 'サイズ', // 无 trans ⇒ 回退原名
+        value: 'M',
+        valueTrans: 'M',
+        skuImageUrl: 'img-1.jpg',
+      },
+    ]);
+  });
+});
+
+describe('getItemDetailFromFenxiaoApi 缓存（旧 :333-356，1h TTL）', () => {
+  it('第一次打网关并落缓存；第二次命中缓存不再打网关', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: fenxiaoBody({ offerId: 42, subject: 's' }) };
+    });
+    const cache = createInMemoryTtlCache();
+
+    const r1 = await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    expect(r1.code).toBe(200);
+    expect(calls).toBe(1);
+
+    const r2 = await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    expect(r2.code).toBe(200);
+    expect(calls).toBe(1); // 缓存命中，未再打网关
+    expect(r2).toEqual(r1);
+
+    // 旧 put 的值 = 原始响应体串（key 前缀 + 凭证 md5 + itemId）
+    const salt = createHash('md5')
+      .update(JSON.stringify({ appid: '1000001', appkey: 'test-appkey', token: 'test-token' }))
+      .digest('hex');
+    expect(await cache.get(`1688-kj-detial-use-fenxiao-api${salt}42`)).toBe(
+      fenxiaoBody({ offerId: 42, subject: 's' }),
+    );
+  });
+
+  it('★ 守卫：失败响应（result.result 空）不落缓存——下次仍会打网关', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: JSON.stringify({ result: {} }) };
+    });
+    const cache = createInMemoryTtlCache();
+
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    expect(calls).toBe(2);
+  });
+
+  it('useCache=false ⇒ 先 forget 再直查（缓存有值也打网关）', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: fenxiaoBody({ offerId: 42 }) };
+    });
+    const cache = createInMemoryTtlCache();
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    expect(calls).toBe(1);
+
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache, false);
+    expect(calls).toBe(2); // 旧 Cache::forget 后重查
+
+    // forget 后再 get = null（旧 forget 语义）
+    const salt = createHash('md5')
+      .update(JSON.stringify({ appid: '1000001', appkey: 'test-appkey', token: 'test-token' }))
+      .digest('hex');
+    expect(await cache.get(`1688-kj-detial-use-fenxiao-api${salt}42`)).not.toBeNull(); // 重查成功后重新 put
+  });
+
+  it('缓存 key 含凭证（不同凭证不同 key，互不污染）', async () => {
+    const client = fenxiaoClient(async () => ({ ok: true, body: fenxiaoBody({ offerId: 42 }) }));
+    const cache = createInMemoryTtlCache();
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+
+    const saltA = createHash('md5')
+      .update(JSON.stringify({ appid: '1000001', appkey: 'test-appkey', token: 'test-token' }))
+      .digest('hex');
+    const saltB = createHash('md5')
+      .update(JSON.stringify({ appid: '1000001', appkey: 'test-appkey', token: 'other-token' }))
+      .digest('hex');
+    expect(saltA).not.toBe(saltB);
+    expect(await cache.get(`1688-kj-detial-use-fenxiao-api${saltA}42`)).not.toBeNull();
+    expect(await cache.get(`1688-kj-detial-use-fenxiao-api${saltB}42`)).toBeNull();
+  });
+
+  it('无 cache ⇒ 每次直查（不炸）', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: fenxiaoBody({ offerId: 42 }) };
+    });
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS);
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS);
+    expect(calls).toBe(2);
   });
 });

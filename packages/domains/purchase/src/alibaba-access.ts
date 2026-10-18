@@ -1,13 +1,16 @@
+import type { TtlCache } from '@crossbuy/cache';
 import type {
   AlibabaOrderDetailPayload,
   AlibabaSdkCredentials,
   AlibabaSdkResult,
+  FenxiaoProductDetail,
 } from './alibaba-sdk';
 import { AlibabaSdkClient } from './alibaba-sdk';
 
 /**
  * 1688 SDK 的**组合根接入面**（旧 `PlatformSubAccount::getAlibabaSdkByTradeId` /
- * `Alibaba::getOauthTokenByAccount` 的语义收敛，purchase 域对外端口）。
+ * `Alibaba::getOauthTokenByAccount` 的语义收敛 + `new Alibaba()` 默认实例的 fenxiao
+ * 详情面，purchase 域对外端口）。
  *
  * 凭证选组（旧 `getAlibabaSdk`/`getInitParamBySubAccount` 1:1）：
  * - 订单 tid → `v2_order_auto_created` 行（order 域属主表，组合根注入查询端口）→
@@ -64,6 +67,11 @@ export interface AlibabaAccessDeps {
   upsertSubAccountToken(username: string, accessToken: string): Promise<void>;
   /** env 读取（测试注入；生产 = process.env） */
   envGet(key: string): string | undefined;
+  /**
+   * 分销详情缓存（旧 Laravel Cache 1h；`@crossbuy/cache` TtlCache 结构）。
+   * 缺省 = 不缓存（每次直查网关）——组合根按「有 REDIS_URL 走 Redis、否则内存 + WARNING」注入。
+   */
+  fenxiaoCache?: TtlCache;
 }
 
 export interface AlibabaAccessService {
@@ -84,6 +92,14 @@ export interface AlibabaAccessService {
   getOauthTokenByAccount(
     account: string,
   ): Promise<AlibabaSdkResult<{ token: string; from: 0 | 1 | 2 }>>;
+
+  /**
+   * 旧 `new Alibaba()` + `getItemDetailFromFenxiaoApi($goodsId)`（默认主组凭证）。
+   * 用于 SKU 规格翻译（旧 CreateOrderFromCartService::getAlibabaSkuAttributes /
+   * ResolveOrderSkuNameService::enrich1688SkuAttributes）——**与订单账号无关**，
+   * 恒主组、无 PEMISSION_ERROR 轮换（旧 fenxiao 路径 1:1）。
+   */
+  getFenxiaoDetail(goodsId: string): Promise<AlibabaSdkResult<FenxiaoProductDetail>>;
 }
 
 export class AlibabaAccessServiceImpl implements AlibabaAccessService {
@@ -216,6 +232,17 @@ export class AlibabaAccessServiceImpl implements AlibabaAccessService {
       },
       fallback,
     );
+  }
+
+  async getFenxiaoDetail(goodsId: string): Promise<AlibabaSdkResult<FenxiaoProductDetail>> {
+    // 旧 `new Alibaba()` 默认构造 = 主组 env 三件套（Alibaba.php:44-50）
+    const credentials = this.credentialOf(AlibabaAccessServiceImpl.mainKeys());
+    if (credentials === null) {
+      // 旧 env 缺失时实例仍创建（token=null）→ 签名无效 → 平台错误信封；这里等价直达
+      // 失败信封（msg 用旧默认兜底文案，消费方只判 code）
+      return { code: 40000, msg: '商品可能不存在。' };
+    }
+    return this.client.getItemDetailFromFenxiaoApi(goodsId, credentials, this.deps.fenxiaoCache);
   }
 }
 

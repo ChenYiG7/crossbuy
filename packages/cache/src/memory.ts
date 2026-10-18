@@ -3,6 +3,7 @@ import type {
   CooldownStore,
   DistributedLock,
   IdempotencyStore,
+  TtlCache,
   WithLockOptions,
   WithLockResult,
 } from './types';
@@ -104,6 +105,26 @@ export function createInMemoryIdempotency(): IdempotencyStore {
     },
     async forget(key) {
       until.delete(key);
+    },
+  };
+}
+
+export function createInMemoryTtlCache(): TtlCache {
+  const entries = new Map<string, { value: string; expiresAt: number }>();
+  const sweep = (key: string): void => {
+    const cur = entries.get(key);
+    if (cur !== undefined && cur.expiresAt <= Date.now()) entries.delete(key);
+  };
+  return {
+    async get(key) {
+      sweep(key);
+      return entries.get(key)?.value ?? null;
+    },
+    async put(key, value, ttlMs) {
+      entries.set(key, { value, expiresAt: Date.now() + ttlMs });
+    },
+    async forget(key) {
+      entries.delete(key);
     },
   };
 }
