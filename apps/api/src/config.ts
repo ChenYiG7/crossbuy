@@ -17,6 +17,12 @@ export const apiConfigSchema = z.object({
   API_OPEN_TS_TOLERANCE_SEC: z.coerce.number().int().positive().default(300),
   /** 开放 API 面 IP 白名单（逗号分隔，支持精确 IP 与 CIDR）；空 = 不限制（仅 dev） */
   API_OPEN_IP_ALLOWLIST: z.string().default(''),
+
+  /**
+   * 后台会话 JWT 密钥（与 apps/admin 同值——chrome 插件带的是**后台登录态**）。
+   * production 缺失 ⇒ chrome 回传一律 401（不是放行）。
+   */
+  AUTH_SESSION_SECRET: z.string().min(16).optional(),
 });
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>;

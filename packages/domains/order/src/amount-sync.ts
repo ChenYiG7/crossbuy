@@ -107,10 +107,77 @@ export async function resolveAmountCarrier(db: Db, rows: AmountOrderRow[]): Prom
   return candidates.sort((a, b) => b.oid - a.oid)[0] ?? null;
 }
 
+/** 旧 `Order::getAmountCalculationGroupOrders`：有 tid → 该 tid 全组活跃单；无 tid → 只有自己 */
+async function loadAmountGroupOrders(db: Db, target: AmountOrderRow): Promise<AmountOrderRow[]> {
+  if (target.tid !== null && target.tid !== '') {
+    return (await db.dg_order.findMany({
+      where: { tid: target.tid, state: { notIn: [6, 10, 11] } },
+      select: ORDER_SELECT,
+      orderBy: { oid: 'asc' },
+    })) as AmountOrderRow[];
+  }
+  return [target];
+}
+
+/**
+ * 旧 `Order::migrateAmountCarrierToOrder`：把组内当前金额承载单的 sendprice/bargainprice
+ * **搬到**目标单（含 `v2_order_detail` 整行搬迁后删源行）。
+ *
+ * 为什么必须搬：手动回传只改「一张单」时，若金额留在别的单上，改金额会改错行——
+ * 旧系统靠「搬载体」把 payload 收敛到被编辑的那张单。1:1 保留「先清零源单再写目标单」的顺序。
+ *
+ * @param createdAt v2_order_detail 新建行的 created_at（Laravel `now()` 语义——调用方传
+ *   `shanghaiWallClock(new Date())`）
+ */
+export async function migrateAmountCarrier(
+  db: Db,
+  target: AmountOrderRow,
+  createdAt: Date,
+): Promise<AmountOrderRow | null> {
+  if (!isActive(target.state)) return null;
+
+  const group = await loadAmountGroupOrders(db, target);
+  const currentHolder = await resolveAmountCarrier(db, group);
+  if (!currentHolder) return null;
+  if (currentHolder.oid === target.oid) {
+    return (await db.dg_order.findUnique({ where: { oid: target.oid }, select: ORDER_SELECT })) as AmountOrderRow | null;
+  }
+
+  const carrierValues = {
+    sendprice: money(currentHolder.sendprice ?? 0),
+    bargainprice: money(currentHolder.bargainprice ?? 0),
+  };
+
+  await db.dg_order.updateMany({
+    where: { oid: currentHolder.oid },
+    data: { sendprice: 0, bargainprice: 0 },
+  });
+  await db.dg_order.updateMany({ where: { oid: target.oid }, data: carrierValues });
+
+  const detail = await db.v2_order_detail.findUnique({ where: { id: currentHolder.oid } });
+  if (detail) {
+    const rest: Record<string, unknown> = { ...detail };
+    delete rest['id'];
+    delete rest['created_at'];
+    delete rest['updated_at'];
+    // Prisma 的 Json 空值要用 Prisma.JsonNull 表达；本文件不引 @crossbuy/db（边界纪律）⇒
+    // 「读到的行原样回写」用 as never 收口（值域与读源同构，无运行期风险）
+    const detailData = { ...rest, updated_at: createdAt } as never;
+    const existing = await db.v2_order_detail.findUnique({ where: { id: target.oid }, select: { id: true } });
+    if (existing) {
+      await db.v2_order_detail.update({ where: { id: target.oid }, data: detailData });
+    } else {
+      await db.v2_order_detail.create({ data: { ...(detailData as object), id: target.oid, created_at: createdAt, updated_at: createdAt } as never });
+    }
+    await db.v2_order_detail.delete({ where: { id: currentHolder.oid } });
+  }
+
+  return (await db.dg_order.findUnique({ where: { oid: target.oid }, select: ORDER_SELECT })) as AmountOrderRow | null;
+}
+
 // ---------------------------------------------------------------------------
 // 组内归一化（normalize*）
 // ---------------------------------------------------------------------------
-
 /** 旧 calculateBargainpriceFromOrders：Σ max(0, (goodsprice − 有效goodsprice1) × goodsnum) */
 function calculateBargainpriceFromOrders(rows: AmountOrderRow[]): number {
   let total = 0;

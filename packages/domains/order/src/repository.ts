@@ -22,6 +22,9 @@ export type Db = LegacyPrismaClient | Tx;
 /** 下单链路购物车行（listCartsForOrder 列集；Cart::toArray 的搬运源） */
 export type CartForOrderRow = Awaited<ReturnType<OrderRepository['listCartsForOrder']>>[number];
 
+/** chrome 回传订单行（listOrdersForChrome 列集；旧 getSkuName 依赖 goodssize/goodscolor 兜底） */
+export type ChromeOrderRow = Awaited<ReturnType<OrderRepository['listOrdersForChrome']>>[number];
+
 /** 建单入参（旧 `Order::create($order)`：$order = cart 全列（去 gid/anonymous）+ 覆盖项） */
 export type CreateOrderData = LegacyPrisma.dg_orderCreateInput;
 
@@ -699,6 +702,138 @@ export class OrderRepository {
     data: { state?: number; waytime?: number; expressno: string },
   ): Promise<void> {
     await db.dg_order.updateMany({ where: { oid: { in: oids } }, data });
+  }
+
+  // -----------------------------------------------------------------------
+  // chrome 回传（旧 webhookForChrome → validateOrderByOidAndTradeId / saveOrderInfo /
+  // BatchUpdateOrder 有效子集 1:1）
+  // -----------------------------------------------------------------------
+
+  /** 回传校验/保存需要的订单列（旧 `Order::whereIn('oid',$oids)->orderBy('oid','desc')->get()` 的窄投影） */
+  async listOrdersForChrome(db: Db, oids: number[]) {
+    return db.dg_order.findMany({
+      where: { oid: { in: oids } },
+      select: {
+        oid: true, tid: true, sid: true, state: true, type: true,
+        goodsid: true, goodsname: true, goodssite: true,
+        goodsprice: true, goodsprice1: true, goodsnum: true,
+        sendprice: true, bargainprice: true,
+        sku_name: true, goodscolor: true, goodssize: true,
+        goodsseller: true, payid: true,
+      },
+      orderBy: { oid: 'desc' },
+    });
+  }
+
+  /** 金额字段可改性守卫的读集（旧 `Order::whereIn('oid',$keys)->get(['oid','state'])`） */
+  async listOrderStates(db: Db, oids: number[]): Promise<Array<{ oid: number; state: number | null }>> {
+    return db.dg_order.findMany({ where: { oid: { in: oids } }, select: { oid: true, state: true } });
+  }
+
+  /** 旧 `Order::whereIn('oid',$ids)->update($data)`（query builder，不触发模型事件） */
+  async updateOrdersForChrome(
+    db: Db,
+    oids: number[],
+    data: {
+      tid?: string;
+      bargainprice?: number;
+      sendprice?: number;
+      payid?: string;
+      paytime?: number;
+      purchase_type?: number;
+    },
+  ): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid: { in: oids } }, data });
+  }
+
+  /** 单行更新（金额承载单）——旧 `Order::updateOrder($oid, $data)` 的落库部分 */
+  async updateOrderForChrome(
+    db: Db,
+    oid: number,
+    data: { bargainprice?: number; sendprice?: number },
+  ): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid }, data });
+  }
+
+  /** 旧 `AdminOperationLog::recordOperation(ACTION_UPDATE_ORDER, keys)` 的留痕（R1 走端口，见 S27 族） */
+  async touchOrdersUptime(db: Db, oids: number[], uptimeSec: number): Promise<void> {
+    await db.dg_order.updateMany({ where: { oid: { in: oids } }, data: { uptime: uptimeSec } });
+  }
+
+  /** 旧 `V2OrderDetail::updateOrCreate(['id'=>$oid], ['coupon_fee'=>$couponFee])` */
+  async upsertOrderDetailCouponFee(db: Db, oid: number, couponFee: number, createdAt: Date): Promise<void> {
+    const existing = await db.v2_order_detail.findUnique({ where: { id: oid }, select: { id: true } });
+    if (existing) {
+      await db.v2_order_detail.update({ where: { id: oid }, data: { coupon_fee: couponFee, updated_at: createdAt } });
+      return;
+    }
+    await db.v2_order_detail.create({
+      data: { id: oid, coupon_fee: couponFee, created_at: createdAt, updated_at: createdAt },
+    });
+  }
+
+  /** 旧 `V2OrderDetail::query()->where('id',$oid)->first()`（金额载体迁移用） */
+  async findOrderDetailRow(db: Db, oid: number) {
+    return db.v2_order_detail.findUnique({ where: { id: oid } });
+  }
+
+  /** 旧 `V2OrderDetail::updateOrCreate([...], $detailData)` + 源行 delete（载体迁移） */
+  async moveOrderDetailRow(db: Db, fromOid: number, toOid: number, createdAt: Date): Promise<void> {
+    const detail = await db.v2_order_detail.findUnique({ where: { id: fromOid } });
+    if (!detail) return;
+    const rest: Record<string, unknown> = { ...detail };
+    delete rest['id'];
+    delete rest['created_at'];
+    delete rest['updated_at'];
+    // Prisma 的 Json 空值须用 Prisma.JsonNull；「读到的行原样回写」用 as never 收口（值域同构）
+    const detailData = { ...rest, updated_at: createdAt } as never;
+    const existing = await db.v2_order_detail.findUnique({ where: { id: toOid }, select: { id: true } });
+    if (existing) {
+      await db.v2_order_detail.update({ where: { id: toOid }, data: detailData });
+    } else {
+      await db.v2_order_detail.create({ data: { ...(detailData as object), id: toOid, created_at: createdAt, updated_at: createdAt } as never });
+    }
+    await db.v2_order_detail.delete({ where: { id: fromOid } });
+  }
+
+  /**
+   * 旧 `BargainRecord::updateOrCreate(['goodid','goodstype'], $record)`。
+   * ⚠ 唯一键是 `(goodid, goodstype)` 业务属性键 → ODKU 会跨实体覆盖（记忆头号坑），
+   * 此处用「先查后 update/create」保持旧语义（旧代码本身就是 updateOrCreate 的查后写，
+   * 并发下同 goodid 的两次回传会互相覆盖——旧系统同样如此，登记 S-new 不修）。
+   */
+  async upsertBargainRecord(db: Db, record: {
+    goodid: string;
+    goodstype: number;
+    oid: number;
+    goodsnum: number;
+    goodsamt: number;
+    orgprice: number;
+    bgprice: number;
+    adminname: string;
+    adminid: number;
+    addtime: number;
+  }): Promise<void> {
+    const goodid = BigInt(record.goodid || '0');
+    const existing = await db.dg_bargain_record.findFirst({
+      where: { goodid, goodstype: record.goodstype },
+      select: { id: true },
+    });
+    const data = {
+      oid: record.oid,
+      goodsnum: record.goodsnum,
+      goodsamt: record.goodsamt,
+      orgprice: record.orgprice,
+      bgprice: record.bgprice,
+      adminname: record.adminname,
+      adminid: record.adminid,
+      addtime: record.addtime,
+    };
+    if (existing) {
+      await db.dg_bargain_record.update({ where: { id: existing.id }, data });
+      return;
+    }
+    await db.dg_bargain_record.create({ data: { ...data, goodid, goodstype: record.goodstype } });
   }
 
   // -----------------------------------------------------------------------

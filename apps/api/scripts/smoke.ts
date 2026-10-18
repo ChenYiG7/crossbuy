@@ -8,6 +8,7 @@
  * 用法：pnpm --filter @crossbuy/api smoke
  */
 import { createHmac } from 'node:crypto';
+import { SignJWT } from 'jose';
 import { buildApp } from '../src/app';
 import { loadConfig } from '../src/config';
 
@@ -171,6 +172,53 @@ async function main(): Promise<void> {
     );
     const res = await app.inject({ method: 'GET', url: '/api/open/v1/ping' });
     check('production 无密钥 → 503', res.statusCode === 503, res.statusCode);
+    await app.close();
+  }
+
+  console.log('[6] chrome 回传（后台登录态鉴权 + 契约）');
+  {
+    const app = await buildApp(loadConfig({ ...BASE, AUTH_SESSION_SECRET: 'smoke-admin-secret' } as NodeJS.ProcessEnv));
+
+    // 文档登记（新路由必须出现在 OpenAPI）
+    const doc = (await app.inject({ method: 'GET', url: '/docs/json' })).json<{ paths: Record<string, unknown> }>();
+    check('文档含 /api/webhook/v1/chrome', '/api/webhook/v1/chrome' in doc.paths, Object.keys(doc.paths));
+
+    // 无凭证 / 错凭证 / 非 admin 令牌 → 401（不看绿，看它拦没拦住）
+    const noAuth = await app.inject({ method: 'POST', url: '/api/webhook/v1/chrome', payload: { oids: '1', action: 1 } });
+    check('chrome 无凭证 → 401', noAuth.statusCode === 401, noAuth.statusCode);
+
+    const badAuth = await app.inject({
+      method: 'POST',
+      url: '/api/webhook/v1/chrome',
+      payload: { oids: '1', action: 1 },
+      headers: { authorization: 'Bearer not-a-jwt' },
+    });
+    check('chrome 错凭证 → 401', badAuth.statusCode === 401, badAuth.statusCode);
+
+    // 合法 JWT 但 kind != admin（会员令牌不能当后台令牌用）
+    const memberToken = await new SignJWT({ kind: 'member' })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject('1')
+      .setIssuedAt()
+      .setExpirationTime('60s')
+      .sign(new TextEncoder().encode('smoke-admin-secret'));
+    const wrongKind = await app.inject({
+      method: 'POST',
+      url: '/api/webhook/v1/chrome',
+      payload: { oids: '1', action: 1 },
+      headers: { authorization: `Bearer ${memberToken}` },
+    });
+    check('chrome 会员令牌 → 401（kind 判别）', wrongKind.statusCode === 401, wrongKind.statusCode);
+
+    // 入参校验：action 必填（旧控制器无 action 会落到 wrong action 分支）
+    const missingAction = await app.inject({
+      method: 'POST',
+      url: '/api/webhook/v1/chrome',
+      payload: { oids: '1' },
+      headers: { authorization: 'Bearer not-a-jwt' },
+    });
+    // 契约校验（zod body）在 handler 之前 ⇒ 缺 action 直接被 400 拦住，不会进业务
+    check('chrome 缺 action → 400（契约守卫，不放行）', missingAction.statusCode === 400, missingAction.statusCode);
     await app.close();
   }
 

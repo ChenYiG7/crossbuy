@@ -619,3 +619,54 @@ export const placeOrderResultSchema = z.object({
   sendOrderId: z.number().int().nullable(),
 });
 export type PlaceOrderResult = z.infer<typeof placeOrderResultSchema>;
+
+// ---------------------------------------------------------------------------
+// 十、R1 复现期：chrome 插件回传（旧 webhookForChrome → validateOrderByOidAndTradeId /
+//     saveOrderInfo / BatchUpdateOrder 有效子集）
+// ---------------------------------------------------------------------------
+
+/**
+ * chrome 回传信封（旧 `routes/api.php` `webhooks/chrome` 的入参 1:1）。
+ *
+ * ⚠ `oids` 是**逗号串**（旧 `explode(',', $request->input("oids"))`），不是数组；
+ * `order_detail` 可能是 JSON 串也可能是已解析对象（旧 `is_string ? json_decode : 原样`），
+ * 且**分支判据 `action` 在 order_detail 里**（旧 `Arr::get($extra,'order_detail.action')`）。
+ */
+export const chromeWebhookSchema = z.object({
+  oids: z.union([z.string(), z.array(z.union([z.string(), z.number()]))]).nullish(),
+  trade_id: z.union([z.string(), z.number()]).nullish(),
+  action: z.coerce.number().int(),
+  /** 1=1688（缺省）/ 2=淘宝（含淘宝全球购，旧 `TYPE_TAOBAO_GLOBAL` 与 TAOBAO 同值） */
+  trade_type: z.coerce.number().int().optional().default(1),
+  order_detail: z.union([z.string(), z.record(z.unknown())]).nullish(),
+  /** 旧后门：跳过单价/数量/负砍价三道守卫（registry S44） */
+  skip_price_check: z
+    .union([z.boolean(), z.literal(0), z.literal(1), z.enum(['0', '1', 'true', 'false'])])
+    .nullish(),
+});
+export type ChromeWebhookInput = z.infer<typeof chromeWebhookSchema>;
+
+/** 平台订单商品项（旧 `productItems`；字段随平台漂移，只锁常用键） */
+export const chromeProductItemSchema = z
+  .object({
+    productID: z.union([z.string(), z.number()]).optional(),
+    specId: z.union([z.string(), z.number(), z.null()]).optional(),
+    name: z.string().optional(),
+    quantity: z.union([z.string(), z.number()]).optional(),
+    price: z.union([z.string(), z.number()]).optional(),
+    itemAmount: z.union([z.string(), z.number()]).optional(),
+    skuInfos: z.array(z.object({ name: z.string().optional(), value: z.string().optional() }).passthrough()).nullish(),
+  })
+  .passthrough();
+
+/** 校验结果 + 保存结果（旧控制器直接回数组：code 200 / 40000 两种形态） */
+export const chromeResultSchema = z
+  .object({
+    code: z.union([z.literal(200), z.literal(40000)]),
+    msg: z.string().nullish(),
+    oids: z.array(z.string()).optional(),
+    data: z.unknown().optional(),
+    order: z.unknown().optional(),
+  })
+  .passthrough();
+export type ChromeResultPayload = z.infer<typeof chromeResultSchema>;

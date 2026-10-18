@@ -1,14 +1,18 @@
 import {
+  ChromeService,
   OrderRepository,
   record1688Snapshot,
   runInOrderTransaction,
+  ShipmentService,
   Webhook1688Service,
   Webhook1688LogisticsService,
   type AlibabaOrderClient,
+  type AlibabaOrderDetailPort,
   type OauthUserPort,
   type SendOrderPort,
 } from '@crossbuy/domain-order';
 import { InMemoryLoginRateLimiter, Md5PasswordVerifier, MemberRepository, MemberServiceImpl } from '@crossbuy/domain-member';
+import { AdminRepository, AdminServiceImpl, BcryptPasswordVerifier, type AdminService } from '@crossbuy/domain-admin';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 
 /**
@@ -90,4 +94,67 @@ export function getWebhook1688LogisticsService(): Webhook1688LogisticsService {
     });
   })();
   return webhook1688Logistics;
+}
+
+// ---------------------------------------------------------------------------
+// chrome 插件回传（旧 webhooks/chrome：后台登录态 + 订单域写路径）
+// ---------------------------------------------------------------------------
+
+/** 后台身份/登录域（chrome 回传只用到 getIdentity） */
+let adminService: AdminService | null = null;
+
+export function getAdminService(): AdminService {
+  adminService ??= new AdminServiceImpl(new AdminRepository(), new BcryptPasswordVerifier());
+  return adminService;
+}
+
+/** 最小日志端口（Fastify 的 pino 实例即满足；域层不感知 pino 类型） */
+export interface RiskLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
+/** chrome 回传的 1688 详情端口：SDK 未迁移 → 恒 null（= 旧 !isSuccess 分支，S48） */
+const notImplementedChromeAlibaba: AlibabaOrderDetailPort = {
+  async getOrderDetail() {
+    return null;
+  },
+};
+
+let chromeService: ChromeService | null = null;
+
+/**
+ * chrome 回传组合根。
+ *
+ * 装配说明：
+ * - `shipment` = 发货回传（旧 ACTION_SAVE_EXPRESS）——同一入口按 action 分流
+ * - `recordSnapshot` = 平台金额快照（旧 PlatformOrderAmountSnapshotService::record1688）
+ * - `riskLog` = 旧 `Log::channel('webhook_1688')->warning`（风控阻断留痕）
+ * - `auditLog` = 旧 `Log::channel('order_update')` + admin_operation_log（R1 只留痕不落表）
+ */
+export function getChromeService(log: RiskLogger): ChromeService {
+  chromeService ??= (() => {
+    const repo = new OrderRepository();
+    return new ChromeService({
+      repository: repo,
+      alibaba: notImplementedChromeAlibaba,
+      recordSnapshot: async (tid, detail, stage) => {
+        await record1688Snapshot(repo.db, tid, detail as Record<string, unknown>, stage, new Date());
+      },
+      shipment: new ShipmentService({
+        repository: repo,
+        runTx: runInOrderTransaction,
+        now: () => new Date(),
+      }),
+      riskLog: (info) => {
+        const { channel, message, ...rest } = info as { channel?: string; message?: string } & Record<string, unknown>;
+        log.warn({ channel, ...rest }, message ?? 'chrome webhook risk control');
+      },
+      auditLog: (info) => {
+        log.warn({ channel: 'order_update', ...info }, 'chrome order update');
+      },
+      runTx: runInOrderTransaction,
+      now: () => new Date(),
+    });
+  })();
+  return chromeService;
 }

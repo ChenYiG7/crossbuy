@@ -13,9 +13,11 @@
     "smoke": "tsx scripts/smoke.ts"
   },
   "dependencies": {
+    "@crossbuy/auth": "workspace:*",
     "@crossbuy/config": "workspace:*",
     "@crossbuy/contract": "workspace:*",
     "@crossbuy/db": "workspace:*",
+    "@crossbuy/domain-admin": "workspace:*",
     "@crossbuy/domain-member": "workspace:*",
     "@crossbuy/domain-order": "workspace:*",
     "@crossbuy/domain-send-order": "workspace:*",
@@ -25,6 +27,7 @@
     "fastify": "^5.12.7",
     "fastify-plugin": "^6.0.1",
     "fastify-type-provider-zod": "^3",
+    "jose": "catalog:",
     "pino": "catalog:",
     "zod": "catalog:"
   },

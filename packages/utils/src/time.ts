@@ -17,3 +17,18 @@ export function unixToIso(seconds: number): string {
   const shifted = new Date(seconds * 1000 + SHANGHAI_OFFSET_MS);
   return shifted.toISOString().slice(0, 19) + '+08:00';
 }
+
+/**
+ * JS Date（UTC 瞬时）→ 写入 MySQL **DATETIME 列**用的 Date。
+ *
+ * 实测（2026-10-18，本机 MySQL 9.7 + Prisma 6）：Prisma 把 Date 按 **UTC 字面量**
+ * 落进 DATETIME 列（`2026-10-18T06:00:00Z` → 库里 `2026-10-18 06:00:00`），
+ * 而旧系统 Laravel `now()`（app.timezone=Asia/Shanghai）落的是北京时间墙钟。
+ * ⇒ PHP 侧仍会读这些列的（`v2_order_detail.created_at` 等）必须本函数偏移后再写，
+ * 否则新系统写出的行比 PHP 写出的早 8 小时（双跑 diff 会当成数据错）。
+ *
+ * ⚠ 只用于 DATETIME/TIMESTAMP 列；INT unix 时间戳列（`addtime`/`uptime`）不经过这里。
+ */
+export function shanghaiWallClock(date: Date): Date {
+  return new Date(date.getTime() + SHANGHAI_OFFSET_MS);
+}

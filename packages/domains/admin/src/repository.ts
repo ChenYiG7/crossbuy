@@ -93,6 +93,33 @@ export class AdminRepository {
   }
 
   /**
+   * chrome 插件回传的身份（旧 `Admin::user()` 的 payid/username/name 三字段）。
+   *
+   * 与 findAuthById 分开：回传链路**不需要** password/business_manager，且多取 payid
+   * （旧 `$user->payid` 用于把订单自动归到当前采购员）。软删同样返回 deleted 标记。
+   */
+  async findChromeIdentity(id: number): Promise<{
+    id: number;
+    username: string;
+    name: string;
+    payid: string;
+    deleted: boolean;
+  } | null> {
+    const row = await this.db.admin_users.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true, username: true, name: true, payid: true, deleted_at: true },
+    });
+    if (!row) return null;
+    return {
+      id: Number(row.id),
+      username: row.username,
+      name: row.name,
+      payid: row.payid ?? '',
+      deleted: row.deleted_at !== null,
+    };
+  }
+
+  /**
    * 是否持有 `ability-view-all-users` 权限（dcat `can()` 语义：任一角色授予权限即通过）。
    * 路径：admin_role_users → admin_role_permissions → admin_permissions.slug。
    * ⚠ 旧库无外键 → introspect 不生成关系字段，join 表只能两步查询（in 过滤），

@@ -11,6 +11,7 @@ import { healthRoutes } from './routes/health';
 import { openRoutes } from './routes/open';
 import { webhook1688Routes } from './routes/webhook-1688';
 import { webhook1688LogisticsRoutes } from './routes/webhook-1688-logistics';
+import { webhookChromeRoutes } from './routes/webhook-chrome';
 import type { ApiConfig } from './config';
 
 /** 守卫豁免路径：健康检查与文档（外部探活/看文档不该被签名拦住） */
@@ -44,6 +45,7 @@ export async function buildApp(config: ApiConfig) {
       tags: [
         { name: 'open', description: '开放 API（HMAC 签名 + IP 白名单）' },
         { name: 'webhook', description: '第三方回调' },
+        { name: 'chrome', description: 'chrome 插件回传（后台登录态）' },
       ],
     },
     transform: jsonSchemaTransform,
@@ -77,6 +79,8 @@ export async function buildApp(config: ApiConfig) {
     );
     await scope.register(webhook1688Routes);
     await scope.register(webhook1688LogisticsRoutes);
+    // chrome 插件回传：自带后台会话校验（不走 HMAC/IP 守卫，见路由文件注释）
+    await scope.register(webhookChromeRoutes, { config });
   });
 
   return app;

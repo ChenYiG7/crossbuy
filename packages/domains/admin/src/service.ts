@@ -43,6 +43,18 @@ export interface AdminService {
 
   /** 名册（旧 getBusinessManagers）——列表页「客户代号」列展示用 */
   listBusinessManagers(): Promise<BusinessManagerEntry[]>;
+
+  /** 后台操作者身份（chrome 回传：旧 `Admin::user()` 的 payid/username/name） */
+  getIdentity(adminId: number): Promise<AdminIdentity | null>;
+}
+
+/** 后台操作者身份（chrome 插件回传链路的最小字段集） */
+export interface AdminIdentity {
+  id: number;
+  username: string;
+  name: string;
+  /** 旧 `admin_users.payid`——采购员代号，回传时自动分配到订单 */
+  payid: string;
 }
 
 export class AdminServiceImpl implements AdminService {
@@ -101,6 +113,17 @@ export class AdminServiceImpl implements AdminService {
 
   listBusinessManagers(): Promise<BusinessManagerEntry[]> {
     return this.repository.listBusinessManagers();
+  }
+
+  /**
+   * 后台操作者身份（chrome 回传用：旧 `Admin::user()->payid/username/name`）。
+   * 软删账号按「不存在」处理（旧 dcat SoftDeletingScope 查不到即 401）。
+   */
+  async getIdentity(adminId: number): Promise<AdminIdentity | null> {
+    if (!Number.isInteger(adminId) || adminId <= 0) return null;
+    const record = await this.repository.findChromeIdentity(adminId);
+    if (!record || record.deleted) return null;
+    return { id: record.id, username: record.username, name: record.name, payid: record.payid };
   }
 }
 
