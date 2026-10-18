@@ -51,6 +51,9 @@ catalogs:
     eslint:
       specifier: ^9.17.0
       version: 9.39.4
+    ioredis:
+      specifier: ^5.4.2
+      version: 5.11.1
     jose:
       specifier: ^6.2.12
       version: 6.2.12
@@ -308,6 +311,9 @@ importers:
       '@crossbuy/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@crossbuy/cache':
+        specifier: workspace:*
+        version: link:../../packages/cache
       '@crossbuy/contract':
         specifier: workspace:*
         version: link:../../packages/contract
@@ -410,6 +416,19 @@ importers:
         specifier: 'catalog:'
         version: 3.25.76
     devDependencies:
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/cache:
+    dependencies:
+      ioredis:
+        specifier: 'catalog:'
+        version: 5.11.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.5
       typescript:
         specifier: 'catalog:'
         version: 5.9.3

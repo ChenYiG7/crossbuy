@@ -1,4 +1,13 @@
 import {
+  createInMemoryCooldown,
+  createInMemoryLock,
+  createRedis,
+  createRedisCooldown,
+  createRedisLock,
+  type CooldownStore,
+  type DistributedLock,
+} from '@crossbuy/cache';
+import {
   AddCartService,
   CartService,
   OrderRepository,
@@ -115,29 +124,75 @@ function createUrlParser(): GoodsUrlParserPort {
   };
 }
 
-/** 进程内目录锁（旧 `Cache::lock(Product::syncLockKey, 10)->block(5)`；多实例前换 Redis，TODO(#16)） */
-function createCatalogLock(): CatalogLockPort {
-  const held = new Map<string, number>();
+// ---------------------------------------------------------------------------
+// 分布式闸门（Redis）——TODO(#16) 收口：进程内 Map 只在单实例下成立
+// ---------------------------------------------------------------------------
+
+type RedisClient = ReturnType<typeof createRedis>;
+
+let redisClient: RedisClient | null = null;
+let redisResolved = false;
+let fallbackWarned = false;
+
+/**
+ * Redis 单例（懒连）。返回 null = 未配置 ⇒ 调用方走进程内回退。
+ *
+ * ⚠ `error` 事件**必须**订阅：ioredis 不订阅会把连接错误抛成未捕获异常直接打挂进程；
+ * 而静默吞掉同样危险——「以为在用 Redis 其实连不上」正是闸门最坏的状态。
+ */
+function resolveRedis(): RedisClient | null {
+  const url = process.env.REDIS_URL;
+  if (!url) return null;
+  if (!redisResolved) {
+    redisResolved = true;
+    redisClient = createRedis(url);
+    redisClient.on('error', (e: Error) => {
+      console.error('[redis] 连接错误：下单/目录闸门可能不可用（fail-closed，请求会被拒）', e.message);
+    });
+  }
+  return redisClient;
+}
+
+/** 取锁/冷却实现；无 REDIS_URL 时退化为进程内（并报警，绝不静默） */
+function gates(): { lock: DistributedLock; cooldown: CooldownStore } {
+  const redis = resolveRedis();
+  if (redis) return { lock: createRedisLock(redis), cooldown: createRedisCooldown(redis) };
+  if (!fallbackWarned) {
+    fallbackWarned = true;
+    console.warn(
+      '[order] REDIS_URL 未配置 → 下单/目录闸门退化为**进程内**实现；单实例正确，多实例部署会失效（TODO(#16)）',
+    );
+  }
+  return { lock: createInMemoryLock(), cooldown: createInMemoryCooldown() };
+}
+
+/**
+ * 进程内目录锁实现（旧 `Cache::lock(...)->block(5)`；无 Redis 时的回退，语义与 Redis 一致）。
+ * 有 REDIS_URL 时由 `createCatalogLock()` 走 Redis，见下。
+ */
+function createInMemoryCatalogLock(): CatalogLockPort {
+  const lock = createInMemoryLock();
   return {
     async withLock(key, ttlSeconds, waitSeconds, fn) {
-      const until = held.get(key);
-      if (until !== undefined && until > Date.now()) {
-        // 旧 block(5)：等不到就抛 LockTimeoutException（这里返回 acquired=false）
-        const deadline = Date.now() + waitSeconds * 1000;
-        while (Date.now() < deadline) {
-          await new Promise((r) => setTimeout(r, 50));
-          const nowUntil = held.get(key);
-          if (nowUntil === undefined || nowUntil <= Date.now()) break;
-        }
-        const stillHeld = held.get(key);
-        if (stillHeld !== undefined && stillHeld > Date.now()) return { acquired: false };
-      }
-      held.set(key, Date.now() + ttlSeconds * 1000);
-      try {
-        return { acquired: true, value: await fn() };
-      } finally {
-        held.delete(key);
-      }
+      const r = await lock.withLock(key, { ttlMs: ttlSeconds * 1000, waitMs: waitSeconds * 1000 }, fn);
+      return r.acquired ? { acquired: true, value: r.value } : { acquired: false };
+    },
+  };
+}
+
+/** 目录锁（加购链路）：有 Redis 则跨实例互斥，否则回退进程内 */
+function createCatalogLock(): CatalogLockPort {
+  const redis = resolveRedis();
+  if (!redis) return createInMemoryCatalogLock();
+  const lock = createRedisLock(redis);
+  return {
+    async withLock(key, ttlSeconds, waitSeconds, fn) {
+      const r = await lock.withLock(
+        key,
+        { ttlMs: ttlSeconds * 1000, waitMs: waitSeconds * 1000 },
+        fn,
+      );
+      return r.acquired ? { acquired: true, value: r.value } : { acquired: false };
     },
   };
 }
@@ -213,35 +268,32 @@ export function getAddCartService(): AddCartService {
 // ---------------------------------------------------------------------------
 
 /**
- * 进程内重复下单闸门（旧 Cache::has/put/lock 的 R1 实现）。
+ * 重复下单闸门（旧 `Cache::has` / `Cache::put` / `Cache::lock` 的 R1 实现）。
  *
- * ⚠ 单实例正确，**多实例部署前必须换成 Redis 实现**（TODO(#16)）——否则冷却/进程锁
- * 只在各自进程内生效。接口与域解耦，换实现只改本文件。
+ * 默认走 **Redis**（跨实例互斥，TODO(#16) 的收口）；未配 `REDIS_URL` 时回退进程内实现
+ * 并打 WARNING——接口与域解耦，换实现只改本文件，域代码零感知。
+ *
+ * ⚠ token 为什么存在这里：域端口 `release(key)` **不带 token**（旧 `Cache::lock` 也没这概念），
+ * 而 Redis 释放必须带 token 才不会误删别人的锁。token 只需持锁进程自己知道，
+ * 所以进程内 Map 是**正确**的——跨实例安全性由 Redis 里那份 token 保证，不靠这张 Map。
  */
-function createInMemoryProcessLock(): ProcessLockPort {
-  const cooldowns = new Map<string, number>();
-  const locks = new Map<string, number>();
+function createProcessLock(): ProcessLockPort {
+  const { lock, cooldown } = gates();
+  const tokens = new Map<string, string>();
   return {
-    async has(key) {
-      const until = cooldowns.get(key);
-      if (until === undefined) return false;
-      if (until <= Date.now()) {
-        cooldowns.delete(key);
-        return false;
-      }
-      return true;
-    },
-    async put(key, ttlSeconds) {
-      cooldowns.set(key, Date.now() + ttlSeconds * 1000);
-    },
+    has: (key) => cooldown.has(key),
+    put: (key, ttlSeconds) => cooldown.put(key, Math.round(ttlSeconds * 1000)),
     async acquire(key, ttlSeconds) {
-      const until = locks.get(key);
-      if (until !== undefined && until > Date.now()) return false;
-      locks.set(key, Date.now() + ttlSeconds * 1000);
+      const token = await lock.acquire(key, Math.round(ttlSeconds * 1000));
+      if (token === null) return false;
+      tokens.set(key, token);
       return true;
     },
     async release(key) {
-      locks.delete(key);
+      const token = tokens.get(key);
+      if (token === undefined) return;
+      tokens.delete(key);
+      await lock.release(key, token);
     },
   };
 }
@@ -283,7 +335,7 @@ export function getPlaceOrderService(): PlaceOrderService {
       goodsPriceRefreshPort,
       skuTranslationPort,
       benefitPort,
-      lockPort: createInMemoryProcessLock(),
+      lockPort: createProcessLock(),
       sideEffects,
       sendOrderPort,
       feeDeductPreviewEnabled: process.env.FEE_DEDUCT_PREVIEW_SWITCH != null,

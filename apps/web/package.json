@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@crossbuy/auth": "workspace:*",
+    "@crossbuy/cache": "workspace:*",
     "@crossbuy/contract": "workspace:*",
     "@crossbuy/db": "workspace:*",
     "@crossbuy/domain-finance": "workspace:*",
