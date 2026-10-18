@@ -398,11 +398,8 @@ export class AlibabaSdkClient {
     }
 
     if (respStr === null || respStr === '') {
-      const raw = await this.execute(
-        'com.alibaba.fenxiao.crossborder/product.search.queryProductDetail',
-        params,
-        credentials,
-      );
+      const api = FENXIAO_PRODUCT_DETAIL_API;
+      const raw = await this.execute(api, params, credentials);
       respStr = raw.original ?? '';
       // 旧 put 条件：实时响应（execute 信封里的 resp）解析出非空 result.result 且 original 非空
       if (respStr !== '' && cache && extractFenxiaoItem(raw.resp) !== null) {
@@ -411,6 +408,98 @@ export class AlibabaSdkClient {
     }
 
     return decodeFenxiaoDetail(respStr);
+  }
+
+  // -----------------------------------------------------------------------
+  // searchSellerOpenIdByGoodsId / decryptWangwangNick（旧 Alibaba.php:221-252 / 582-602 1:1）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 旧 `Alibaba::searchShopNameByGoodsId($goodsId, $useCache = true)`。
+   *
+   * ⚠ 旧方法名有误导性：返回的是 **sellerOpenId**（旺旺 openid）而非店铺名——旧调用方
+   *   AddCartMutation:289 拿它去 `v2_supplier_shop` 按 (appid, openid) 匹配/建铺。
+   *
+   * 与 `getItemDetailFromFenxiaoApi` 同 API 同参，但**缓存键方案不同**（旧代码两套键
+   * 共存，1:1 保留差异）：本方法走 `generateCacheKey` =
+   * `md5(api + json_encode(paramArr)) + md5(json_encode(sdkInitParam))`；
+   * detail 方法用 `1688-kj-detial-use-fenxiao-api{salt}{itemId}` 前缀方案。
+   *
+   * 缓存语义（旧 `Cache::remember` 与 `!useCache` 两条分支**不对称**，1:1 保留）：
+   * - useCache=true：闭包返回值**无条件入缓存**（含空串——Laravel remember 存闭包返回值，
+   *   下次命中直接返回空串，不再打网关）；
+   * - useCache=false：**不读**缓存；仅 sellerOpenId 非空才 put。
+   *
+   * @param credentials 旧 `PlatformSubAccount::getAlibabaSdk()` 默认实例 = 主组 env
+   *   三件套；fenxiao 路径**无 PEMISSION_ERROR 轮换**（同 getItemDetailFromFenxiaoApi）。
+   * @returns sellerOpenId 字符串；空串 = 旧 `''`（接口失败/数据缺失/凭证缺失都归此，
+   *   消费方 `!empty` 判跳过）。缺失（null）按空串归一——缓存语义等价（miss vs 命中空串
+   *   差别仅一次网关往返），消费方不可观测。
+   */
+  async searchSellerOpenIdByGoodsId(
+    goodsId: string,
+    credentials: AlibabaSdkCredentials,
+    cache?: TtlCache,
+    useCache = true,
+  ): Promise<string> {
+    // 旧 (int)$goodsId 强转：'123abc' → 123、非数值串 → 0（同 detail 方法）
+    const offerId = Number.parseInt(goodsId, 10);
+    const paramArr: Record<string, unknown> = {
+      offerDetailParam: { offerId: Number.isNaN(offerId) ? 0 : offerId, country: 'ja' },
+    };
+    const api = FENXIAO_PRODUCT_DETAIL_API;
+    // 旧 generateCacheKey(md5($api . json_encode($paramArr)))：paramArr 无 `/` 成员，
+    // json_encode 与 JSON.stringify 输出一致；salt 差异（token 含 `/` 时）同 detail 方法登记
+    const cacheKey = `${createHash('md5')
+      .update(`${api}${JSON.stringify(paramArr)}`)
+      .digest('hex')}${fenxiaoCacheKeySalt(credentials)}`;
+
+    if (useCache) {
+      // 旧 Cache::remember：命中即返回（缓存里的 '' 也直接返回）；未命中才查并 put
+      if (cache) {
+        const hit = await cache.get(cacheKey);
+        if (hit !== null) return hit;
+      }
+      const raw = await this.execute(api, paramArr, credentials);
+      const value = phpStringOrEmpty(phpArrayGet(raw.resp, 'result.result.sellerOpenId'));
+      if (cache) await cache.put(cacheKey, value, FENXIAO_CACHE_TTL_MS);
+      return value;
+    }
+
+    // useCache=false：不读缓存，仅非空 put（旧 else 分支，`empty()` 松判空——'0' 也算空）
+    const raw = await this.execute(api, paramArr, credentials);
+    const value = phpStringOrEmpty(phpArrayGet(raw.resp, 'result.result.sellerOpenId'));
+    if (value !== '' && value !== '0' && cache) {
+      await cache.put(cacheKey, value, FENXIAO_CACHE_TTL_MS);
+    }
+    return value === '0' ? '' : value;
+  }
+
+  /**
+   * 旧 `Alibaba::decryptOpenidFromFenxiaoApi($openid)`（旺旺 openid → 昵称解密）。
+   *
+   * API = `com.alibaba.account/wangwangnick.openuid.decrypt`，入参 `{openUid: openid}`；
+   * **无缓存**（旧方法本身不缓存，1:1）。旧实现 catch (\Throwable) 后返回 ''——任何
+   * 网关/解析异常都吞掉（本方法 execute 内部已吞网络异常，此处再兜一层解析异常）。
+   *
+   * ⚠ 旧「openid 为空」分支返回 `['code'=>40000, 'msg'=>'旺旺的 openid 为空。']`（数组），
+   *   而正常路径返回字符串；全部 5 个旧调用点（AddCartMutation:310 /
+   *   GetGoodsInfoQuery:868,883 / ProcessCompletionGoodsInfo:127 / EditSupplierShop:477）
+   *   传入的 openid 均来自已判非空的 sellerOpenId ⇒ 空分支实际不可达。端口按
+   *   `string | null` 收敛：空 openid → null（不可达分支，差异不可观测）。
+   *
+   * @returns wangwangNick 字符串；空串 = 旧 `''`（失败/空值，消费方判空跳过）。
+   */
+  async decryptWangwangNick(openid: string, credentials: AlibabaSdkCredentials): Promise<string> {
+    if (openid === '' || openid === '0') {
+      return ''; // 旧 empty($openid) 分支（40000 信封）在端口层的等价收敛
+    }
+    const raw = await this.execute(
+      'com.alibaba.account/wangwangnick.openuid.decrypt',
+      { openUid: openid },
+      credentials,
+    );
+    return phpStringOrEmpty(phpArrayGet(raw.resp, 'wangwangNick'));
   }
 
   // -----------------------------------------------------------------------
@@ -500,6 +589,34 @@ function firstAccessToken(items: SubAccountAuthItem[]): string | null {
 
 /** 旧 `Cache::put($cacheKey, $value, 60 * 60)` */
 const FENXIAO_CACHE_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * 分销商品详情 API 名（旧 `getItemDetailFromFenxiaoApi` / `searchShopNameByGoodsId`
+ * 两个方法共用同一个 API + 同一套 offerDetailParam 入参）。
+ */
+const FENXIAO_PRODUCT_DETAIL_API =
+  'com.alibaba.fenxiao.crossborder/product.search.queryProductDetail';
+
+/** 旧 `Arr::get($array, 'a.b.c')` 点路径取值（任一段缺失/非对象 ⇒ null；与 Laravel 语义一致） */
+function phpArrayGet(value: unknown, path: string): unknown {
+  let current: unknown = value;
+  for (const segment of path.split('.')) {
+    if (current === null || typeof current !== 'object' || Array.isArray(current)) return null;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
+
+/**
+ * 旧 `array_get` 结果 → 字符串（null/缺失/非标量 ⇒ ''；number/bool 按 PHP 串化）。
+ * 用于 sellerOpenId / wangwangNick 这类「接口返回标量、调用方判空」的取用处。
+ */
+function phpStringOrEmpty(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return '';
+}
 
 /** 旧 `md5(json_encode($this->sdkInitParam))`（键序 appid→appkey→token，1:1） */
 function fenxiaoCacheKeySalt(credentials: AlibabaSdkCredentials): string {

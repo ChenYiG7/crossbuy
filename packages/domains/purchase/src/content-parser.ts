@@ -183,7 +183,7 @@ export abstract class BaseParser {
   protected async parseLinkContent(): Promise<this> {
     const links = this.getLinkMatchContent();
     for (const link of links) {
-      let result: ParsedItem[] = [];
+      const result: ParsedItem[] = [];
       for (const method of this.registerParser) {
         const subRes = await this.executeParseMethod(method, link);
         result.push(...subRes);

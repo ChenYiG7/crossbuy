@@ -303,10 +303,11 @@ export function getAddCartService(): AddCartService {
     };
     // 平台商品详情：R1 SDK（淘宝/1688）未迁移 → 恒 null（S40，= 旧「拉取失败保留前端价」）
     const platformGoods: PlatformGoodsInfoPort = { fetch: async () => null };
-    // 1688 店铺反解：R1 SDK 未迁移 → 恒 null（S41，整段映射逻辑不触发）
+    // 1688 店铺反解（旧 AddCartMutation:287-289：`PlatformSubAccount::getAlibabaSdk()`
+    // + searchShopNameByGoodsId / decryptOpenidFromFenxiaoApi——S41 已收口，恒主组凭证）
     const alibabaShop: AlibabaShopPort = {
-      searchShopNameByGoodsId: async () => null,
-      decryptOpenidFromFenxiaoApi: async () => null,
+      searchShopNameByGoodsId: (goodsId) => getAlibabaAccess().searchSellerOpenId(goodsId),
+      decryptOpenidFromFenxiaoApi: (openid) => getAlibabaAccess().decryptWangwangNick(openid),
     };
     // 供应商商品/店铺：v2_supplier_product / v2_supplier_shop 属主 = purchase 域（表唯一属主）
     const catalog = new SupplierCatalogServiceImpl({
@@ -438,8 +439,9 @@ function resolveFenxiaoCache(): TtlCache {
 
 /**
  * purchase 域 1688 接入面单例（stateless，仅持依赖）。
- * 凭证链：主组 env（fenxiao 详情恒主组、无轮换）→ findAutoCreatedSubAccountId 端口给
- * 订单面（getOrderDetail）用；本组合根里 web 只消费 fenxiao 详情（规格翻译）。
+ * 凭证链：主组 env（fenxiao 详情/店铺反解恒主组、无轮换）→ findAutoCreatedSubAccountId
+ * 端口给订单面（getOrderDetail）用；本组合根里 web 消费 fenxiao 详情（规格翻译）+
+ * 店铺反解两方法（S41）。env 未配置时后两者按旧语义收敛 null（消费方判空跳过）。
  */
 let alibabaAccessService: AlibabaAccessService | null = null;
 function getAlibabaAccess(): AlibabaAccessService {

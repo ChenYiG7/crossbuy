@@ -15,7 +15,8 @@ import type { CreateCartData, OrderRepository } from './repository';
  * ★ 与旧代码的三处**刻意不同**（都是行为等价或铁律要求的，改动点已登记 docs/plans/08）：
  * - 事务后副作用（4 个 Job）改 AFTER_COMMIT 端口（铁律 7；旧 dispatch 无队列保障）。
  * - 供应商商品/店铺的**写**走 purchase 域端口（表唯一属主；旧代码在 Mutation 里直写）。
- * - 平台 SDK（商品详情 / 1688 店铺反解 / URL 解析）抽端口，R1 恒 null/空（S39~S41）。
+ * - 平台 SDK（商品详情 / 1688 店铺反解 / URL 解析）抽端口：URL 解析（S39）与 1688
+ *   店铺反解（S41）已接真实现；平台商品详情（S40）仍恒 null。
  *
  * ⚠ 一条**必须照抄**的怪癖：`isValidate == 1` 在**预处理之前**就 `return ''`
  * （旧代码 :248-250），所以「仅校验」其实是空操作——重复 gids 的返回分支是死代码。
@@ -591,7 +592,8 @@ export class AddCartService {
       const cart = preparedCart.cart;
       const goodsInfo = preparedCart.goodsInfo;
 
-      // 1688 + add_from∈{1,2}：反解店铺 openid 维护映射（R1 SDK 恒 null → 整段不触发）
+      // 1688 + add_from∈{1,2}：反解店铺 openid 维护映射（S41 已接真 SDK：恒主组凭证，
+      // env 未配置或反解失败按旧语义跳过整段，不阻断加购）
       await this.resolveAlibabaShopSeller(preparedCart);
 
       if (isEmptyValue(cart['supplier_product_id'])) {

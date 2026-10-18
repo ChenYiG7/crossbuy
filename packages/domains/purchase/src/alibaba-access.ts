@@ -10,7 +10,7 @@ import { AlibabaSdkClient } from './alibaba-sdk';
 /**
  * 1688 SDK 的**组合根接入面**（旧 `PlatformSubAccount::getAlibabaSdkByTradeId` /
  * `Alibaba::getOauthTokenByAccount` 的语义收敛 + `new Alibaba()` 默认实例的 fenxiao
- * 详情面，purchase 域对外端口）。
+ * 详情/店铺反解面，purchase 域对外端口）。
  *
  * 凭证选组（旧 `getAlibabaSdk`/`getInitParamBySubAccount` 1:1）：
  * - 订单 tid → `v2_order_auto_created` 行（order 域属主表，组合根注入查询端口）→
@@ -100,6 +100,21 @@ export interface AlibabaAccessService {
    * 恒主组、无 PEMISSION_ERROR 轮换（旧 fenxiao 路径 1:1）。
    */
   getFenxiaoDetail(goodsId: string): Promise<AlibabaSdkResult<FenxiaoProductDetail>>;
+
+  /**
+   * 旧 `Alibaba::searchShopNameByGoodsId($goodsId)`（旧 AddCartMutation:289 调用点：
+   * 1688 且 add_from∈{1,2} 时反解店铺 openid，维护 `v2_supplier_shop` 映射）。
+   * ⚠ 旧方法名有误导性：返回 **sellerOpenId** 而非店铺名（1:1 保留语义）。
+   * 恒主组凭证（旧 `PlatformSubAccount::getAlibabaSdk()` 默认实例）、无轮换；
+   * useCache=true（旧该调用点默认值）。
+   */
+  searchSellerOpenId(goodsId: string): Promise<string | null>;
+
+  /**
+   * 旧 `Alibaba::decryptOpenidFromFenxiaoApi($openid)`（旧 AddCartMutation:310 等 5 个
+   * 调用点：店铺 nickname 为空时解密旺旺昵称补全）。恒主组、无缓存、异常吞掉返空。
+   */
+  decryptWangwangNick(openid: string): Promise<string | null>;
 }
 
 export class AlibabaAccessServiceImpl implements AlibabaAccessService {
@@ -243,6 +258,28 @@ export class AlibabaAccessServiceImpl implements AlibabaAccessService {
       return { code: 40000, msg: '商品可能不存在。' };
     }
     return this.client.getItemDetailFromFenxiaoApi(goodsId, credentials, this.deps.fenxiaoCache);
+  }
+
+  async searchSellerOpenId(goodsId: string): Promise<string | null> {
+    // 旧 `PlatformSubAccount::getAlibabaSdk()` 默认实例 = 主组 env 三件套；env 缺失时
+    // 旧实例仍创建 → 签名无效 → 平台错误信封 → array_get miss → ''（旧收敛为空结果，
+    // 非错误直达）⇒ 这里 null 等价（消费方判空跳过）
+    const credentials = this.credentialOf(AlibabaAccessServiceImpl.mainKeys());
+    if (credentials === null) return null;
+    const value = await this.client.searchSellerOpenIdByGoodsId(
+      goodsId,
+      credentials,
+      this.deps.fenxiaoCache,
+    );
+    return value === '' ? null : value;
+  }
+
+  async decryptWangwangNick(openid: string): Promise<string | null> {
+    // 同上恒主组；旧 catch (\Throwable) → '' 的语义由 SDK 方法内部收敛
+    const credentials = this.credentialOf(AlibabaAccessServiceImpl.mainKeys());
+    if (credentials === null) return null;
+    const value = await this.client.decryptWangwangNick(openid, credentials);
+    return value === '' ? null : value;
   }
 }
 

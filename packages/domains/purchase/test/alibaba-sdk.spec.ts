@@ -590,3 +590,178 @@ describe('getItemDetailFromFenxiaoApi 缓存（旧 :333-356，1h TTL）', () => 
     expect(calls).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// searchSellerOpenIdByGoodsId / decryptWangwangNick
+// （旧 Alibaba.php:221-252 / 582-602 1:1）
+// ---------------------------------------------------------------------------
+
+describe('searchSellerOpenIdByGoodsId（旧 :221-252，⚠ 返回 sellerOpenId 非店铺名）', () => {
+  it('同 fenxiao 详情 API 同参；取 result.result.sellerOpenId', async () => {
+    let captured: { url: string; form: Record<string, string> } | null = null;
+    const client = fenxiaoClient(async (url, form) => {
+      captured = { url, form };
+      return { ok: true, body: fenxiaoBody({ offerId: 42, sellerOpenId: 'oid-abc' }) };
+    });
+
+    const value = await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS);
+    expect(value).toBe('oid-abc');
+    expect(captured!.url).toContain(`/${FENXIAO_API}/`);
+    // 旧 (int) 强转：'42' → 42；offerDetailParam 序列化形态同详情方法
+    expect(captured!.form['offerDetailParam']).toBe('{"offerId":42,"country":"ja"}');
+  });
+
+  it('offerId int 强转（123abc→123 / 非数值→0），与详情方法同规', async () => {
+    const forms: Array<Record<string, string>> = [];
+    const client = fenxiaoClient(async (_url, form) => {
+      forms.push(form);
+      return { ok: true, body: fenxiaoBody({ sellerOpenId: 'x' }) };
+    });
+    await client.searchSellerOpenIdByGoodsId('123abc', CREDENTIALS);
+    await client.searchSellerOpenIdByGoodsId('abc', CREDENTIALS);
+    expect(forms[0]!['offerDetailParam']).toBe('{"offerId":123,"country":"ja"}');
+    expect(forms[1]!['offerDetailParam']).toBe('{"offerId":0,"country":"ja"}');
+  });
+
+  it('useCache=true：remember 语义——命中不打网关；失败的空串也入缓存', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      // 网关错误信封（无 result.result）⇒ 旧闭包返回 null ⇒ 缓存 ''
+      return { ok: true, body: JSON.stringify({ result: { message: '商品不存在' } }) };
+    });
+    const cache = createInMemoryTtlCache();
+
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache)).toBe('');
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache)).toBe('');
+    expect(calls).toBe(1); // 第二次命中缓存的 ''（旧 Cache::remember 存闭包返回值）
+  });
+
+  it('useCache=false：不读缓存 + 仅非空才 put', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: JSON.stringify({ result: { message: 'boom' } }) };
+    });
+    const cache = createInMemoryTtlCache();
+
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache, false)).toBe('');
+    // 失败响应不入缓存 ⇒ 关缓存再查仍打网关
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache, false)).toBe('');
+    expect(calls).toBe(2);
+
+    // 成功响应（非空）才 put
+    const okClient = fenxiaoClient(async () => ({
+      ok: true,
+      body: fenxiaoBody({ sellerOpenId: 'oid-1' }),
+    }));
+    expect(await okClient.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache, false)).toBe(
+      'oid-1',
+    );
+    // put 之后再关缓存查——useCache=false 仍不读缓存（旧 else 分支语义）
+    expect(await okClient.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache, false)).toBe(
+      'oid-1',
+    );
+  });
+
+  it('缓存键 = generateCacheKey 方案（与详情方法 1688-kj-detial 前缀方案不共享）', async () => {
+    const client = fenxiaoClient(async () => ({
+      ok: true,
+      body: fenxiaoBody({ offerId: 42, sellerOpenId: 'oid-shared' }),
+    }));
+    const cache = createInMemoryTtlCache();
+
+    // 详情方法先写它的键
+    await client.getItemDetailFromFenxiaoApi('42', CREDENTIALS, cache);
+    // 店铺反解用另一套键 ⇒ 仍然打网关（cache miss），证明两套键共存不互相污染
+    let searchCalls = 0;
+    const searchClient = fenxiaoClient(async () => {
+      searchCalls += 1;
+      return { ok: true, body: fenxiaoBody({ sellerOpenId: 'oid-shared' }) };
+    });
+    await searchClient.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache);
+    expect(searchCalls).toBe(1);
+    // 但自己的键第二次命中
+    await searchClient.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache);
+    expect(searchCalls).toBe(1);
+  });
+
+  it('凭证分 key（salt 不同 ⇒ 不共享缓存）', async () => {
+    const cache = createInMemoryTtlCache();
+    const client = fenxiaoClient(async () => ({
+      ok: true,
+      body: fenxiaoBody({ sellerOpenId: 'oid' }),
+    }));
+    const other: AlibabaSdkCredentials = { ...CREDENTIALS, token: 'other-token' };
+    await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache);
+    let otherCalls = 0;
+    const otherClient = fenxiaoClient(async () => {
+      otherCalls += 1;
+      return { ok: true, body: fenxiaoBody({ sellerOpenId: 'oid' }) };
+    });
+    await otherClient.searchSellerOpenIdByGoodsId('42', other, cache);
+    expect(otherCalls).toBe(1);
+  });
+
+  it("PHP empty() 松判空：sellerOpenId='0' 在 useCache=false 分支归空串且不缓存", async () => {
+    const client = fenxiaoClient(async () => ({
+      ok: true,
+      body: fenxiaoBody({ sellerOpenId: '0' }),
+    }));
+    const cache = createInMemoryTtlCache();
+    // useCache=true 分支旧代码直接返回（'0' 原样）
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache)).toBe('0');
+    // useCache=false 分支旧代码 empty('0') → '' 且不 put
+    expect(await client.searchSellerOpenIdByGoodsId('42', CREDENTIALS, cache, false)).toBe('');
+  });
+});
+
+describe('decryptWangwangNick（旧 :582-602，无缓存 + 异常吞掉返空）', () => {
+  it('API + openUid 入参；取 wangwangNick', async () => {
+    let captured: { url: string; form: Record<string, string> } | null = null;
+    const client = fenxiaoClient(async (url, form) => {
+      captured = { url, form };
+      return { ok: true, body: JSON.stringify({ wangwangNick: '旺旺昵称' }) };
+    });
+
+    const value = await client.decryptWangwangNick('openid-xyz', CREDENTIALS);
+    expect(value).toBe('旺旺昵称');
+    expect(captured!.url).toContain('/com.alibaba.account/wangwangnick.openuid.decrypt/');
+    expect(captured!.form['openUid']).toBe('openid-xyz');
+  });
+
+  it("网关错误信封 / 超时信封 → 空串（旧 catch → '' 同义）", async () => {
+    const errClient = fenxiaoClient(async () => ({
+      ok: true,
+      body: JSON.stringify({ message: '解密失败' }),
+    }));
+    expect(await errClient.decryptWangwangNick('oid', CREDENTIALS)).toBe('');
+
+    // execute 内部 catch 网络异常 → 超时信封（resp 有 message、无 wangwangNick）
+    const timeoutClient = fenxiaoClient(async () => {
+      throw new Error('ECONNRESET');
+    });
+    expect(await timeoutClient.decryptWangwangNick('oid', CREDENTIALS)).toBe('');
+  });
+
+  it('空 openid → 空串且不打网关（旧 empty 分支的端口层收敛，不可达路径）', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: JSON.stringify({ wangwangNick: 'x' }) };
+    });
+    expect(await client.decryptWangwangNick('', CREDENTIALS)).toBe('');
+    expect(calls).toBe(0);
+  });
+
+  it('无缓存：同一 openid 重复调用每次都打网关（旧方法不缓存 1:1）', async () => {
+    let calls = 0;
+    const client = fenxiaoClient(async () => {
+      calls += 1;
+      return { ok: true, body: JSON.stringify({ wangwangNick: 'n' }) };
+    });
+    await client.decryptWangwangNick('oid', CREDENTIALS);
+    await client.decryptWangwangNick('oid', CREDENTIALS);
+    expect(calls).toBe(2);
+  });
+});
