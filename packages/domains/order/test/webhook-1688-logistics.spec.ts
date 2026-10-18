@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { legacyPrisma, type LegacyPrisma } from '@crossbuy/db';
 import { OrderRepository } from '../src/repository';
-import { Webhook1688LogisticsService, type OauthUserPort, type SendOrderPort } from '../src/webhook-1688-logistics';
+import {
+  Webhook1688LogisticsService,
+  type OauthUserPort,
+  type SendOrderPort,
+} from '../src/webhook-1688-logistics';
 import { MemberRepository, MemberServiceImpl } from '@crossbuy/domain-member';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 import { withRollback } from './helpers/rollback';
@@ -19,7 +23,13 @@ function makeMessage(overrides: Record<string, unknown> = {}) {
     cpCode: 'SF',
     receiverAddress: { regionName: '大阪府', detailAddress: '浪速区1-1' },
     itemList: [
-      { auctionUrl: 'https://detail.1688.com/1.html', auctionTitle: 'テスト商品A', pictureUrl: 'https://img/1.jpg', quantity: 2, skuName: '颜色:红' },
+      {
+        auctionUrl: 'https://detail.1688.com/1.html',
+        auctionTitle: 'テスト商品A',
+        pictureUrl: 'https://img/1.jpg',
+        quantity: 2,
+        skuName: '颜色:红',
+      },
       { auctionUrl: 'https://detail.1688.com/2.html', auctionTitle: 'テスト商品B', quantity: 1 },
     ],
     ...overrides,
@@ -41,7 +51,10 @@ function makeSendOrderPort(tx: Tx): SendOrderPort {
   return { createFor1688Logistics: (input) => service.createFor1688Logistics(input, tx) };
 }
 
-function makeService(tx: Tx, overrides: { forward?: (m: unknown) => Promise<void> } = {}): Webhook1688LogisticsService {
+function makeService(
+  tx: Tx,
+  overrides: { forward?: (m: unknown) => Promise<void> } = {},
+): Webhook1688LogisticsService {
   return new Webhook1688LogisticsService({
     repository: new OrderRepository(tx as never),
     appid: APPID,
@@ -66,7 +79,10 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
         where: { appid: APPID, openid: 'buyer-1' },
       });
       expect(login).not.toBeNull();
-      const user = await tx.dg_users.findUnique({ where: { uid: login!.uid }, select: { uname: true, usetype: true, state: true, password: true, memberid: true } });
+      const user = await tx.dg_users.findUnique({
+        where: { uid: login!.uid },
+        select: { uname: true, usetype: true, state: true, password: true, memberid: true },
+      });
       expect(user?.usetype).toBe(5); // USE_TYPE_5「1688转运」
       expect(user?.state).toBe(1); // USER_STATE_1
       expect(user?.password).toMatch(/^[a-f0-9]{32}$/); // md5
@@ -101,8 +117,13 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
       });
       const result = await makeService(tx).consume(makeMessage());
       expect(result.outcome).toBe('created_orders');
-      const login = await tx.v2_oauth_login.findFirst({ where: { appid: APPID, openid: 'buyer-1' } });
-      const user = await tx.dg_users.findUnique({ where: { uid: login!.uid }, select: { uname: true } });
+      const login = await tx.v2_oauth_login.findFirst({
+        where: { appid: APPID, openid: 'buyer-1' },
+      });
+      const user = await tx.dg_users.findUnique({
+        where: { uid: login!.uid },
+        select: { uname: true },
+      });
       expect(user?.uname).toMatch(/^wxbuyer\d{2}$/);
       expect(user?.uname).not.toBe('wxbuyer');
     });
@@ -116,7 +137,16 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
 
       const orders = await tx.dg_order.findMany({
         where: { tid: msg.tradeOrderId },
-        select: { oid: true, state: true, type: true, goodssite: true, sid: true, expressno: true, sku_name: true, goodsnum: true },
+        select: {
+          oid: true,
+          state: true,
+          type: true,
+          goodssite: true,
+          sid: true,
+          expressno: true,
+          sku_name: true,
+          goodsnum: true,
+        },
         orderBy: { oid: 'asc' },
       });
       expect(orders).toHaveLength(2);
@@ -129,7 +159,14 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
       const sid = result.sid!;
       const sendOrder = await tx.dg_sendorder.findUnique({
         where: { sid },
-        select: { state: true, otype: true, oids: true, address: true, country: true, totalfee: true },
+        select: {
+          state: true,
+          otype: true,
+          oids: true,
+          address: true,
+          country: true,
+          totalfee: true,
+        },
       });
       expect(sendOrder?.state).toBe(1); // STATE_WAITING
       expect(sendOrder?.otype).toBe(3); // OTYPE_3
@@ -151,8 +188,13 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
       expect(result.outcome).toBe('existing_orders');
       expect(result.sid).toBeNull();
       // 运单只有 1 张
-      const login = await tx.v2_oauth_login.findFirst({ where: { appid: APPID, openid: 'buyer-1' } });
-      const sendOrders = await tx.dg_sendorder.findMany({ where: { uid: login!.uid }, select: { sid: true } });
+      const login = await tx.v2_oauth_login.findFirst({
+        where: { appid: APPID, openid: 'buyer-1' },
+      });
+      const sendOrders = await tx.dg_sendorder.findMany({
+        where: { uid: login!.uid },
+        select: { sid: true },
+      });
       expect(sendOrders).toHaveLength(1);
     });
   });
@@ -163,13 +205,23 @@ describe('1688 物流建档 webhook（webhookFor1688LogisticsProvider 1:1）', (
       const msg = makeMessage({ mailNo: 'SF-A' });
       await makeService(tx).consume(msg);
       // 第二个运单号 → 追加
-      const result2 = await makeService(tx).consume(makeMessage({ tradeOrderId: msg.tradeOrderId, mailNo: 'SF-B' }));
+      const result2 = await makeService(tx).consume(
+        makeMessage({ tradeOrderId: msg.tradeOrderId, mailNo: 'SF-B' }),
+      );
       expect(result2.outcome).toBe('existing_orders');
-      const order = await tx.dg_order.findFirst({ where: { tid: msg.tradeOrderId }, select: { expressno: true } });
+      const order = await tx.dg_order.findFirst({
+        where: { tid: msg.tradeOrderId },
+        select: { expressno: true },
+      });
       expect(order?.expressno).toBe('SF-A SF-B');
       // 同单号重发 → 不重复
-      await makeService(tx).consume(makeMessage({ tradeOrderId: msg.tradeOrderId, mailNo: 'SF-B' }));
-      const order2 = await tx.dg_order.findFirst({ where: { tid: msg.tradeOrderId }, select: { expressno: true } });
+      await makeService(tx).consume(
+        makeMessage({ tradeOrderId: msg.tradeOrderId, mailNo: 'SF-B' }),
+      );
+      const order2 = await tx.dg_order.findFirst({
+        where: { tid: msg.tradeOrderId },
+        select: { expressno: true },
+      });
       expect(order2?.expressno).toBe('SF-A SF-B');
     });
   });

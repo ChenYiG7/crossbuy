@@ -6,11 +6,11 @@
 
 ## 取证通道与可信度（先声明，避免后人误读）
 
-| 通道 | 用途 | 局限 |
-|---|---|---|
-| `haiou/taotaro.sql`（2026-10-13 从生产导出的 174 表结构） | **列级正本**：列名/类型/索引/AUTO_INCREMENT | 无数据；枚举注释基本缺失 |
-| 本地副本库 `taotaro`（FlyEnv MySQL 9.7.2） | **数据画像**：取值分布、不变式violations、配平实测 | `dg_record` 是 **rid 连续尾切片**（6,518,020–7,334,199，2025-03-08 起）；`dg_rechargerecord` **缺 `ext_info`/`gateway_transaction_no` 两列**（副本 schema 落后于生产 dump） |
-| `haiou/backend` 代码（只读） | 枚举词表、写入点、锁与事务实况 | Finance 域业务文档 **0 篇**（核实：`backend/docs/business/` 无 finance 文档），全靠逆向 |
+| 通道                                                      | 用途                                               | 局限                                                                                                                                                                        |
+| --------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `haiou/taotaro.sql`（2026-10-13 从生产导出的 174 表结构） | **列级正本**：列名/类型/索引/AUTO_INCREMENT        | 无数据；枚举注释基本缺失                                                                                                                                                    |
+| 本地副本库 `taotaro`（FlyEnv MySQL 9.7.2）                | **数据画像**：取值分布、不变式violations、配平实测 | `dg_record` 是 **rid 连续尾切片**（6,518,020–7,334,199，2025-03-08 起）；`dg_rechargerecord` **缺 `ext_info`/`gateway_transaction_no` 两列**（副本 schema 落后于生产 dump） |
+| `haiou/backend` 代码（只读）                              | 枚举词表、写入点、锁与事务实况                     | Finance 域业务文档 **0 篇**（核实：`backend/docs/business/` 无 finance 文档），全靠逆向                                                                                     |
 
 ⚠️ 本文所有「实测」数字都来自本地尾切片，**规模级结论需在生产只读通道复核后才能用于回填策略**（同 order/send-order 域做法）。
 
@@ -29,13 +29,13 @@
 
 ### 1.2 finance 域不负责（跨域，禁直接建库关联）
 
-| 事项 | 归属 | 与本域的关系 |
-|---|---|---|
-| 订单金额构成、砍价分摊、`OrderGroup.bargainAmount` | order | 扣费/返金事件的**发起方**，只向本域提交「账本命令」 |
-| 运单五费 `totalfee`、已邮寄返金事务 | send-order | 同上（`action=3` 扣运费、`action=11` 返砍价） |
-| 会员身份、`balance_currency`、余额低阈值 | member | 余额列的**宿主表**，本域写、member 域只读投影 |
-| 货架/库存/仓储费计价规则 | WMS（独立项目） | 本域只记仓储费流水，不算仓储费 |
-| 支付渠道 SDK 与回调验签 | 防腐层（`adapter/<vendor>`，docs/07 §5） | 回调落本域充值单，验签在 adapter |
+| 事项                                               | 归属                                     | 与本域的关系                                        |
+| -------------------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
+| 订单金额构成、砍价分摊、`OrderGroup.bargainAmount` | order                                    | 扣费/返金事件的**发起方**，只向本域提交「账本命令」 |
+| 运单五费 `totalfee`、已邮寄返金事务                | send-order                               | 同上（`action=3` 扣运费、`action=11` 返砍价）       |
+| 会员身份、`balance_currency`、余额低阈值           | member                                   | 余额列的**宿主表**，本域写、member 域只读投影       |
+| 货架/库存/仓储费计价规则                           | WMS（独立项目）                          | 本域只记仓储费流水，不算仓储费                      |
+| 支付渠道 SDK 与回调验签                            | 防腐层（`adapter/<vendor>`，docs/07 §5） | 回调落本域充值单，验签在 adapter                    |
 
 ### 1.3 一笔钱的本域生命周期（总览）
 
@@ -55,25 +55,25 @@
 
 > 记号：★=本域新建（旧系统无对应表）；直=直连旧表语义；弃=不迁
 
-| # | 新模型（拟） | 旧源表 | 处置 |
-|---|---|---|---|
-| 1 | `LedgerEntry` | `dg_record`（807 万，**客户余额流水**） | ★ 重写：补方向/币种/业务唯一键/快照不变式 |
-| 2 | `Account` | `dg_users.money` + `dg_users.last_balance_changed_at` | ★ 账户行（余额正本挂载点，唯一写入口的守卫对象） |
-| 3 | `RechargeOrder` | `dg_rechargerecord`（59 万） | 直改：拆「入金渠道」与「费用原因」两列（现混在 `paytype` 一列） |
-| 4 | `ExchangeRate` | `dg_huilv`（汇率表，`huilv float(10,2)`，Job 每小时整点写） | 直改：float → Decimal(12,8)（docs/07 §6.2 汇率精度）；**旧表无快照引用，须补 `ledger_entries.rate_id`** |
-| 5 | `PurchaseCashFlow` | `finance_order_cash_flow`（102 万，**采购侧资金流水**） | ★ 折入 `LedgerEntry`（`flowType=PURCHASE_*`）+ 订单关联走列 |
-| 6 | （弃）`relation_order_and_finance_order_cash_flow` | 261 万行多对多 | ❌ 流水直接带 `orderId`（order-schema.md:83 已定） |
-| 7 | （弃）`dg_refund` | 118 行，`money float(10,2)` | ❌ **确证废弃**：`app/database/tests/vendor/frontend` 全 0 引用、无 Model 无 migration |
-| 8 | （弃）`relation_bill_and_model` | 185 行多态「金额明细表」 | ❌ **确证废弃**：全仓 0 引用，注释所指主表不存在 |
-| 9 | （不建）`RecordOld` | `dg_record_old`（598 万行） | ✔ **确证已停写、纯只读归档**（4 处引用无写入点，§3.9）：一次性回填不镜像；`rid` 与主表空间重叠 → 靠 `legacy_source` 区分（§4.12）。后台路由 `finance/user-bills-old` 仍在用 → 是否并入决定旧表要不要留只读投影（§八 Q2） |
-| 10 | `ReconciliationBatch` / `ReconciliationDiff` | **旧系统无表** | ★ 对账批次 + 差异留痕（docs/02 §5.3 要求） |
-| 11 | `FeeRule` | 代码常量（`AMTLIMITFEE=1.05`、5%、`dffee` 默认 10、PayPal `(x*0.964-40)`、Stripe `x*0.96`） | ★ 费率配置化（收 order 域 Q7） |
-| 12 | `AlertEvent` | 钉钉散点调用 | ★ 告警出口（幂等 + 频控） |
-| 13 | （不建）`BargainRecord` | `dg_bargain_record`（8 万） | ✔ 归 order 域：`UNIQUE(goodid,goodstype)` 是**砍后价价格字典**，不涉资金（`BatchUpdateOrder.php:735` 写、`Cart.php:202` 读） |
-| 14 | （不建）`ScoreRecord` | `dg_scorerecord`（18 万） | ✔ **与钱无关**（积分 `type` 1获得/2消费），唯一写入 `ConfirmReceiveSendOrderMutation.php:92` |
-| 15 | （不建）`Coupon` | `dg_coupon`（1,423） | ✔ **事实废弃**：所有下单路径 `couponid/couponmoney` 硬编码 0（`CreateDfOrderMutation.php:485` 等 4 处），无创建/核销代码 |
-| 16 | （观察）`dg_payid` | 41 行 `payid/payabout/uids(逗号串)` | 收款账户配置，`uids` 逗号分隔违反 §6.2 → 建议归 member 或本域 `AccountGroup`（§八 Q5） |
-| 17 | （不迁）`v2_statistics` | 16,934 行 KV 统计快照 | 报表走新查询，对账另建表 |
+| #   | 新模型（拟）                                       | 旧源表                                                                                      | 处置                                                                                                                                                                                                                     |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `LedgerEntry`                                      | `dg_record`（807 万，**客户余额流水**）                                                     | ★ 重写：补方向/币种/业务唯一键/快照不变式                                                                                                                                                                                |
+| 2   | `Account`                                          | `dg_users.money` + `dg_users.last_balance_changed_at`                                       | ★ 账户行（余额正本挂载点，唯一写入口的守卫对象）                                                                                                                                                                         |
+| 3   | `RechargeOrder`                                    | `dg_rechargerecord`（59 万）                                                                | 直改：拆「入金渠道」与「费用原因」两列（现混在 `paytype` 一列）                                                                                                                                                          |
+| 4   | `ExchangeRate`                                     | `dg_huilv`（汇率表，`huilv float(10,2)`，Job 每小时整点写）                                 | 直改：float → Decimal(12,8)（docs/07 §6.2 汇率精度）；**旧表无快照引用，须补 `ledger_entries.rate_id`**                                                                                                                  |
+| 5   | `PurchaseCashFlow`                                 | `finance_order_cash_flow`（102 万，**采购侧资金流水**）                                     | ★ 折入 `LedgerEntry`（`flowType=PURCHASE_*`）+ 订单关联走列                                                                                                                                                              |
+| 6   | （弃）`relation_order_and_finance_order_cash_flow` | 261 万行多对多                                                                              | ❌ 流水直接带 `orderId`（order-schema.md:83 已定）                                                                                                                                                                       |
+| 7   | （弃）`dg_refund`                                  | 118 行，`money float(10,2)`                                                                 | ❌ **确证废弃**：`app/database/tests/vendor/frontend` 全 0 引用、无 Model 无 migration                                                                                                                                   |
+| 8   | （弃）`relation_bill_and_model`                    | 185 行多态「金额明细表」                                                                    | ❌ **确证废弃**：全仓 0 引用，注释所指主表不存在                                                                                                                                                                         |
+| 9   | （不建）`RecordOld`                                | `dg_record_old`（598 万行）                                                                 | ✔ **确证已停写、纯只读归档**（4 处引用无写入点，§3.9）：一次性回填不镜像；`rid` 与主表空间重叠 → 靠 `legacy_source` 区分（§4.12）。后台路由 `finance/user-bills-old` 仍在用 → 是否并入决定旧表要不要留只读投影（§八 Q2） |
+| 10  | `ReconciliationBatch` / `ReconciliationDiff`       | **旧系统无表**                                                                              | ★ 对账批次 + 差异留痕（docs/02 §5.3 要求）                                                                                                                                                                               |
+| 11  | `FeeRule`                                          | 代码常量（`AMTLIMITFEE=1.05`、5%、`dffee` 默认 10、PayPal `(x*0.964-40)`、Stripe `x*0.96`） | ★ 费率配置化（收 order 域 Q7）                                                                                                                                                                                           |
+| 12  | `AlertEvent`                                       | 钉钉散点调用                                                                                | ★ 告警出口（幂等 + 频控）                                                                                                                                                                                                |
+| 13  | （不建）`BargainRecord`                            | `dg_bargain_record`（8 万）                                                                 | ✔ 归 order 域：`UNIQUE(goodid,goodstype)` 是**砍后价价格字典**，不涉资金（`BatchUpdateOrder.php:735` 写、`Cart.php:202` 读）                                                                                             |
+| 14  | （不建）`ScoreRecord`                              | `dg_scorerecord`（18 万）                                                                   | ✔ **与钱无关**（积分 `type` 1获得/2消费），唯一写入 `ConfirmReceiveSendOrderMutation.php:92`                                                                                                                             |
+| 15  | （不建）`Coupon`                                   | `dg_coupon`（1,423）                                                                        | ✔ **事实废弃**：所有下单路径 `couponid/couponmoney` 硬编码 0（`CreateDfOrderMutation.php:485` 等 4 处），无创建/核销代码                                                                                                 |
+| 16  | （观察）`dg_payid`                                 | 41 行 `payid/payabout/uids(逗号串)`                                                         | 收款账户配置，`uids` 逗号分隔违反 §6.2 → 建议归 member 或本域 `AccountGroup`（§八 Q5）                                                                                                                                   |
+| 17  | （不迁）`v2_statistics`                            | 16,934 行 KV 统计快照                                                                       | 报表走新查询，对账另建表                                                                                                                                                                                                 |
 
 ---
 
@@ -85,16 +85,16 @@
 
 列分组精读（`taotaro.sql:1873-1897`）：
 
-| 组 | 列 | 实测（本地尾切片 502,163 行） |
-|---|---|---|
-| 主体 | `rid` PK / `uid` / `uname` | uid 1,684 个（切片内）；`uname` 冗余（同 order 域 §4.10，禁迁） |
-| **方向+原因** | `type` smallint 默认 1 / `action` smallint 默认 0 | ★ **`type` 就是收支方向**：`type=1` 全为负（381,679 行 action=1，min -347,760，仅 4 行 0）、`type=2` 全为正；`type` 取值**只有 1 和 2**（实测 0 行越界） |
-| 金额 | `money` **decimal(12,2)** | 无 NULL；单行极值 **±10,000,000**（`action=0 type=2`） |
-| **余额快照** | `accountmoney` decimal(12,2) | 无 NULL——**每行都存动账后余额**（旧系统已有「running balance」意识） |
-| 关联 | `oid` / `sn` varchar(500) / `ordflag` | `oid>0` 占 87%；`sn` **89% 为空**，74 行超 50 字符（拼接多个单号）；`ordflag` 3（代发）50,756 行 |
-| 元信息 | `remark` varchar(255) / `addtime` INT unix / `vip` / `extend` json / `deleted_at` | `vip` **全 0**（定额会员标记形同虚设）；`extend` 仅 349 行非空；软删 93 行 |
-| 幂等 | `idempotency_key` varchar(128) **UNIQUE** | ★ **100% NULL**（502,163/502,163）——列加了但**从未启用** |
-| 索引 | PK / `uk_idempotency_key` / `idx_oid` / `idx_uid` / `idx_addtime` / `idx_uname` / **`idx_uid_action_addtime(uid,action,addtime)`** | 最后一个是真实查询口径：**按会员按事件类型按时间拉流水** |
+| 组            | 列                                                                                                                                 | 实测（本地尾切片 502,163 行）                                                                                                                            |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 主体          | `rid` PK / `uid` / `uname`                                                                                                         | uid 1,684 个（切片内）；`uname` 冗余（同 order 域 §4.10，禁迁）                                                                                          |
+| **方向+原因** | `type` smallint 默认 1 / `action` smallint 默认 0                                                                                  | ★ **`type` 就是收支方向**：`type=1` 全为负（381,679 行 action=1，min -347,760，仅 4 行 0）、`type=2` 全为正；`type` 取值**只有 1 和 2**（实测 0 行越界） |
+| 金额          | `money` **decimal(12,2)**                                                                                                          | 无 NULL；单行极值 **±10,000,000**（`action=0 type=2`）                                                                                                   |
+| **余额快照**  | `accountmoney` decimal(12,2)                                                                                                       | 无 NULL——**每行都存动账后余额**（旧系统已有「running balance」意识）                                                                                     |
+| 关联          | `oid` / `sn` varchar(500) / `ordflag`                                                                                              | `oid>0` 占 87%；`sn` **89% 为空**，74 行超 50 字符（拼接多个单号）；`ordflag` 3（代发）50,756 行                                                         |
+| 元信息        | `remark` varchar(255) / `addtime` INT unix / `vip` / `extend` json / `deleted_at`                                                  | `vip` **全 0**（定额会员标记形同虚设）；`extend` 仅 349 行非空；软删 93 行                                                                               |
+| 幂等          | `idempotency_key` varchar(128) **UNIQUE**                                                                                          | ★ **100% NULL**（502,163/502,163）——列加了但**从未启用**                                                                                                 |
+| 索引          | PK / `uk_idempotency_key` / `idx_oid` / `idx_uid` / `idx_addtime` / `idx_uname` / **`idx_uid_action_addtime(uid,action,addtime)`** | 最后一个是真实查询口径：**按会员按事件类型按时间拉流水**                                                                                                 |
 
 **`remark` 的两种形态**（决定新系统「说明文案」必须结构化）：
 
@@ -105,40 +105,40 @@
 
 `taotaro.sql:1838-1871`。实测（本地 34,918 行，rid 481,984–534,768）+ 代码确证：
 
-| 列 | 注释 | 确证结论 |
-|---|---|---|
-| `amount` decimal(10,2) | 充值原始额度 | = **JPY 原币额**（后台 Grid 明示 `RechargeRecordController.php:113-114`） |
-| `money` decimal(10,2) | 换算过的额度 | = **CNY 入账额**，`money = round(amount / huilv, 2)`（`Repositories/Finance/RechargeRecord.php:531-533`、`BankTransferMutation.php:107-129`） |
-| `currency` varchar(10) | 币种 | ★ 几乎不写：只有 PayPal 建单写**小写 `'jpy'`**（`GetPaypalTransferConfigQuery.php:93`），其余 NULL，且 `MYR` 出现大写 → 币种列不可信、大小写不统一 |
-| `paytype` smallint | DDL 注释「0转账 1支付宝 2paypal 3psi 4其他」 | ★ **注释已过期**，词表正本在代码 `RechargeRecord.php:60-91`：0 銀行振込 / 2 Paypal / 3 商品購入 / 4 国際運賃 / 5 国内運賃 / 6 賠償 / 7 家賃 / 8 オプション / 9 送金 / 10 取引中止 / 11 その他 / 12 撮影 / 13 保険料 / 14 订单增值 / 15 Stripe。**`alipay`/`psi` 全仓 0 命中**（1、3 语义被覆盖）。实测 0–14 均有数据，15 无（Stripe 集成仍 drafting） |
-| `state` smallint 默认 1 | DDL 无注释 | ★ 词表正本 `RechargeRecord.php:118-129`：**-1 已驳回 / 1 待审核(待支付) / 2 已完成 / 3 待核对流水**。实测四值齐全 |
-| `successtime` INT | 成功时间 | ★ **加钱那一刻写入**，但「已完成 state=2」和「待核对 state=3」都已有值 → **不能用作「已到账」判据** |
-| `audit_admin_uid` | 审核人 | ★ **银行初审路径全程不写此列**（只有手动扣款审核 `ReviewManualCharge.php:34-50` 写）→ 审计断链 |
-| `gateway_transaction_no` varchar(128) UNIQUE | 网关交易号 | 列在生产库存在（`taotaro.sql:1861`），**backend 代码 0 引用** → 由外部 Python 服务写；本地副本无此列 |
-| `source` varchar(32) | hho/gouba | `hho` / `gouba` / NULL=yiwutaro（`RechargeRecord.php:52-54` + `User.php:613`，migration 2026-05-09）；本地副本无此列 |
+| 列                                           | 注释                                         | 确证结论                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `amount` decimal(10,2)                       | 充值原始额度                                 | = **JPY 原币额**（后台 Grid 明示 `RechargeRecordController.php:113-114`）                                                                                                                                                                                                                                                                             |
+| `money` decimal(10,2)                        | 换算过的额度                                 | = **CNY 入账额**，`money = round(amount / huilv, 2)`（`Repositories/Finance/RechargeRecord.php:531-533`、`BankTransferMutation.php:107-129`）                                                                                                                                                                                                         |
+| `currency` varchar(10)                       | 币种                                         | ★ 几乎不写：只有 PayPal 建单写**小写 `'jpy'`**（`GetPaypalTransferConfigQuery.php:93`），其余 NULL，且 `MYR` 出现大写 → 币种列不可信、大小写不统一                                                                                                                                                                                                    |
+| `paytype` smallint                           | DDL 注释「0转账 1支付宝 2paypal 3psi 4其他」 | ★ **注释已过期**，词表正本在代码 `RechargeRecord.php:60-91`：0 銀行振込 / 2 Paypal / 3 商品購入 / 4 国際運賃 / 5 国内運賃 / 6 賠償 / 7 家賃 / 8 オプション / 9 送金 / 10 取引中止 / 11 その他 / 12 撮影 / 13 保険料 / 14 订单增值 / 15 Stripe。**`alipay`/`psi` 全仓 0 命中**（1、3 语义被覆盖）。实测 0–14 均有数据，15 无（Stripe 集成仍 drafting） |
+| `state` smallint 默认 1                      | DDL 无注释                                   | ★ 词表正本 `RechargeRecord.php:118-129`：**-1 已驳回 / 1 待审核(待支付) / 2 已完成 / 3 待核对流水**。实测四值齐全                                                                                                                                                                                                                                     |
+| `successtime` INT                            | 成功时间                                     | ★ **加钱那一刻写入**，但「已完成 state=2」和「待核对 state=3」都已有值 → **不能用作「已到账」判据**                                                                                                                                                                                                                                                   |
+| `audit_admin_uid`                            | 审核人                                       | ★ **银行初审路径全程不写此列**（只有手动扣款审核 `ReviewManualCharge.php:34-50` 写）→ 审计断链                                                                                                                                                                                                                                                        |
+| `gateway_transaction_no` varchar(128) UNIQUE | 网关交易号                                   | 列在生产库存在（`taotaro.sql:1861`），**backend 代码 0 引用** → 由外部 Python 服务写；本地副本无此列                                                                                                                                                                                                                                                  |
+| `source` varchar(32)                         | hho/gouba                                    | `hho` / `gouba` / NULL=yiwutaro（`RechargeRecord.php:52-54` + `User.php:613`，migration 2026-05-09）；本地副本无此列                                                                                                                                                                                                                                  |
 
 **加钱时刻与审核流**（确证，直接决定 ledger 的「事件产生点」）：
 
-| 场景 | 流转 | 动账点 | 幂等 |
-|---|---|---|---|
-| 银行转账 | 用户提交 state=1（`BankTransferMutation.php:133`）→ 财务初审 radio「3=审核通过 / -1=驳回」（`RechargeRecordReviewForm.php:31`）→ **1→3 即加钱**（`Repositories/.../RechargeRecord.php:88-103`）→ 3→2「完成核对」**不再加钱**（`RechargeRecordReviewAction.php:83-97`） | state→3 | 仅 `Cache::lock(...,10s)`（`RechargeRecordController.php:506`） |
-| 手动扣款（paytype 14/5/11/6） | 业务员 `ManualCharge.php:41-58`（amount=0、money 可负、state=1、写 submit_admin_uid）→ 审核 **1→2 并加钱** | state→2 | 同上 |
-| 后台直接新建 | state/successtime 直接置 2，事务内 addMoney（`Controller:490-492` + `Repositories:42-67`） | 创建即加钱 | 无 |
-| PayPal 回调 | IPN `/api/webhooks/paypal_notify` → 1→2 + 加钱（`PaypalController.php:111-134`） | state→2 | ★ **`Cache::lock('paypal-webhook-{sn}-{status}', 2)` + 「state==2 则 return」= 先查后改、无事务、无唯一键 → 锁 2 秒过期即可重复加钱**（`PaypalController.php:49-52,97-106`） |
-| Stripe | 外部服务写 `gateway_transaction_no` UNIQUE + `FOR UPDATE` 设计（`docs/business/stripe-recharge-integration.md:405`，状态 **drafting**，PHP 侧未找到写入点） | — | 唯一键（正解） |
+| 场景                          | 流转                                                                                                                                                                                                                                                                   | 动账点     | 幂等                                                                                                                                                                         |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 银行转账                      | 用户提交 state=1（`BankTransferMutation.php:133`）→ 财务初审 radio「3=审核通过 / -1=驳回」（`RechargeRecordReviewForm.php:31`）→ **1→3 即加钱**（`Repositories/.../RechargeRecord.php:88-103`）→ 3→2「完成核对」**不再加钱**（`RechargeRecordReviewAction.php:83-97`） | state→3    | 仅 `Cache::lock(...,10s)`（`RechargeRecordController.php:506`）                                                                                                              |
+| 手动扣款（paytype 14/5/11/6） | 业务员 `ManualCharge.php:41-58`（amount=0、money 可负、state=1、写 submit_admin_uid）→ 审核 **1→2 并加钱**                                                                                                                                                             | state→2    | 同上                                                                                                                                                                         |
+| 后台直接新建                  | state/successtime 直接置 2，事务内 addMoney（`Controller:490-492` + `Repositories:42-67`）                                                                                                                                                                             | 创建即加钱 | 无                                                                                                                                                                           |
+| PayPal 回调                   | IPN `/api/webhooks/paypal_notify` → 1→2 + 加钱（`PaypalController.php:111-134`）                                                                                                                                                                                       | state→2    | ★ **`Cache::lock('paypal-webhook-{sn}-{status}', 2)` + 「state==2 则 return」= 先查后改、无事务、无唯一键 → 锁 2 秒过期即可重复加钱**（`PaypalController.php:49-52,97-106`） |
+| Stripe                        | 外部服务写 `gateway_transaction_no` UNIQUE + `FOR UPDATE` 设计（`docs/business/stripe-recharge-integration.md:405`，状态 **drafting**，PHP 侧未找到写入点）                                                                                                            | —          | 唯一键（正解）                                                                                                                                                               |
 
 **`paytype` 混装两个维度**（入金渠道 vs 费用原因）是旧模型最深的结构问题：`3 商品購入 / 4 国際運賃 / 5 国内運賃 / 7 家賃 / 12 撮影 / 13 保険料` 是**费用项**，`0 銀行振込 / 2 Paypal / 15 Stripe` 是**渠道**；`inboundPayTypes()` 白名单（`RechargeRecord.php:98-106`）就是为了让代码能分辨——实测 `paytype` 11/12/13/14/3/4/5/7/8/9/10 的 `money` 合计为**负数**（11 段 -4,427,426.16）。**★ 2026-10-16 精确实数**：`state=2` 且 `money<0` 共 **11,182 行**（remark 形如「YBQ14217阿部輝様‐OEM、検品代50元、担当：何」——是费用代扣，不是入金），且这 11,182 行**全部**能在 `dg_record` 按 `sn` 找到对应行（JOIN 后 11,186 行，多出的 4 行是 `sn` 重复）⇒ **钱只记在 `dg_record` 一处**，`dg_rechargerecord` 是单据。所以 T1 里 `recharge_orders` 只装正向单、分录一律来自 `dg_record`，两头都建分录必然双计。→ 新系统必须拆成 `channel` + `reason` 两列，且把「负向调整」从充值表里搬走，否则**支付渠道对账的分母里混着人工调整，永远对不平**。
 
 **后台「改写金额」后门清单**（对账差异来源，§五 `ReconciliationDiff` 的 reason 词表）：
 
-| # | 后门 | 位置 |
-|---|---|---|
-| a | 改汇率**反算** `money`（Grid 汇率单元格本身可编辑），且**已加钱的 state=3 行也能改** → 历史流水与单据永久不一致 | `RechargeRecordController.php:121-132, 531-533` |
-| b | 表单直接暴露 `money` 与编辑态 `state` 下拉，手改**不补写流水** | `Controller:326,348` |
-| c | 批量「完成核对」**裸 UPDATE 跳过守卫** | `RechargeRecordBatchUpdate.php:62` |
-| d | `remark` 自由改写——而 remark 里含汇率文本（见 §3.3） | `Controller:171` |
-| e | 汇率表 `dg_huilv` **全字段可手改**（nian/yue/ri/shi/huilv 都是 text 输入），改后影响其后所有换算 | `ExchangeRateController.php:91-99` |
-| f | 发票编辑页**补插** rechargerecord（返金重复记账风险） | `EditFapiaoController.php:1204-1224`、`EditFapiaoController2.php:839-855` |
+| #   | 后门                                                                                                            | 位置                                                                      |
+| --- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| a   | 改汇率**反算** `money`（Grid 汇率单元格本身可编辑），且**已加钱的 state=3 行也能改** → 历史流水与单据永久不一致 | `RechargeRecordController.php:121-132, 531-533`                           |
+| b   | 表单直接暴露 `money` 与编辑态 `state` 下拉，手改**不补写流水**                                                  | `Controller:326,348`                                                      |
+| c   | 批量「完成核对」**裸 UPDATE 跳过守卫**                                                                          | `RechargeRecordBatchUpdate.php:62`                                        |
+| d   | `remark` 自由改写——而 remark 里含汇率文本（见 §3.3）                                                            | `Controller:171`                                                          |
+| e   | 汇率表 `dg_huilv` **全字段可手改**（nian/yue/ri/shi/huilv 都是 text 输入），改后影响其后所有换算                | `ExchangeRateController.php:91-99`                                        |
+| f   | 发票编辑页**补插** rechargerecord（返金重复记账风险）                                                           | `EditFapiaoController.php:1204-1224`、`EditFapiaoController2.php:839-855` |
 
 ### 3.3 ★ 币种与汇率口径（本域最重要的发现，直接推翻既有拍板）
 
@@ -154,15 +154,15 @@
 
 **汇率基础设施**（确证）：
 
-| 项 | 事实 | 位置 |
-|---|---|---|
-| 汇率表 | ★ **`dg_huilv`**（`hid / nian / yue / ri / shi / fen / huilv float(10,2) / addtime`）——**按年月日时**粒度的汇率时间序列 | `taotaro.sql:1460-1470` |
-| 汇率来源 | 先查 `dg_huilv` 命中当小时 → 否则**爬三菱银行 +0.5 点** → 否则**爬 Yahoo +0.8 点** → 否则取 `dg_huilv` 最新一条 → 全部失败**返回 0** | `app/Libraries/Currency.php:165-198` |
-| 写入 Job | 每小时整点 `firstOrCreate`（`fen` 恒 0），缓存 3 分钟 | `app/Jobs/ProcessSyncCurrency.php:29-59`、`Console/Kernel.php:81`、`Currency.php:148` |
-| 支持币种 | 仅 USD / CNY / JPY / GBP | `Currency.php:31-41` |
-| 汇率快照 | ★ **单据与流水都没有汇率列**；事后只能用 `amount/money` 反推（`RechargeRecord::calculateChargeRate()` `:166-184`），但 PayPal/Stripe 反推出来的是**含手续费的比率不是汇率**（PayPal 建单 `(amount*0.964-40)/rate` vs 回调 `amount-(amount*0.036+40)` **两套算法不自洽**：`GetPaypalTransferConfigQuery.php:88-92` vs `PaypalController.php:109-110`） | — |
-| 汇率藏文本 | 银行入账把汇率拼进流水备注：`'銀行振込, レート：23.4'` | `Repositories/.../RechargeRecord.php:98-101`（实测 `rid=7019792`） |
-| `floatrate` | ★ **死列**：`dg_users.floatrate decimal(10,2) default 0.05`「对客浮动汇率」全仓**唯一出现处是后台详情页展示**（`UserController.php:384`），无任何金额计算读取；真实浮动是 `+0.5 / +0.8` 硬编码加点 | `taotaro.sql:2329` |
+| 项          | 事实                                                                                                                                                                                                                                                                                                                                                  | 位置                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| 汇率表      | ★ **`dg_huilv`**（`hid / nian / yue / ri / shi / fen / huilv float(10,2) / addtime`）——**按年月日时**粒度的汇率时间序列                                                                                                                                                                                                                               | `taotaro.sql:1460-1470`                                                               |
+| 汇率来源    | 先查 `dg_huilv` 命中当小时 → 否则**爬三菱银行 +0.5 点** → 否则**爬 Yahoo +0.8 点** → 否则取 `dg_huilv` 最新一条 → 全部失败**返回 0**                                                                                                                                                                                                                  | `app/Libraries/Currency.php:165-198`                                                  |
+| 写入 Job    | 每小时整点 `firstOrCreate`（`fen` 恒 0），缓存 3 分钟                                                                                                                                                                                                                                                                                                 | `app/Jobs/ProcessSyncCurrency.php:29-59`、`Console/Kernel.php:81`、`Currency.php:148` |
+| 支持币种    | 仅 USD / CNY / JPY / GBP                                                                                                                                                                                                                                                                                                                              | `Currency.php:31-41`                                                                  |
+| 汇率快照    | ★ **单据与流水都没有汇率列**；事后只能用 `amount/money` 反推（`RechargeRecord::calculateChargeRate()` `:166-184`），但 PayPal/Stripe 反推出来的是**含手续费的比率不是汇率**（PayPal 建单 `(amount*0.964-40)/rate` vs 回调 `amount-(amount*0.036+40)` **两套算法不自洽**：`GetPaypalTransferConfigQuery.php:88-92` vs `PaypalController.php:109-110`） | —                                                                                     |
+| 汇率藏文本  | 银行入账把汇率拼进流水备注：`'銀行振込, レート：23.4'`                                                                                                                                                                                                                                                                                                | `Repositories/.../RechargeRecord.php:98-101`（实测 `rid=7019792`）                    |
+| `floatrate` | ★ **死列**：`dg_users.floatrate decimal(10,2) default 0.05`「对客浮动汇率」全仓**唯一出现处是后台详情页展示**（`UserController.php:384`），无任何金额计算读取；真实浮动是 `+0.5 / +0.8` 硬编码加点                                                                                                                                                    | `taotaro.sql:2329`                                                                    |
 
 **⇒ 三条后果（必须处理，不是建议）**：
 
@@ -186,28 +186,28 @@
 
 ### 3.5 成本与账单侧的旁表（对账原料）
 
-| 表 | 行数量级 | 与对账的关系 |
-|---|---|---|
-| `dg_airbill`（`taotaro.sql:944`） | 62,998 | ★ `freight`（**对客**国际运费）vs `xyfreight`（**协议**运费）同行并存；`xyweight`/`cweight` 双重量；全 `float(10,2)` |
-| `dg_airbillprice` | 19,436–19,719 | ★ `agreeprice`（协议价，付货代）vs `price`（收取价，对客）+ `weight float(10,1)`；均值 26,155 → **物流对账的 per-票 成本/收入对照点** |
-| `v2_platform_order_amount` | （order 域已建模 `PlatformTradeAmount`，注释即「★ 对账锚点」） | 供应商侧实付回传 |
-| `dg_payid` | 41（AUTO_INCREMENT=161） | `pid / payid varchar(30) / payabout / uids varchar(255)` —— 像「收款账户 ↔ 会员集合」的**配置表**，`uids` 逗号分隔（order 域 Q1 `payid` 语义未决，本域一并给建议） |
-| `relation_bill_and_model` | 185 行（AUTO_INCREMENT 55→185） | 多态 `bill_id ↔ billable_type/billable_id`，注释称 `bill_id` 是「**金额明细表**主键」→ 主表是谁、是否废弃，见 §八 |
-| `v2_statistics` | 16,934 | `key varchar(64)` + `data text` + `occurred_at` KV 快照，**不是对账表**（无任何比对语义） |
+| 表                                | 行数量级                                                       | 与对账的关系                                                                                                                                                       |
+| --------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `dg_airbill`（`taotaro.sql:944`） | 62,998                                                         | ★ `freight`（**对客**国际运费）vs `xyfreight`（**协议**运费）同行并存；`xyweight`/`cweight` 双重量；全 `float(10,2)`                                               |
+| `dg_airbillprice`                 | 19,436–19,719                                                  | ★ `agreeprice`（协议价，付货代）vs `price`（收取价，对客）+ `weight float(10,1)`；均值 26,155 → **物流对账的 per-票 成本/收入对照点**                              |
+| `v2_platform_order_amount`        | （order 域已建模 `PlatformTradeAmount`，注释即「★ 对账锚点」） | 供应商侧实付回传                                                                                                                                                   |
+| `dg_payid`                        | 41（AUTO_INCREMENT=161）                                       | `pid / payid varchar(30) / payabout / uids varchar(255)` —— 像「收款账户 ↔ 会员集合」的**配置表**，`uids` 逗号分隔（order 域 Q1 `payid` 语义未决，本域一并给建议） |
+| `relation_bill_and_model`         | 185 行（AUTO_INCREMENT 55→185）                                | 多态 `bill_id ↔ billable_type/billable_id`，注释称 `bill_id` 是「**金额明细表**主键」→ 主表是谁、是否废弃，见 §八                                                  |
+| `v2_statistics`                   | 16,934                                                         | `key varchar(64)` + `data text` + `occurred_at` KV 快照，**不是对账表**（无任何比对语义）                                                                          |
 
 ### 3.6 账实漂移实测（本域的立项理由）
 
 对本地尾切片跑链式不变式 `accountmoney(第 n 条) = accountmoney(第 n-1 条) + money(第 n 条)`（按 `addtime, rid` 排序，分区到 `uid`）：
 
-| 指标 | 实测 | 含义 |
-|---|---|---|
-| 可比对链环 | 500,479 | 每 uid 首条排除（切片边界） |
-| **链断行数** | **36,482（7.3%）** | 流水金额 ≠ 余额快照差值 |
-| **受影响会员** | **919 / 1,684（55%）** | 过半会员的余额链条有断点 |
-| 断点归因 | `action=1`（下单扣款）占 **35,977 行（98.6%）**，累计绝对偏差 **2,320,445.90**；`action=4` 357 行；`action=13` **82/185 行（44%）** | **断点集中在下单扣款**——扣款金额与实际扣减的余额长期不一致 |
-| 期末快照 vs `dg_users.money` | **673 / 676 会员相符**（切片内 uid 在 `dg_users` 副本中存在的） | ★ 关键结论：**期初期末对得上，中间流水对不上**——旧系统只保证「最终余额」，不保证「每笔流水可追溯」。对账必须**逐环校验**，不能只比期末数 |
-| 方向违规 | 82 行（`type=1` 却为正 / `type=2` 却为负） | 方向与金额符号不自洽 |
-| 余额极端值 | `dg_users.money` max **99,999,350.04**（`decimal(10,2)` 上限 99,999,999.99）；**53 个会员余额为负**，min **-25,064.11**；3,265 / 5,021 余额为 0 | ★ 旧余额列**已经贴着精度上限**（差 65 元就溢出）；透支无守卫，与 docs/07 §3.6「账实漂移即拒」正面对照 |
+| 指标                         | 实测                                                                                                                                            | 含义                                                                                                                                     |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| 可比对链环                   | 500,479                                                                                                                                         | 每 uid 首条排除（切片边界）                                                                                                              |
+| **链断行数**                 | **36,482（7.3%）**                                                                                                                              | 流水金额 ≠ 余额快照差值                                                                                                                  |
+| **受影响会员**               | **919 / 1,684（55%）**                                                                                                                          | 过半会员的余额链条有断点                                                                                                                 |
+| 断点归因                     | `action=1`（下单扣款）占 **35,977 行（98.6%）**，累计绝对偏差 **2,320,445.90**；`action=4` 357 行；`action=13` **82/185 行（44%）**             | **断点集中在下单扣款**——扣款金额与实际扣减的余额长期不一致                                                                               |
+| 期末快照 vs `dg_users.money` | **673 / 676 会员相符**（切片内 uid 在 `dg_users` 副本中存在的）                                                                                 | ★ 关键结论：**期初期末对得上，中间流水对不上**——旧系统只保证「最终余额」，不保证「每笔流水可追溯」。对账必须**逐环校验**，不能只比期末数 |
+| 方向违规                     | 82 行（`type=1` 却为正 / `type=2` 却为负）                                                                                                      | 方向与金额符号不自洽                                                                                                                     |
+| 余额极端值                   | `dg_users.money` max **99,999,350.04**（`decimal(10,2)` 上限 99,999,999.99）；**53 个会员余额为负**，min **-25,064.11**；3,265 / 5,021 余额为 0 | ★ 旧余额列**已经贴着精度上限**（差 65 元就溢出）；透支无守卫，与 docs/07 §3.6「账实漂移即拒」正面对照                                    |
 
 **顺带定位到的「单据↔流水」配对事实**（回填映射的依据，实测 `uid=14228 / 21238 / 21369`）：
 
@@ -231,16 +231,16 @@
 
 ### 3.8 规模数据（决定回填策略）
 
-| 表 | 生产 AUTO_INCREMENT | 本地副本行数 | 备注 |
-|---|---|---|---|
-| `dg_record` | **8,073,550** | 502,163（rid 尾切片 6.5M–7.3M） | 千万级热表，生产在写（切片末 2026-10-08）→ 回填必须**按 rid 分片 + 短事务**，同 order 域 `dg_order` 策略 |
-| `finance_order_cash_flow` | **1,020,212** | 880,906 | 百万级 |
-| `dg_rechargerecord` | **591,054** | 34,918（rid 481,984–534,768） | 本地亦为尾切片 |
-| `relation_order_and_finance_order_cash_flow` | **2,612,089** | 220 万 | 弃用不迁 |
-| `dg_record_old` | 5,987,115 | **本地无此表** | 生产/本地不一致，需 DBA 确认是否已下线（§八 Q2） |
-| `dg_scorerecord` / `dg_bargain_record` | — | 184,224 / 80,467 | 不涉钱，不迁 |
-| `dg_huilv` | — | 待统计 | 每小时 1 行的小表（汇率时间序列），**必须迁**（汇率对账原料） |
-| `dg_refund` | 164 | 118 | 废弃，不迁 |
+| 表                                           | 生产 AUTO_INCREMENT | 本地副本行数                    | 备注                                                                                                     |
+| -------------------------------------------- | ------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `dg_record`                                  | **8,073,550**       | 502,163（rid 尾切片 6.5M–7.3M） | 千万级热表，生产在写（切片末 2026-10-08）→ 回填必须**按 rid 分片 + 短事务**，同 order 域 `dg_order` 策略 |
+| `finance_order_cash_flow`                    | **1,020,212**       | 880,906                         | 百万级                                                                                                   |
+| `dg_rechargerecord`                          | **591,054**         | 34,918（rid 481,984–534,768）   | 本地亦为尾切片                                                                                           |
+| `relation_order_and_finance_order_cash_flow` | **2,612,089**       | 220 万                          | 弃用不迁                                                                                                 |
+| `dg_record_old`                              | 5,987,115           | **本地无此表**                  | 生产/本地不一致，需 DBA 确认是否已下线（§八 Q2）                                                         |
+| `dg_scorerecord` / `dg_bargain_record`       | —                   | 184,224 / 80,467                | 不涉钱，不迁                                                                                             |
+| `dg_huilv`                                   | —                   | 待统计                          | 每小时 1 行的小表（汇率时间序列），**必须迁**（汇率对账原料）                                            |
+| `dg_refund`                                  | 164                 | 118                             | 废弃，不迁                                                                                               |
 
 时区/时间列：`addtime` 是 INT unix，`created_at/updated_at` 是 datetime——同 order 域 §4.9 处置（`DateTime(0)` + `FROM_UNIXTIME`，注意 +08:00）。
 字符集：以上旧表基本都是 **`utf8`(utf8mb3) + utf8_general_ci**，新库 `utf8mb4_unicode_ci`；本域**没有需要 JOIN 的字符串业务键**（`sn`/`remark` 只做展示与检索），但 `gateway_transaction_no`、未来的 `idempotency_key` 若需与 `member`/`v2_*` 列比对，**先按 member 域 collation 坑判定口径**（`member.username` 定 `utf8mb4_general_ci`，禁与其他字符串列 JOIN/UNION）。
@@ -249,23 +249,23 @@
 
 **`action` 全量词表**（唯一正本 `app/Models/Record.php:57-82`，日文文案，常量 `:35-55`；后台筛选同源 `DgRecordController.php:138`）：
 
-| action | 含义 | 写入点 | 本地切片实测 |
-|---|---|---|---|
-| 0 | 管理員操作 | `Repositories/Finance/RechargeRecord.php:57,101`、`Forms/ReviewManualCharge.php:46` | 18,359 行（**type=1 -51.4M / type=2 +126.8M**，remark 自由文本） |
-| 1 | 商品購入（下单扣款） | `Models/Order.php:2131`(DG)/`:2150`(DF)、`OrderImporterController.php:1686` | 381,679 行，**链断 35,977（占全部断链 98.6%）** |
-| 2 | 国内運賃 | **未找到写入点**（词表遗留；国内运费走 order 侧） | 0 行 |
-| 3 | 国際運賃 | `Services/SendOrderPayService.php:62`、`BatchUpdateDFSendorder.php:296` | 26,926 行，全负 |
-| 4 | **オーダー削除（取消退款）** | `Services/OrderCancelService.php:66` | 29,672 行全正、均值 +172、`oid` 指向订单 ✓（**修正 §3.6：action=4 是取消退款，不是充值**） |
-| 5 / 6 | 価格調整 / 数量調整 | `Order.php:1661`/`:1666` 赋值 → `:1760` | 15,029 / 13,876 行，正负都有（改涨改跌） |
-| 7 | 運賃調整 | **未找到写入点** | 0 行 |
-| 8 | ポイント引替 | **未找到写入点** → 死枚举（与 §3.7 互证） | 0 行 |
-| 9 | Paypalチャージ | `Http/Controllers/Api/PaypalController.php:134` | 5,945 行全正 ✓ 与充值单据 money 分毫不差（§3.6） |
-| 10 | 倉庫保管料（WMS 仓储费） | `Jobs/ProcessStoreMonthlySettlementJob.php:199` | 1,019 行全负 |
-| 11 | 値引交渉（已邮寄返砍价） | `EditFapiaoController.php:1211`、`EditFapiaoController2.php:839`、`BatchUpdateDFSendorder.php:316` | 9,462 行全正 |
-| 12 | その他 → **月会員費** | `Jobs/ProcessMemberFeeDeductionJob.php:146/164`、`PayNextMonthMemberFeeMutation.php:107` | **本地切片 0 行** → 需生产复核（§八 Q7） |
-| 13 | AI機能を使用 | 有常量 `:43`，**未找到写入点** | 185 行、正负互现、**44% 链断** → 疑似旁路/测试 |
-| 14–20, 22, 23 | **OEM 专属** | 仅由 `Record::resolveOemAction()` `:112` 按 `paytype` 映射（`:100-110`），入口 `RechargeRecord.php:47-49` | 各 1–2 行（OEM 测试户，正负互现） |
-| 21 | Stripeチャージ | PHP 侧**未找到**（推测 Python 网关） | 0 行 |
+| action        | 含义                         | 写入点                                                                                                    | 本地切片实测                                                                               |
+| ------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| 0             | 管理員操作                   | `Repositories/Finance/RechargeRecord.php:57,101`、`Forms/ReviewManualCharge.php:46`                       | 18,359 行（**type=1 -51.4M / type=2 +126.8M**，remark 自由文本）                           |
+| 1             | 商品購入（下单扣款）         | `Models/Order.php:2131`(DG)/`:2150`(DF)、`OrderImporterController.php:1686`                               | 381,679 行，**链断 35,977（占全部断链 98.6%）**                                            |
+| 2             | 国内運賃                     | **未找到写入点**（词表遗留；国内运费走 order 侧）                                                         | 0 行                                                                                       |
+| 3             | 国際運賃                     | `Services/SendOrderPayService.php:62`、`BatchUpdateDFSendorder.php:296`                                   | 26,926 行，全负                                                                            |
+| 4             | **オーダー削除（取消退款）** | `Services/OrderCancelService.php:66`                                                                      | 29,672 行全正、均值 +172、`oid` 指向订单 ✓（**修正 §3.6：action=4 是取消退款，不是充值**） |
+| 5 / 6         | 価格調整 / 数量調整          | `Order.php:1661`/`:1666` 赋值 → `:1760`                                                                   | 15,029 / 13,876 行，正负都有（改涨改跌）                                                   |
+| 7             | 運賃調整                     | **未找到写入点**                                                                                          | 0 行                                                                                       |
+| 8             | ポイント引替                 | **未找到写入点** → 死枚举（与 §3.7 互证）                                                                 | 0 行                                                                                       |
+| 9             | Paypalチャージ               | `Http/Controllers/Api/PaypalController.php:134`                                                           | 5,945 行全正 ✓ 与充值单据 money 分毫不差（§3.6）                                           |
+| 10            | 倉庫保管料（WMS 仓储费）     | `Jobs/ProcessStoreMonthlySettlementJob.php:199`                                                           | 1,019 行全负                                                                               |
+| 11            | 値引交渉（已邮寄返砍价）     | `EditFapiaoController.php:1211`、`EditFapiaoController2.php:839`、`BatchUpdateDFSendorder.php:316`        | 9,462 行全正                                                                               |
+| 12            | その他 → **月会員費**        | `Jobs/ProcessMemberFeeDeductionJob.php:146/164`、`PayNextMonthMemberFeeMutation.php:107`                  | **本地切片 0 行** → 需生产复核（§八 Q7）                                                   |
+| 13            | AI機能を使用                 | 有常量 `:43`，**未找到写入点**                                                                            | 185 行、正负互现、**44% 链断** → 疑似旁路/测试                                             |
+| 14–20, 22, 23 | **OEM 专属**                 | 仅由 `Record::resolveOemAction()` `:112` 按 `paytype` 映射（`:100-110`），入口 `RechargeRecord.php:47-49` | 各 1–2 行（OEM 测试户，正负互现）                                                          |
+| 21            | Stripeチャージ               | PHP 侧**未找到**（推测 Python 网关）                                                                      | 0 行                                                                                       |
 
 ⚠️ 三条排除项：`OrderController.php:3339-3400` 的数字是 **admin_operation_logs.detail_action**，与本表无关；`RecordOld.php:43-58` 是 **0–12+21 的旧词表**（无 13/14–20/22/23）——是词表演化的证据；docs/00 §三 称「Finance 业务文档 0 篇」**不实**：`backend/docs/business/` 实为 67 篇，其中 finance 相关 **4 篇**（`finance-orders-bargain-amount-warning.md`、`stripe-recharge-integration.md`、`worldfirst-quota-accumulation.md`、`ecommerce-order-confirm-balance-check.md`，另 `overdue-order-dingtalk-notification.md`）。
 
@@ -284,13 +284,13 @@ $this->increment('money', $money);       // ← 原子 UPDATE，但【无 WHERE 
 
 **幂等实况**（§4.3 的依据）：
 
-| 机制 | 实况 |
-|---|---|
-| `dg_record.idempotency_key` UNIQUE | **无 migration、全仓零读写**，仅 `taotaro.sql:1889-1891` 有列 → **DBA 手工加列**，历史行必 NULL（UNIQUE 允许多 NULL）。**不能当「已验证实践」引用** |
-| `dg_record.sn` | 真正在用的 `dg_record ↔ dg_rechargerecord` **唯一 JOIN 键**（`Record.php:129`），但生成规则 `date("YmdHis").random_int(100,999)`（`RechargeRecord.php:96`、`BatchUpdateDFSendorder.php:315`、`EditFapiaoController.php:1207`）→ **含随机数，非幂等** |
-| `dg_rechargerecord.gateway_transaction_no` UNIQUE | PHP 侧零引用；只有 `stripe-recharge-integration.md:64,262,296-302,405` 规定由 **Python MQ Consumer** 写并作幂等键（`SELECT ... WHERE gateway_transaction_no=? AND state=1 FOR UPDATE` + UNIQUE 兜底） |
-| 现存「软幂等」 | 全是**先查后插**：`remark LIKE '月会員費'` + 当月窗口（`ProcessMemberFeeDeductionJob.php:229-243`）、`hasBargainRefundRecord()`（`BatchUpdateDFSendorder.php:310`）、`RechargeRecordReviewAction.php:88` → 新系统唯一键设计的**反例清单** |
-| `sn` 三义混用 | ① 充值/退款凭证号（17 位伪单号）② 国际物流/运单号（`SendOrderPayService.php:62` 传 `sendOrder->sn`）③ 多数扣款传 `""`（`Order.php:2131/1760`）。500 长度**无代码依据**（现网最长写入约 30 字符，且无任何代码把订单号列表拼进 `sn`；`dg_sendorder.sn` 才是 varchar(2550)）→ 新库拆 `voucher_no` / `logistics_no` |
+| 机制                                              | 实况                                                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dg_record.idempotency_key` UNIQUE                | **无 migration、全仓零读写**，仅 `taotaro.sql:1889-1891` 有列 → **DBA 手工加列**，历史行必 NULL（UNIQUE 允许多 NULL）。**不能当「已验证实践」引用**                                                                                                                                                             |
+| `dg_record.sn`                                    | 真正在用的 `dg_record ↔ dg_rechargerecord` **唯一 JOIN 键**（`Record.php:129`），但生成规则 `date("YmdHis").random_int(100,999)`（`RechargeRecord.php:96`、`BatchUpdateDFSendorder.php:315`、`EditFapiaoController.php:1207`）→ **含随机数，非幂等**                                                            |
+| `dg_rechargerecord.gateway_transaction_no` UNIQUE | PHP 侧零引用；只有 `stripe-recharge-integration.md:64,262,296-302,405` 规定由 **Python MQ Consumer** 写并作幂等键（`SELECT ... WHERE gateway_transaction_no=? AND state=1 FOR UPDATE` + UNIQUE 兜底）                                                                                                           |
+| 现存「软幂等」                                    | 全是**先查后插**：`remark LIKE '月会員費'` + 当月窗口（`ProcessMemberFeeDeductionJob.php:229-243`）、`hasBargainRefundRecord()`（`BatchUpdateDFSendorder.php:310`）、`RechargeRecordReviewAction.php:88` → 新系统唯一键设计的**反例清单**                                                                       |
+| `sn` 三义混用                                     | ① 充值/退款凭证号（17 位伪单号）② 国际物流/运单号（`SendOrderPayService.php:62` 传 `sendOrder->sn`）③ 多数扣款传 `""`（`Order.php:2131/1760`）。500 长度**无代码依据**（现网最长写入约 30 字符，且无任何代码把订单号列表拼进 `sn`；`dg_sendorder.sn` 才是 varchar(2550)）→ 新库拆 `voucher_no` / `logistics_no` |
 
 **`dg_record_old` 定性**（收 §八 Q2）：**已停写、纯只读归档**——全仓仅 4 处引用（`Models/RecordOld.php`、`Admin/Controllers/Finance/DgRecordOldController.php`、`Repositories/Finance/DgRecordOld.php`、`routes.php:163` 路由 `finance/user-bills-old`），**无任何写入点**；DDL 无 `vip/extend/idempotency_key`（`taotaro.sql:1899-1918`），`AUTO_INCREMENT=5,987,115`。`dg_record` 由 migration `2023_03_06_101756` 新建（该 migration 也无 `vip/extend/idempotency_key`，且 `dg_record.vip` **代码零读写 = 死列**，与实测「vip 全 0」互证）。★ **两表 `rid` 各自自增 → 数值空间重叠**，合并进一张 `ledger_entries` 时 `id = rid` 的对齐策略会撞号（§五 已改）。
 
@@ -300,11 +300,11 @@ $this->increment('money', $money);       // ← 原子 UPDATE，但【无 WHERE 
 
 ### 4.1 记账范式：**账户制单式流水 + 余额快照**，不建复式科目树
 
-| 方案 | 取舍 | 结论 |
-|---|---|---|
-| 复式借贷（DR/CR + 科目表 + 试算平衡） | 财务严谨，但需要有人懂会计；团队是 Java 背景接手，docs/00 已说 Finance 是**知识黑洞**（旧系统 0 篇业务文档） | ❌ 重演旧系统命运：没人维护的科目表 3 年后变成第二个 `dg_record` |
-| 单式流水（照搬 `dg_record`：一行动一条） | 最简单，但 §3.6 已证明「余额转移」这类**双边动作**单式记会漏一侧 | ❌ 不满足对账 |
-| **账户制单式流水**（推荐） | 每个动钱动作 = 1~2 条 `ledger_entries`，**每条挂一个 `account_id`**；内部划转产生成对两条（一出一入），靠 `pair_key` 配平校验。有「多张账户」的收益，无「会计科目」的成本 | ✅ **采纳** |
+| 方案                                     | 取舍                                                                                                                                                                      | 结论                                                             |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 复式借贷（DR/CR + 科目表 + 试算平衡）    | 财务严谨，但需要有人懂会计；团队是 Java 背景接手，docs/00 已说 Finance 是**知识黑洞**（旧系统 0 篇业务文档）                                                              | ❌ 重演旧系统命运：没人维护的科目表 3 年后变成第二个 `dg_record` |
+| 单式流水（照搬 `dg_record`：一行动一条） | 最简单，但 §3.6 已证明「余额转移」这类**双边动作**单式记会漏一侧                                                                                                          | ❌ 不满足对账                                                    |
+| **账户制单式流水**（推荐）               | 每个动钱动作 = 1~2 条 `ledger_entries`，**每条挂一个 `account_id`**；内部划转产生成对两条（一出一入），靠 `pair_key` 配平校验。有「多张账户」的收益，无「会计科目」的成本 | ✅ **采纳**                                                      |
 
 账户集合（初版 6 类，够用即止）：`MEMBER`（会员余额，一人一户）、`COMPANY`（平台收入）、`PURCHASE`（采购成本）、`FREIGHT`（运费）、`CHANNEL_IN_TRANSIT`（渠道在途）、`ADJUSTMENT`（人工调整损益）。会员侧只关心 `MEMBER`，其余为对账侧账户。
 
@@ -381,25 +381,25 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 
 `reconciliation_batches`（`type` / 窗口 `from_at`–`to_at` / 状态 / 期望总额 / 实际总额 / 差额 / 命中差异数 / 处理人 / `finished_at`）+ `reconciliation_diffs`（`batch_id` / 比对双方业务键 / 期望值 / 实际值 / 差额 / `reason_code` / 处置状态 / 处置人 / `alert_event_id`）。
 
-| 对账 | 左 | 右 | 已知差异来源（本域实测） |
-|---|---|---|---|
-| 支付渠道 | `recharge_orders`（channel∈BANK/PAYPAL/STRIPE，state 已加钱） | 渠道账单 / `gateway_transaction_no` | `paytype` 混装负向调整；PayPal 双算法；回调重复加钱 |
-| 余额 | `Σ ledger_entries.signed_amount`（含期初） | `accounts.balance` 与 `member.balance` 投影 | **7.3% 链断**、82 行方向违规、55% 会员有断点 |
-| 供应商 | `ledger(flow_type=PURCHASE_*)` 应付 | `v2_platform_order_amount` 实付回传、`dg_order.goodsuprice` vs `goodsprice` | `price≠paid_money` 82%；1688 红包 `coupon_fee` 混在成本里 |
-| 物流 | `ledger(flow_type=FREIGHT)` 对客 | `dg_airbill.xyfreight` / `dg_airbillprice.agreeprice`（协议价=付货代） | 全 `float(10,2)`；保险费在 totalfee 公式外（send-order-schema.md:162） |
-| 汇率 | `ledger.rate` 快照 | `exchange_rates` 当时生效值 | 旧库**无快照**，只能 `amount/money` 反推且含手续费 |
+| 对账     | 左                                                            | 右                                                                          | 已知差异来源（本域实测）                                               |
+| -------- | ------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 支付渠道 | `recharge_orders`（channel∈BANK/PAYPAL/STRIPE，state 已加钱） | 渠道账单 / `gateway_transaction_no`                                         | `paytype` 混装负向调整；PayPal 双算法；回调重复加钱                    |
+| 余额     | `Σ ledger_entries.signed_amount`（含期初）                    | `accounts.balance` 与 `member.balance` 投影                                 | **7.3% 链断**、82 行方向违规、55% 会员有断点                           |
+| 供应商   | `ledger(flow_type=PURCHASE_*)` 应付                           | `v2_platform_order_amount` 实付回传、`dg_order.goodsuprice` vs `goodsprice` | `price≠paid_money` 82%；1688 红包 `coupon_fee` 混在成本里              |
+| 物流     | `ledger(flow_type=FREIGHT)` 对客                              | `dg_airbill.xyfreight` / `dg_airbillprice.agreeprice`（协议价=付货代）      | 全 `float(10,2)`；保险费在 totalfee 公式外（send-order-schema.md:162） |
+| 汇率     | `ledger.rate` 快照                                            | `exchange_rates` 当时生效值                                                 | 旧库**无快照**，只能 `amount/money` 反推且含手续费                     |
 
 - 频率按 docs/02 §5.3（每日/每单/每周），全部落 **worker BullMQ 定时 Job**；差异 ≠0 → `alert_events` + 钉钉；「冻结相关操作」按 docs/02 §5.3 落到 `accounts.status=FROZEN`（人工介入才解）。
 - 对账断言脚本化，复用 member/order/send-order 的 `00xx-*-verify.sql` 模式（逐表计数比对，**不能只比期末**——§3.6 已证明那样会漏 7.3%）。
 
 **旧系统到底有什么可复用**（逆向确证）：
 
-| 组件 | 实况 | 处置 |
-|---|---|---|
-| `FinanceStatisticController.php:28-33` + `Repositories/Finance/FinanceStatistic.php:45-122` | 月度总收款/订单收款/运单收款/佣金/**利润率**，**全部聚合 `dg_order`+`dg_sendorder`（应收口径），完全不碰流水与余额**；缓存 1h 且无失效（`:16-17`） | 是**统计不是对账**；可作为对账「应收侧一条腿」的口径参考，不进本域表 |
+| 组件                                                                                                                                                                                                                                                                                                                             | 实况                                                                                                                                                               | 处置                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FinanceStatisticController.php:28-33` + `Repositories/Finance/FinanceStatistic.php:45-122`                                                                                                                                                                                                                                      | 月度总收款/订单收款/运单收款/佣金/**利润率**，**全部聚合 `dg_order`+`dg_sendorder`（应收口径），完全不碰流水与余额**；缓存 1h 且无失效（`:16-17`）                 | 是**统计不是对账**；可作为对账「应收侧一条腿」的口径参考，不进本域表                                                                                                                                  |
 | ★ **WorldFirst 系列**：`Models/Finance/WorldFirstCollectionStatement.php`（收款对账单，`remaining`/`used_amount_value`）+ `Services/Finance/MatchWorldFirstCollectionStatementsService.php:25,107,154,224,271,292`（按收款单金额**循环扣减**待提交交易单、超额容差、不足标记）+ `docs/business/worldfirst-quota-accumulation.md` | 旧系统**唯一真正的对账实现**（网关收款流水 ↔ 业务付款单的额度累积匹配），表为 `v2_worldfirst_*`（attachment / collection_statement / notify / statement_recharge） | ★ **作为 `reconciliation_diffs` 匹配算法的范式直接借鉴**（含「容差 + 不足标记」这两个我们原来没想到的细节）；⚠ **dump 与本地副本里都没有 `v2_worldfirst_*` 四张表** → 是否已上线需生产核实（§八 Q13） |
-| `Repositories/Statistics/UserConsumeStatistics.php` | 用户消费统计 | 报表，不迁 |
-| 全仓 `reconcile|checkBalance|对账` | **未找到任何「Σ流水 = 余额」校验代码** | ⇒ 本域 §3.6 的立项依据成立：新系统是第一个做这件事的 |
+| `Repositories/Statistics/UserConsumeStatistics.php`                                                                                                                                                                                                                                                                              | 用户消费统计                                                                                                                                                       | 报表，不迁                                                                                                                                                                                            |
+| 全仓 `reconcile                                                                                                                                                                                                                                                                                                                  | checkBalance                                                                                                                                                       | 对账`                                                                                                                                                                                                 | **未找到任何「Σ流水 = 余额」校验代码** | ⇒ 本域 §3.6 的立项依据成立：新系统是第一个做这件事的 |
 
 ### 4.10 费率/汇率规则配置化（收 order 域 Q7、send-order 域遗留）
 
@@ -437,32 +437,32 @@ member.balance              缓存列（member-schema.md §3.1 的判断在此�
 
 定版本身只改两个值，但它推翻了前三域写下的口径，**不扫就有人继续抄错**。已核实的落点（行号本轮实测）：
 
-| 文件 | 位置 | 现状 → 应为 |
-|---|---|---|
-| `packages/db/prisma/schema.prisma` | **61 处** `@db.Decimal(12, 2)` | → `Decimal(14, 2)`（金额列，Q8） |
-| 同上 | `:98-99` `balanceCurrency` 注释「JPY / CNY」+ `@default("JPY")` | → 注释与默认值都改 **CNY**（Q1） |
-| 同上 | `:540` order 段头注释「采购成本列（CNY）与对客列（JPY）分组命名」 | → 两组**都是 CNY**；真实维度是「对客价 vs 采购成本价」 |
-| 同上 | `:625,627,629,631,633,639` 六处「对客单价 JPY / 砍后单价 JPY / 促销价 JPY / 对客运费 JPY / 验货金额 JPY」+ `:625` 双币种分组标题 | → 全部去掉 JPY 字样，改标 CNY |
-| 同上 | `:1731-1732` `exchangeRate Decimal(10, 4)`（旧 `exchangerate float(10,2)`） | → `Decimal(12, 8)`（汇率定版） |
-| 同上 | `:519` `LedgerEntry` 占位模型注释 | 随占位模型整体删除（§五） |
-| `docs/plans/member-schema.md` | `:154` Q3「已定：JPY + Decimal(12,2)」、`:164` 下一步同句 | → 记「**2026-10-15 改判 CNY**，理由见 finance-schema §3.3/Q1」 |
-| `docs/plans/member-迁移与共存.md` | `:133` 拍板 Q3（余额 JPY + 12,2） | 同上 |
-| `docs/plans/order-schema.md` | `:412`「对客单价 JPY（旧 goodsprice）」及 §五 其它 JPY 注释、§4.2「双币种显式列」表述 | → 对客=采购=同一币种 CNY；双列维度是「对客价 / 采购成本价」 |
-| `AGENTS.md` | 速查表 `packages/db` 状态行仍写「member 域新表正本（17 模型）」 | 实为 49 模型（member 17 + order 26 + send-order 6，其中 order/send-order 未提交），加 finance 段后更新 |
-| ✅ 已改（2026-10-15） | `docs/07-开发规范守则.md` §6.2（12,4 → 14,2，补「币种列必带且禁跨币种加减」）、`packages/utils/src/money.ts` 头注释、`AGENTS.md` 技术栈定版表金额行 + `packages/db` 状态行（17 模型 → 49 模型） | 完成 |
+| 文件                               | 位置                                                                                                                                                                                            | 现状 → 应为                                                                                            |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `packages/db/prisma/schema.prisma` | **61 处** `@db.Decimal(12, 2)`                                                                                                                                                                  | → `Decimal(14, 2)`（金额列，Q8）                                                                       |
+| 同上                               | `:98-99` `balanceCurrency` 注释「JPY / CNY」+ `@default("JPY")`                                                                                                                                 | → 注释与默认值都改 **CNY**（Q1）                                                                       |
+| 同上                               | `:540` order 段头注释「采购成本列（CNY）与对客列（JPY）分组命名」                                                                                                                               | → 两组**都是 CNY**；真实维度是「对客价 vs 采购成本价」                                                 |
+| 同上                               | `:625,627,629,631,633,639` 六处「对客单价 JPY / 砍后单价 JPY / 促销价 JPY / 对客运费 JPY / 验货金额 JPY」+ `:625` 双币种分组标题                                                                | → 全部去掉 JPY 字样，改标 CNY                                                                          |
+| 同上                               | `:1731-1732` `exchangeRate Decimal(10, 4)`（旧 `exchangerate float(10,2)`）                                                                                                                     | → `Decimal(12, 8)`（汇率定版）                                                                         |
+| 同上                               | `:519` `LedgerEntry` 占位模型注释                                                                                                                                                               | 随占位模型整体删除（§五）                                                                              |
+| `docs/plans/member-schema.md`      | `:154` Q3「已定：JPY + Decimal(12,2)」、`:164` 下一步同句                                                                                                                                       | → 记「**2026-10-15 改判 CNY**，理由见 finance-schema §3.3/Q1」                                         |
+| `docs/plans/member-迁移与共存.md`  | `:133` 拍板 Q3（余额 JPY + 12,2）                                                                                                                                                               | 同上                                                                                                   |
+| `docs/plans/order-schema.md`       | `:412`「对客单价 JPY（旧 goodsprice）」及 §五 其它 JPY 注释、§4.2「双币种显式列」表述                                                                                                           | → 对客=采购=同一币种 CNY；双列维度是「对客价 / 采购成本价」                                            |
+| `AGENTS.md`                        | 速查表 `packages/db` 状态行仍写「member 域新表正本（17 模型）」                                                                                                                                 | 实为 49 模型（member 17 + order 26 + send-order 6，其中 order/send-order 未提交），加 finance 段后更新 |
+| ✅ 已改（2026-10-15）              | `docs/07-开发规范守则.md` §6.2（12,4 → 14,2，补「币种列必带且禁跨币种加减」）、`packages/utils/src/money.ts` 头注释、`AGENTS.md` 技术栈定版表金额行 + `packages/db` 状态行（17 模型 → 49 模型） | 完成                                                                                                   |
 
 **执行实况（2026-10-15，#11b 已完成部分）**：
 
-| 动作 | 结果 |
-|---|---|
-| `schema.prisma` 清扫 | **61 处** `Decimal(12, 2)` → `(14, 2)`；另 3 处金额在 `(10, 2)`（`df_fee` / 发票 `bargain_price` / 发票 `send_price`）→ `(14, 2)`；`exchange_rate` `(10, 4)` → **`(12, 8)`**；`balance_currency` 注释 + `default("CNY")`、`charged_currency` `default("CNY")`；**22 处**「JPY（旧 …）」注释 → CNY，order 段头与 `4.2` 分组说明改为「对客价 / 采购成本价（同币种 CNY）」 |
-| ★ **有意不改的三处 `(10,2)`** | `member.float_rate`（Q3 死列待处置）、`invoices.order_weight`（重量）、`invoices.low_multiple`（倍率）——**非金额**，盲替换会改错语义；同理 `0011` 里 `CAST(countweight AS DECIMAL(12,4)) * 1000` 是**千克→克**的精度需要，保持不动 |
-| 外部平台币种保留 | `v2_ecommerce_shop.currency default('JPY')`（:938）**不改**——那是 Shopify/Rakuten 等**平台自己的结算币种**，与本系统账本面值无关；`v2_ai_task.cost_currency` 同理 |
-| 回填脚本 | `0007:251`、`0008:88/115/117` 四处 `CAST(... AS DECIMAL(12, 2))` → `(14, 2)`；`0012` 汇率注释同步；★ **另发现三处硬写币种字面量** `0002:95`、`0002:166`（`balance_currency`）、`0007:248`（`charged_currency`）`'JPY'` → `'CNY'`——静态扫 schema 看不见，详见 `packages/db/sql/README.md`「口径变更后的复跑清单」 |
-| 计划书订正 | `member-schema.md` §3.1/§六/§七（含「日本市场主币 JPY」的错误推断段落重写）、`member-迁移与共存.md:65/133`、`order-schema.md` §4.2 全段 + §五 4 处注释 + `chargedCurrency` 默认值、`send-order-schema.md` 金额组 6 条 + 7 处注释 |
-| DDL 重生成 | 按段基线截断法重建：`head -535`（member+finance 占位）/ `head -1413`（+order）→ 三次 `prisma migrate diff` 生成 `0001`(17 表) / `0002`(26 表) / `0003`(6 表)，**表数与结构同先前一致**，只有精度与默认值变化 |
-| **静态验证** | 新建空库 `crossbuy_ddlcheck` 跑完整链 `0001 → 0001a → 0002 → 0002a → 0003`：**49 表建成**；`decimal(14,2)` 65 处 / `decimal(12,8)` 1 处 / `decimal(10,2)` 3 处（即上面有意保留的非金额列）；`member.balance_currency` 与 `orders.charged_currency` 默认值实测 `CNY`；`member.username` + 4 个 `tid` 列 `utf8mb4_general_ci` 未被重生成冲掉。`pnpm db:generate` ✓、`pnpm typecheck` 16/16 ✓、`pnpm test`（contract smoke）15/15 ✓。校验后已 drop 该临时库 |
-| ✅ **复跑已完成**（2026-10-15） | `crossbuy_dryrun` 重建 49 张派生表 → `0006`/`0010` 刷源 → 三段回填 → 四份 verify → **第二遍计数与金额不变**：Σbalance = Σ`dg_users.money` = 115,263,758.22、砍价 364,598.62、五费 3,050,486.56、历史表行数=实体数、非 CNY 行 0。★ **复跑的最大收获不是「绿」，而是挖出一个 `INSERT..ODKU` 静默吞账号 + 清余额的缺陷**（5 个账号、2 笔余额），已加 fail-fast 守卫——证据与结论见 `03-T1本地演练报告.md` §九 | 对本域的警示：`@@unique([accountId, idempotencyKey])` 的 ODKU 只在「同一实体重复投递」时才是对的；凡是**业务键可能属于不同实体**的 UNIQUE（如 username），撞键必须中止而不是 upsert 覆盖 |
+| 动作                            | 结果                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema.prisma` 清扫            | **61 处** `Decimal(12, 2)` → `(14, 2)`；另 3 处金额在 `(10, 2)`（`df_fee` / 发票 `bargain_price` / 发票 `send_price`）→ `(14, 2)`；`exchange_rate` `(10, 4)` → **`(12, 8)`**；`balance_currency` 注释 + `default("CNY")`、`charged_currency` `default("CNY")`；**22 处**「JPY（旧 …）」注释 → CNY，order 段头与 `4.2` 分组说明改为「对客价 / 采购成本价（同币种 CNY）」                                                                                  |
+| ★ **有意不改的三处 `(10,2)`**   | `member.float_rate`（Q3 死列待处置）、`invoices.order_weight`（重量）、`invoices.low_multiple`（倍率）——**非金额**，盲替换会改错语义；同理 `0011` 里 `CAST(countweight AS DECIMAL(12,4)) * 1000` 是**千克→克**的精度需要，保持不动                                                                                                                                                                                                                       |
+| 外部平台币种保留                | `v2_ecommerce_shop.currency default('JPY')`（:938）**不改**——那是 Shopify/Rakuten 等**平台自己的结算币种**，与本系统账本面值无关；`v2_ai_task.cost_currency` 同理                                                                                                                                                                                                                                                                                        |
+| 回填脚本                        | `0007:251`、`0008:88/115/117` 四处 `CAST(... AS DECIMAL(12, 2))` → `(14, 2)`；`0012` 汇率注释同步；★ **另发现三处硬写币种字面量** `0002:95`、`0002:166`（`balance_currency`）、`0007:248`（`charged_currency`）`'JPY'` → `'CNY'`——静态扫 schema 看不见，详见 `packages/db/sql/README.md`「口径变更后的复跑清单」                                                                                                                                         |
+| 计划书订正                      | `member-schema.md` §3.1/§六/§七（含「日本市场主币 JPY」的错误推断段落重写）、`member-迁移与共存.md:65/133`、`order-schema.md` §4.2 全段 + §五 4 处注释 + `chargedCurrency` 默认值、`send-order-schema.md` 金额组 6 条 + 7 处注释                                                                                                                                                                                                                         |
+| DDL 重生成                      | 按段基线截断法重建：`head -535`（member+finance 占位）/ `head -1413`（+order）→ 三次 `prisma migrate diff` 生成 `0001`(17 表) / `0002`(26 表) / `0003`(6 表)，**表数与结构同先前一致**，只有精度与默认值变化                                                                                                                                                                                                                                             |
+| **静态验证**                    | 新建空库 `crossbuy_ddlcheck` 跑完整链 `0001 → 0001a → 0002 → 0002a → 0003`：**49 表建成**；`decimal(14,2)` 65 处 / `decimal(12,8)` 1 处 / `decimal(10,2)` 3 处（即上面有意保留的非金额列）；`member.balance_currency` 与 `orders.charged_currency` 默认值实测 `CNY`；`member.username` + 4 个 `tid` 列 `utf8mb4_general_ci` 未被重生成冲掉。`pnpm db:generate` ✓、`pnpm typecheck` 16/16 ✓、`pnpm test`（contract smoke）15/15 ✓。校验后已 drop 该临时库 |
+| ✅ **复跑已完成**（2026-10-15） | `crossbuy_dryrun` 重建 49 张派生表 → `0006`/`0010` 刷源 → 三段回填 → 四份 verify → **第二遍计数与金额不变**：Σbalance = Σ`dg_users.money` = 115,263,758.22、砍价 364,598.62、五费 3,050,486.56、历史表行数=实体数、非 CNY 行 0。★ **复跑的最大收获不是「绿」，而是挖出一个 `INSERT..ODKU` 静默吞账号 + 清余额的缺陷**（5 个账号、2 笔余额），已加 fail-fast 守卫——证据与结论见 `03-T1本地演练报告.md` §九                                                | 对本域的警示：`@@unique([accountId, idempotencyKey])` 的 ODKU 只在「同一实体重复投递」时才是对的；凡是**业务键可能属于不同实体**的 UNIQUE（如 username），撞键必须中止而不是 upsert 覆盖 |
 
 ★ **时机窗口**：`0001/0002/0003` 三份 DDL 都还**没落生产**（#3d 等 DBA 写权限）→ 现在改只需 `prisma migrate diff` 重生成 + 本地演练重跑；一旦生产建表，同样的改动就是 ALTER + 三域回填重跑。清扫必须**赶在 T0 落库前**。
 
@@ -735,14 +735,14 @@ model LedgerEntryOrder {
 
 上面 9 个模型 + 三张待补表已一并落地，DDL 增量脚本 `packages/db/sql/0015-finance-domain-up.sql`（`prisma migrate diff` 生成，12 表、`decimal(14,2)`×18、`decimal(12,8)`×5、13 个 UNIQUE）。**与草案的 6 处 delta**（都是实施时必须定的口径，回写本节以免后来人以为草案即成品）：
 
-| # | 草案 | 落地 | 理由 |
-|---|---|---|---|
-| 1 | `LedgerEntry.currency` 无默认 | `@default("CNY")` | Q1 定版后所有面值列一律带 CNY 默认（与 `member.balanceCurrency`、`orders.chargedCurrency` 同构），禁「插入时忘了带币种」 |
-| 2 | `RechargeOrder.deleted Boolean` | `deletedAt DateTime?` | 前三域 49 模型的既有惯例是 `deleted_at`（NULL = 未删，全仓 `deleted Boolean` 出现 0 次），本域不新开第二种软删形态；`docs/07 §6.2` 的措辞已同步订正 |
-| 3 | 草案未列 `bizNos` | `LedgerEntry.bizNos Json?` | §6.4 要求「剥标签后 URL 进 bizNos」，草案漏了这个落点列 |
-| 4 | 草案 `@@index` 缺 `recharge_order_id` | 补 | `recharge_orders.ledger_entry_id` 只给单向，按单查分录需要反向索引 |
-| 5 | `Account` 唯一键 | ✅ **已拍板收口（2026-10-16，#11c②）**：`member_id` 由 NULL 改 **sentinel 0**（`Int @default(0)`），唯一键升为 `@@unique(kind, currency, member_id)` | MySQL 唯一索引里 **NULL 互不相等** → 原键对 COMPANY/PURCHASE/FREIGHT/… 这些 `memberId IS NULL` 的账户完全不设防。依据：`member.id` 恒 ≥ 1（回填后 `AUTO_INCREMENT = max(uid)+1`），0 不可能与真实会员撞号；留 `currency` 在键里是为了「一个 kind 一个币种一个户」，将来多币种记账不必再迁移。**功能实测**：重复插 `(COMPANY, CNY, 0)` → `ERROR 1062 Duplicate entry 'COMPANY-CNY-0'` ✓；`(COMPANY, JPY, 0)` 可插 ✓。⚠ 代价：应用层读到 `member_id = 0` 表示「平台侧账户」，禁把它当会员 id 用 |
-| 6 | 三张待补表只有名字 | 字段级设计已完成 | `alert_channels`（`credential_ref` **只存凭证入口引用，禁明文 webhook/secret 入库**，docs/07 §5.5）、`alert_rules`（`@@unique(code, channelId)` 支持「一个 code 两个出口」）、`legacy_sync_watermarks`（`@@unique(source_table)` + `last_legacy_id` 按 rid 单调 + `overlap_count` 左叠 200） |
+| #   | 草案                                  | 落地                                                                                                                                                 | 理由                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `LedgerEntry.currency` 无默认         | `@default("CNY")`                                                                                                                                    | Q1 定版后所有面值列一律带 CNY 默认（与 `member.balanceCurrency`、`orders.chargedCurrency` 同构），禁「插入时忘了带币种」                                                                                                                                                                                                                                                                                                                                                                      |
+| 2   | `RechargeOrder.deleted Boolean`       | `deletedAt DateTime?`                                                                                                                                | 前三域 49 模型的既有惯例是 `deleted_at`（NULL = 未删，全仓 `deleted Boolean` 出现 0 次），本域不新开第二种软删形态；`docs/07 §6.2` 的措辞已同步订正                                                                                                                                                                                                                                                                                                                                           |
+| 3   | 草案未列 `bizNos`                     | `LedgerEntry.bizNos Json?`                                                                                                                           | §6.4 要求「剥标签后 URL 进 bizNos」，草案漏了这个落点列                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| 4   | 草案 `@@index` 缺 `recharge_order_id` | 补                                                                                                                                                   | `recharge_orders.ledger_entry_id` 只给单向，按单查分录需要反向索引                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| 5   | `Account` 唯一键                      | ✅ **已拍板收口（2026-10-16，#11c②）**：`member_id` 由 NULL 改 **sentinel 0**（`Int @default(0)`），唯一键升为 `@@unique(kind, currency, member_id)` | MySQL 唯一索引里 **NULL 互不相等** → 原键对 COMPANY/PURCHASE/FREIGHT/… 这些 `memberId IS NULL` 的账户完全不设防。依据：`member.id` 恒 ≥ 1（回填后 `AUTO_INCREMENT = max(uid)+1`），0 不可能与真实会员撞号；留 `currency` 在键里是为了「一个 kind 一个币种一个户」，将来多币种记账不必再迁移。**功能实测**：重复插 `(COMPANY, CNY, 0)` → `ERROR 1062 Duplicate entry 'COMPANY-CNY-0'` ✓；`(COMPANY, JPY, 0)` 可插 ✓。⚠ 代价：应用层读到 `member_id = 0` 表示「平台侧账户」，禁把它当会员 id 用 |
+| 6   | 三张待补表只有名字                    | 字段级设计已完成                                                                                                                                     | `alert_channels`（`credential_ref` **只存凭证入口引用，禁明文 webhook/secret 入库**，docs/07 §5.5）、`alert_rules`（`@@unique(code, channelId)` 支持「一个 code 两个出口」）、`legacy_sync_watermarks`（`@@unique(source_table)` + `last_legacy_id` 按 rid 单调 + `overlap_count` 左叠 200）                                                                                                                                                                                                  |
 
 占位模型的处置：原 `LedgerEntry`（表名 `ledger_entry`，DR/CR + `Decimal` 无账户 + 无余额快照 + 无业务唯一键）已整体替换，**`0001-member-domain-up.sql` 重生成后不再含它**（16 表）。生产从未建过占位表；演练库若残留，手工 `DROP TABLE ledger_entry` 即可。
 
@@ -756,11 +756,11 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 
 **采用「单写者 + 镜像同步」而不是「双边各自记账」**：
 
-| 阶段 | 谁是记账者 | 新系统角色 |
-|---|---|---|
-| T1（回填完、order/send-order 未切） | **旧系统独占** | `ledger_entries` 只做**镜像投影**（反向同步灌入）+ 跑对账；新系统**不产生** MEMBER 户分录 |
+| 阶段                                 | 谁是记账者                | 新系统角色                                                                                                                  |
+| ------------------------------------ | ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| T1（回填完、order/send-order 未切）  | **旧系统独占**            | `ledger_entries` 只做**镜像投影**（反向同步灌入）+ 跑对账；新系统**不产生** MEMBER 户分录                                   |
 | T1.5（某条链路整体切新，如充值审核） | 按 **flow_type 分片**独占 | 该链路 `ledger.post()` 为唯一记账点，**同事务双写** `dg_record` + `dg_users.money`（旧域仍读得懂）；其余 flow_type 仍走镜像 |
-| T2（order/send-order 切完） | 新系统 | 旧 `dg_record` 降级为只读投影，随域退休（T3） |
+| T2（order/send-order 切完）          | 新系统                    | 旧 `dg_record` 降级为只读投影，随域退休（T3）                                                                               |
 
 规则：**一条 `flow_type` 只能有一个写者**，切换以 flow_type 为粒度，禁两条链路同时记账；切换点登记在 `TODO.md`。
 
@@ -809,22 +809,22 @@ member/order/send-order 三域的双写都是「新系统写完自己的表，�
 
 ## 八、未决问题（需业务/用户确认）
 
-| # | 问题 | 影响 | 本文建议 |
-|---|---|---|---|
-| **Q1 ★阻塞级** | ~~余额币种口径冲突~~ **✅ 已拍板（2026-10-15）：账本面值 = CNY，与旧库同单位**（实测旧对客全链路是 CNY，member Q3「JPY」判错）。JPY 只留在 `recharge_orders.sourceAmount`、`monpayamt` 与前台展示层 | 三域已落地注释/默认值须清扫（见 §4.14 清单）；不扫则后来者继续抄错 | `accounts.currency default("CNY")`；双写与对账同单位可比；**禁**再在任何注释写「对客单价 JPY」 |
-| Q2 | ~~`dg_record_old`（598 万）是否仍在写？是否并入 ledger？~~ **✅ 已收口（§3.9）**：全仓 4 处引用**全是只读**（Model + Grid + Repository + 路由 `finance/user-bills-old`），**无任何写入点** → 纯历史归档 | 回填范围 | 只回填**一次**、不纳入 §6.2 镜像同步；`rid` 与主表重叠 → 靠 `legacy_source` 区分（§4.12） |
-| Q3 | `dg_users.floatrate` 已判死列，`schema.prisma:103` 的 `floatRate` 怎么处置 | 已落地 member 段要 ALTER 或改名 | 改 `legacyFloatRate` 仅审计，禁作计算输入；真实加点归 `fee_rules`。**同类死列新增两枚**：`dg_record.vip`（代码零读写、实测全 0）、`dg_record.idempotency_key`（DBA 手加、零读写） |
-| Q4 | ~~要不要「冻结/预扣」~~ **✅ 已收口（§4.7）**：旧系统**无冻结概念**（全仓 `freeze|locked_money` 只命中 MNS 注释），模式是「校验后立即扣」，校验散落 6 处调用方且 2 个 Job 无锁无校验 | `accounts` 是否加 `lockedAmount` | **不加冻结列**（加了无法与旧库双写比对）；真正的充值风险是「初审即入账」，走 #11a 封堵而非冻结 |
-| Q5 | `finance_order_cash_flow.utype`（0/1）与 `dg_users.utype` 是否同义；`dg_payid`（41 行）归属 | `LedgerEntry.memberKind` 列与账户分组建模 | `utype` 先当「客户/供应商」二分镜像；`dg_payid` 建议归 member 的收款账户配置 |
-| Q6 | 券/积分旧都不入账（§3.7）。新系统若启用，抵扣是「少扣」还是「先扣后返」 | 需新增 flow_type 与对账口径 | 若启用：**先扣后返**（两笔分录，账实可比），禁「少扣」（金额不进账本 = 对账盲区） |
-| Q7 | ~~`action` 词表残余值~~ **✅ 词表已确证**（`Record.php:57-82`，§3.9 全量 21 值）。残余三问：① `action=12`（会員費）本地切片 **0 行**，但有两个 Job 写入点 → 月额会员扣费是否真在跑；② `action=13`（AI機能）**有常量无写入点**却有 185 行、44% 链断 → 谁写的（旁路 HTTP？）；③ `action=21`（Stripe）写入点在 Python 网关侧 | flow_type 映射完整度、`12` 是否入词表 | 生产 `SELECT action, COUNT(*) GROUP BY action` 全量复核（datapro 只读可做）；`13` 若查不到写入点则整段归 `LEGACY_UNCLASSIFIED` |
-| Q8 | ~~金额精度定版~~ **✅ 已拍板（2026-10-15）：本域金额 `Decimal(14,2)`、汇率 `Decimal(12,8)`**（docs/07 §6.2 与 `utils/money.ts` 注释原文写 12,4，已同步改） | 全库金额列 + 已落地三域的 12,2 列 | ★ **趁 T0 尚未落生产（#3d 待 DBA 写权限），改 schema 重生成 DDL 成本为 0**；一旦 `0001~0003` 在生产建完再改就是 ALTER + 回填重跑。`member.balance` 必须同步升 14,2，否则账本 14,2 → 投影 12,2 会在 999,999,999.99 处溢出（§4.11） |
-| Q9 | 「支付渠道对账」的账单数据从哪来（PayPal/Stripe 报表 API？CSV 导入？）。旧库 0 张账单表 | 该对账能否自动化，还是只做「内部一致性对账」 | 需业务确认渠道取数方式；未定前**先落地余额/供应商/物流/汇率四类**，渠道对账留接口 |
-| Q10 | docs/02 §5.3「对账不平→**冻结相关操作**」的业务边界：冻结账户（禁扣款）还是仅标记差异 | `accounts.status=FROZEN` 的触发面与误伤 | 只对「差异 > 阈值且非 KNOWN_BASELINE」触发，人工确认后解 |
-| Q11 | 月额会员 `monpayamt`（默认 30000，注释「日元」）每月扣费的换算时点与扣费主体（定时 Job？）归本域哪条链路 | flow_type + 月度 Job 归属 | 归本域 `MEMBER_MONTHLY_FEE`，worker 定时，`rate` 必带快照 |
-| Q12 | 保险费 `Insurancefee` 在 totalfee 公式外（send-order-schema.md:162），要不要作为独立 flow_type 入账 | 物流对账口径完整性 | 独立 `INSURANCE_FEE` 入账，禁继续「公式外相加」 |
-| Q13 | ★ **WorldFirst 收款对账是否已上线**：代码有 4 张 `v2_worldfirst_*` 表的 Model + `MatchWorldFirstCollectionStatementsService`（旧系统唯一真对账实现）+ 业务文档，但 **`taotaro.sql`（2026-10-13 生产导出）与本地副本都没有这 4 张表** | 决定本域 §4.9 是「新造对账引擎」还是「接管既有 WorldFirst 匹配器」；也决定 `dg_record↔rechargerecord↔网关` 三者关系是否已有实现 | 生产核实表是否存在/有无数据；**若在产，其「循环扣减 + 超额容差 + 不足标记」算法直接继承，不另起炉灶** |
-| Q14 | 充值「**初审通过即入账**」（银行流水核对在后，§4.7）要不要在切写前改成「核对通过才入账」 | 这是**业务规则变更**不是 bug 修复：改了会拖长会员可用余额到账时间，运营可能有既定习惯 | 需业务确认；未确认前新系统按旧规则镜像，但 `reconciliation_diffs(reason_code='CREDIT_BEFORE_SETTLEMENT')` 先统计敞口金额 |
+| #              | 问题                                                                                                                                                                                                                                                                                                                      | 影响                                                                                                                            | 本文建议                                                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Q1 ★阻塞级** | ~~余额币种口径冲突~~ **✅ 已拍板（2026-10-15）：账本面值 = CNY，与旧库同单位**（实测旧对客全链路是 CNY，member Q3「JPY」判错）。JPY 只留在 `recharge_orders.sourceAmount`、`monpayamt` 与前台展示层                                                                                                                       | 三域已落地注释/默认值须清扫（见 §4.14 清单）；不扫则后来者继续抄错                                                              | `accounts.currency default("CNY")`；双写与对账同单位可比；**禁**再在任何注释写「对客单价 JPY」                                                                                                                                    |
+| Q2             | ~~`dg_record_old`（598 万）是否仍在写？是否并入 ledger？~~ **✅ 已收口（§3.9）**：全仓 4 处引用**全是只读**（Model + Grid + Repository + 路由 `finance/user-bills-old`），**无任何写入点** → 纯历史归档                                                                                                                   | 回填范围                                                                                                                        | 只回填**一次**、不纳入 §6.2 镜像同步；`rid` 与主表重叠 → 靠 `legacy_source` 区分（§4.12）                                                                                                                                         |
+| Q3             | `dg_users.floatrate` 已判死列，`schema.prisma:103` 的 `floatRate` 怎么处置                                                                                                                                                                                                                                                | 已落地 member 段要 ALTER 或改名                                                                                                 | 改 `legacyFloatRate` 仅审计，禁作计算输入；真实加点归 `fee_rules`。**同类死列新增两枚**：`dg_record.vip`（代码零读写、实测全 0）、`dg_record.idempotency_key`（DBA 手加、零读写）                                                 |
+| Q4             | ~~要不要「冻结/预扣」~~ **✅ 已收口（§4.7）**：旧系统**无冻结概念**（全仓 `freeze                                                                                                                                                                                                                                         | locked_money` 只命中 MNS 注释），模式是「校验后立即扣」，校验散落 6 处调用方且 2 个 Job 无锁无校验                              | `accounts` 是否加 `lockedAmount`                                                                                                                                                                                                  | **不加冻结列**（加了无法与旧库双写比对）；真正的充值风险是「初审即入账」，走 #11a 封堵而非冻结 |
+| Q5             | `finance_order_cash_flow.utype`（0/1）与 `dg_users.utype` 是否同义；`dg_payid`（41 行）归属                                                                                                                                                                                                                               | `LedgerEntry.memberKind` 列与账户分组建模                                                                                       | `utype` 先当「客户/供应商」二分镜像；`dg_payid` 建议归 member 的收款账户配置                                                                                                                                                      |
+| Q6             | 券/积分旧都不入账（§3.7）。新系统若启用，抵扣是「少扣」还是「先扣后返」                                                                                                                                                                                                                                                   | 需新增 flow_type 与对账口径                                                                                                     | 若启用：**先扣后返**（两笔分录，账实可比），禁「少扣」（金额不进账本 = 对账盲区）                                                                                                                                                 |
+| Q7             | ~~`action` 词表残余值~~ **✅ 词表已确证**（`Record.php:57-82`，§3.9 全量 21 值）。残余三问：① `action=12`（会員費）本地切片 **0 行**，但有两个 Job 写入点 → 月额会员扣费是否真在跑；② `action=13`（AI機能）**有常量无写入点**却有 185 行、44% 链断 → 谁写的（旁路 HTTP？）；③ `action=21`（Stripe）写入点在 Python 网关侧 | flow_type 映射完整度、`12` 是否入词表                                                                                           | 生产 `SELECT action, COUNT(*) GROUP BY action` 全量复核（datapro 只读可做）；`13` 若查不到写入点则整段归 `LEGACY_UNCLASSIFIED`                                                                                                    |
+| Q8             | ~~金额精度定版~~ **✅ 已拍板（2026-10-15）：本域金额 `Decimal(14,2)`、汇率 `Decimal(12,8)`**（docs/07 §6.2 与 `utils/money.ts` 注释原文写 12,4，已同步改）                                                                                                                                                                | 全库金额列 + 已落地三域的 12,2 列                                                                                               | ★ **趁 T0 尚未落生产（#3d 待 DBA 写权限），改 schema 重生成 DDL 成本为 0**；一旦 `0001~0003` 在生产建完再改就是 ALTER + 回填重跑。`member.balance` 必须同步升 14,2，否则账本 14,2 → 投影 12,2 会在 999,999,999.99 处溢出（§4.11） |
+| Q9             | 「支付渠道对账」的账单数据从哪来（PayPal/Stripe 报表 API？CSV 导入？）。旧库 0 张账单表                                                                                                                                                                                                                                   | 该对账能否自动化，还是只做「内部一致性对账」                                                                                    | 需业务确认渠道取数方式；未定前**先落地余额/供应商/物流/汇率四类**，渠道对账留接口                                                                                                                                                 |
+| Q10            | docs/02 §5.3「对账不平→**冻结相关操作**」的业务边界：冻结账户（禁扣款）还是仅标记差异                                                                                                                                                                                                                                     | `accounts.status=FROZEN` 的触发面与误伤                                                                                         | 只对「差异 > 阈值且非 KNOWN_BASELINE」触发，人工确认后解                                                                                                                                                                          |
+| Q11            | 月额会员 `monpayamt`（默认 30000，注释「日元」）每月扣费的换算时点与扣费主体（定时 Job？）归本域哪条链路                                                                                                                                                                                                                  | flow_type + 月度 Job 归属                                                                                                       | 归本域 `MEMBER_MONTHLY_FEE`，worker 定时，`rate` 必带快照                                                                                                                                                                         |
+| Q12            | 保险费 `Insurancefee` 在 totalfee 公式外（send-order-schema.md:162），要不要作为独立 flow_type 入账                                                                                                                                                                                                                       | 物流对账口径完整性                                                                                                              | 独立 `INSURANCE_FEE` 入账，禁继续「公式外相加」                                                                                                                                                                                   |
+| Q13            | ★ **WorldFirst 收款对账是否已上线**：代码有 4 张 `v2_worldfirst_*` 表的 Model + `MatchWorldFirstCollectionStatementsService`（旧系统唯一真对账实现）+ 业务文档，但 **`taotaro.sql`（2026-10-13 生产导出）与本地副本都没有这 4 张表**                                                                                      | 决定本域 §4.9 是「新造对账引擎」还是「接管既有 WorldFirst 匹配器」；也决定 `dg_record↔rechargerecord↔网关` 三者关系是否已有实现 | 生产核实表是否存在/有无数据；**若在产，其「循环扣减 + 超额容差 + 不足标记」算法直接继承，不另起炉灶**                                                                                                                             |
+| Q14            | 充值「**初审通过即入账**」（银行流水核对在后，§4.7）要不要在切写前改成「核对通过才入账」                                                                                                                                                                                                                                  | 这是**业务规则变更**不是 bug 修复：改了会拖长会员可用余额到账时间，运营可能有既定习惯                                           | 需业务确认；未确认前新系统按旧规则镜像，但 `reconciliation_diffs(reason_code='CREDIT_BEFORE_SETTLEMENT')` 先统计敞口金额                                                                                                          |
 
 ## 九、下一步
 

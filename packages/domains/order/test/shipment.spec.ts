@@ -15,9 +15,19 @@ async function seedOrder(
   await tx.$executeRawUnsafe(
     `INSERT INTO dg_order (uid, uname, memberid, tid, goodssite, type, state, goodsprice, goodsprice1, goodsnum, bargainprice, sendprice, inspection, goodsurl, goodsname, extend, addtime, uptime, expressno, waytime, yanhuofba, yanhuojinyun, yanhuozengzhi, yanhuoasin, yanhuofnsku, baozhuang, hbbaozhuang, baonum, SKU, shangpin_sku, FNSKU, shangpin_fnsku, name, shangpin_name, amazon, putong, shangpin_amazon, fuzhuang, tiebiao, huanbaoz, qita)
      VALUES (1, 'shipuser', '', ?, ?, ?, ?, 100, 0, 1, 0, 0, 0, 'https://e.com/1', 'x', NULL, ?, ?, ?, NULL, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '')`,
-    input.tid, input.goodssite ?? '1688', input.type ?? 1, input.state, now, now, input.expressno ?? '',
+    input.tid,
+    input.goodssite ?? '1688',
+    input.type ?? 1,
+    input.state,
+    now,
+    now,
+    input.expressno ?? '',
   );
-  const row = await tx.$queryRawUnsafe<Array<{ oid: number }>>('SELECT oid FROM dg_order WHERE tid = ? AND state = ? ORDER BY oid DESC LIMIT 1', input.tid, input.state);
+  const row = await tx.$queryRawUnsafe<Array<{ oid: number }>>(
+    'SELECT oid FROM dg_order WHERE tid = ? AND state = ? ORDER BY oid DESC LIMIT 1',
+    input.tid,
+    input.state,
+  );
   return Number(row[0]!.oid);
 }
 
@@ -36,17 +46,30 @@ describe('发货回传（updateExpressNoForChrome / batchUpdateExpressno 1:1）'
       const oid = await seedOrder(tx, { tid: 'T-ship-1', state: 2 });
       const svc = makeService(tx);
 
-      const result = await svc.updateExpressNoForChrome({ tid: 'T-ship-1', expressNo: 'SF111 SF222' });
+      const result = await svc.updateExpressNoForChrome({
+        tid: 'T-ship-1',
+        expressNo: 'SF111 SF222',
+      });
       expect(result).toEqual({ code: 200 });
 
-      const order = await tx.dg_order.findUnique({ where: { oid }, select: { state: true, waytime: true, expressno: true } });
+      const order = await tx.dg_order.findUnique({
+        where: { oid },
+        select: { state: true, waytime: true, expressno: true },
+      });
       expect(order?.state).toBe(3);
-      expect(order?.waytime).toBe(Math.floor(new Date('2026-10-17T21:00:00+08:00').getTime() / 1000));
+      expect(order?.waytime).toBe(
+        Math.floor(new Date('2026-10-17T21:00:00+08:00').getTime() / 1000),
+      );
       expect(order?.expressno).toBe('SF111 SF222');
       // 两个单号各建一条入库记录 + pivot 关联
-      const arrivals = await tx.v2_logistic_domestic.findMany({ where: { expressno: { in: ['SF111', 'SF222'] } }, select: { id: true, provider_code: true, state: true } });
+      const arrivals = await tx.v2_logistic_domestic.findMany({
+        where: { expressno: { in: ['SF111', 'SF222'] } },
+        select: { id: true, provider_code: true, state: true },
+      });
       expect(arrivals).toHaveLength(2);
-      const pivots = await tx.v2_relation_order_and_logistic_domestic.findMany({ where: { oid: BigInt(oid) } });
+      const pivots = await tx.v2_relation_order_and_logistic_domestic.findMany({
+        where: { oid: BigInt(oid) },
+      });
       expect(pivots).toHaveLength(2);
     });
   });
@@ -55,8 +78,14 @@ describe('发货回传（updateExpressNoForChrome / batchUpdateExpressno 1:1）'
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const svc = makeService(tx);
-      expect(await svc.updateExpressNoForChrome({ tid: '', expressNo: 'SF1' })).toEqual({ code: 40000, msg: '参数错误' });
-      expect(await svc.updateExpressNoForChrome({ tid: 'T-none', expressNo: 'SF1' })).toEqual({ code: 40000, msg: '订单不存在' });
+      expect(await svc.updateExpressNoForChrome({ tid: '', expressNo: 'SF1' })).toEqual({
+        code: 40000,
+        msg: '参数错误',
+      });
+      expect(await svc.updateExpressNoForChrome({ tid: 'T-none', expressNo: 'SF1' })).toEqual({
+        code: 40000,
+        msg: '订单不存在',
+      });
     });
   });
 
@@ -69,23 +98,38 @@ describe('发货回传（updateExpressNoForChrome / batchUpdateExpressno 1:1）'
       const svc = makeService(tx);
 
       // ① T-batch-1 推进；② T-batch-2 只改单号；③ T-batch-3 幂等
-      const r = await svc.batchUpdateExpressno([
-        { tid: 'T-batch-1', express_detail: { expressId: [{ expressNo: 'SF-NEW1', companyNo: 'YTO' }] } },
-        { tid: 'T-batch-2', express_detail: { expressId: [{ expressNo: 'SF-NEW2' }] } },
-        { tid: 'T-batch-3', express_detail: { expressId: [{ expressNo: 'SF-SAME' }] } },
-      ], '1688');
+      const r = await svc.batchUpdateExpressno(
+        [
+          {
+            tid: 'T-batch-1',
+            express_detail: { expressId: [{ expressNo: 'SF-NEW1', companyNo: 'YTO' }] },
+          },
+          { tid: 'T-batch-2', express_detail: { expressId: [{ expressNo: 'SF-NEW2' }] } },
+          { tid: 'T-batch-3', express_detail: { expressId: [{ expressNo: 'SF-SAME' }] } },
+        ],
+        '1688',
+      );
       expect(r.code).toBe(200);
       expect(r.data!.idempotent_tids).toEqual(['T-batch-3']);
       expect(r.data!.failed_tids).toEqual([]);
 
-      const o1 = await tx.dg_order.findFirst({ where: { tid: 'T-batch-1' }, select: { state: true, expressno: true } });
+      const o1 = await tx.dg_order.findFirst({
+        where: { tid: 'T-batch-1' },
+        select: { state: true, expressno: true },
+      });
       expect(o1?.state).toBe(3);
       expect(o1?.expressno).toBe('SF-NEW1');
-      const o2 = await tx.dg_order.findFirst({ where: { tid: 'T-batch-2' }, select: { state: true, expressno: true } });
+      const o2 = await tx.dg_order.findFirst({
+        where: { tid: 'T-batch-2' },
+        select: { state: true, expressno: true },
+      });
       expect(o2?.state).toBe(3); // 未推进（已是 3）
       expect(o2?.expressno).toBe('SF-NEW2'); // 只改单号
       // 入库登记带 companyNo
-      const arrival = await tx.v2_logistic_domestic.findFirst({ where: { expressno: 'SF-NEW1' }, select: { provider_code: true } });
+      const arrival = await tx.v2_logistic_domestic.findFirst({
+        where: { expressno: 'SF-NEW1' },
+        select: { provider_code: true },
+      });
       expect(arrival?.provider_code).toBe('YTO');
     });
   });
@@ -97,16 +141,18 @@ describe('发货回传（updateExpressNoForChrome / batchUpdateExpressno 1:1）'
       const svc = makeService(tx);
 
       // 1688 平台查不到该 tid 的已付款订单 → failed
-      const r = await svc.batchUpdateExpressno([
-        { tid: 'T-batch-4', express_detail: { expressId: [{ expressNo: 'SF-X' }] } },
-      ], '1688');
+      const r = await svc.batchUpdateExpressno(
+        [{ tid: 'T-batch-4', express_detail: { expressId: [{ expressNo: 'SF-X' }] } }],
+        '1688',
+      );
       expect(r.code).toBe(40000);
       expect(r.data!.failed_tids).toEqual(['T-batch-4']);
 
       // 淘宝平台则成功
-      const r2 = await svc.batchUpdateExpressno([
-        { tid: 'T-batch-4', express_detail: { expressId: [{ expressNo: 'SF-X' }] } },
-      ], '淘宝');
+      const r2 = await svc.batchUpdateExpressno(
+        [{ tid: 'T-batch-4', express_detail: { expressId: [{ expressNo: 'SF-X' }] } }],
+        '淘宝',
+      );
       expect(r2.code).toBe(200);
     });
   });
@@ -115,10 +161,13 @@ describe('发货回传（updateExpressNoForChrome / batchUpdateExpressno 1:1）'
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const svc = makeService(tx);
-      const r = await svc.batchUpdateExpressno([
-        { tid: '', express_detail: { expressId: [] } },
-        { tid: 'T-empty-express', express_detail: { expressId: [] } },
-      ], '1688');
+      const r = await svc.batchUpdateExpressno(
+        [
+          { tid: '', express_detail: { expressId: [] } },
+          { tid: 'T-empty-express', express_detail: { expressId: [] } },
+        ],
+        '1688',
+      );
       expect(r.code).toBe(40000);
       expect(r.data!.failed_tids).toEqual(['', 'T-empty-express']);
 

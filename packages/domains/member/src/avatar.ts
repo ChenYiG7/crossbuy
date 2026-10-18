@@ -45,7 +45,10 @@ export function stripOssFullHost(url: string, ossFullHost: string): string {
  * `str_replace('https://', 'https://' . OSS_BUCKET . '.', OSS_INTERNAL_ENDPOINT)`
  * ——把 bucket 插进内部端点的域名前缀。缺任一env返回空串（= 不剥离）。
  */
-export function deriveOssFullHost(bucket: string | undefined, internalEndpoint: string | undefined): string {
+export function deriveOssFullHost(
+  bucket: string | undefined,
+  internalEndpoint: string | undefined,
+): string {
   if (!bucket || !internalEndpoint) return '';
   return internalEndpoint.replace('https://', `https://${bucket}.`);
 }

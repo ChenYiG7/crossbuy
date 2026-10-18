@@ -16,6 +16,7 @@
 4. **446 万行回填归属 send-order T1**：按 `JOIN send_orders` 过滤孤儿（本地 96.5% 孤儿系 sendorder 副本不全所致，生产孤儿率待测），主键 `fid` 对齐
 
 **边界细则**：
+
 - `invoices` 表归 send-order；order 域在下单/改单时提供金额快照（`goodsPrice` 等列本就来自订单快照，不反查 order 表）
 - 发票的「开票金额计算」若涉及订单金额重算，走 contract 跨域调用，禁 send-order 直接 import order 模块
 
@@ -58,19 +59,19 @@
 
 ## 八、字段级补充发现（落 schema 时一并处理）
 
-| 源列 | 处置 |
-|---|---|
-| `dg_sendorder.sn` 多运单号 | 见 Q10 |
-| `dg_fapiao.airbill` varchar(2512) | 同款多单号（本地最长 139）→ `airbill String? @db.VarChar(64)` + 超长入 legacyExtra |
-| `dg_fapiao.totalweight` | 含代码值（`A`）→ 字符串列，不转数值 |
-| `dg_fapiao.cid` | 地址簿 ID（78,344 行=0；14,558 行命中 dg_address.aid）→ `addressBookId Int?`（0→NULL） |
-| `dg_fapiao` 53 列 | 全列映射，快照列（收件人/会员信息）保留并命名 `*Snapshot` 语义 |
-| `v2_sendorder_value_added_service` | 本地 36 行、sid 无空值 → 正常回填（JOIN send_orders 过滤） |
+| 源列                               | 处置                                                                                   |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `dg_sendorder.sn` 多运单号         | 见 Q10                                                                                 |
+| `dg_fapiao.airbill` varchar(2512)  | 同款多单号（本地最长 139）→ `airbill String? @db.VarChar(64)` + 超长入 legacyExtra     |
+| `dg_fapiao.totalweight`            | 含代码值（`A`）→ 字符串列，不转数值                                                    |
+| `dg_fapiao.cid`                    | 地址簿 ID（78,344 行=0；14,558 行命中 dg_address.aid）→ `addressBookId Int?`（0→NULL） |
+| `dg_fapiao` 53 列                  | 全列映射，快照列（收件人/会员信息）保留并命名 `*Snapshot` 语义                         |
+| `v2_sendorder_value_added_service` | 本地 36 行、sid 无空值 → 正常回填（JOIN send_orders 过滤）                             |
 
 ## 九、留待后续（不阻塞 schema 落地）
 
-| # | 问题 | 处置时机 |
-|---|---|---|
-| Q4 | state 5/6 写入点未定位全 | 新系统迁移表白名单对未核实迁移一律拒（§4.4 已定），生产灰度前补核实 |
-| Q8 | `v2_send_order_label` / `v2_send_order_invoice_event` 本地无表 | 回填脚本用 PREPARE 条件执行（本地自动跳过）；生产跑前经跳板机只读确认行数 |
-| Q9 | 评价 comment JSON 键位 | contract 切片时定；`comment Json` 先原样落库 |
+| #   | 问题                                                           | 处置时机                                                                  |
+| --- | -------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Q4  | state 5/6 写入点未定位全                                       | 新系统迁移表白名单对未核实迁移一律拒（§4.4 已定），生产灰度前补核实       |
+| Q8  | `v2_send_order_label` / `v2_send_order_invoice_event` 本地无表 | 回填脚本用 PREPARE 条件执行（本地自动跳过）；生产跑前经跳板机只读确认行数 |
+| Q9  | 评价 comment JSON 键位                                         | contract 切片时定；`comment Json` 先原样落库                              |

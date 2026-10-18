@@ -35,7 +35,8 @@ export const ORDER_ERROR_MESSAGES = {
   /** 旧 graphql-message.system.service_busy（分布式锁抢不到的兜底） */
   CART_SERVICE_BUSY: '服务繁忙，请稍后重试',
   /** 旧 api.below_min_order_quantity（`:name`/`:qty`/`:min` 占位在服务层替换） */
-  CART_BELOW_MIN_ORDER_QUANTITY: '商品「:name」合计数量 :qty 未达到最低起订量 :min。同一商品的全部规格按总数计算',
+  CART_BELOW_MIN_ORDER_QUANTITY:
+    '商品「:name」合计数量 :qty 未达到最低起订量 :min。同一商品的全部规格按总数计算',
 } as const;
 
 export type OrderErrorCode = keyof typeof ORDER_ERROR_MESSAGES;

@@ -22,8 +22,10 @@
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
+    "@next/eslint-plugin-next": "catalog:",
     "@types/node": "catalog:",
     "eslint": "catalog:",
+    "eslint-plugin-react-hooks": "catalog:",
     "prettier": "catalog:",
     "turbo": "catalog:",
     "typescript": "catalog:",

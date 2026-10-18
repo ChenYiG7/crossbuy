@@ -25,16 +25,46 @@ export class SendOrderRepository {
   // -----------------------------------------------------------------------
 
   /** 列表行（select 子集） */
-  async listMemberSendOrders(db: LegacyPrismaClient, where: LegacyWhere, page: number, limit: number) {
+  async listMemberSendOrders(
+    db: LegacyPrismaClient,
+    where: LegacyWhere,
+    page: number,
+    limit: number,
+  ) {
     const rows = await db.dg_sendorder.findMany({
       where,
       select: {
-        sid: true, uid: true, oids: true, consignee: true, address: true, tel: true, zip: true,
-        deliveryname: true, sn: true, countweight: true, dflwh: true, state: true,
-        freight: true, serverfee: true, customsfee: true, sendprice: true, remotefee: true,
-        comment: true, commenttime: true, reply: true, remark: true, havefapiao: true,
-        addtime: true, uptime: true, importer_info: true, enname: true, company_name: true,
-        country: true, dfsendname: true, dfsendaddress: true, dfsendtel: true,
+        sid: true,
+        uid: true,
+        oids: true,
+        consignee: true,
+        address: true,
+        tel: true,
+        zip: true,
+        deliveryname: true,
+        sn: true,
+        countweight: true,
+        dflwh: true,
+        state: true,
+        freight: true,
+        serverfee: true,
+        customsfee: true,
+        sendprice: true,
+        remotefee: true,
+        comment: true,
+        commenttime: true,
+        reply: true,
+        remark: true,
+        havefapiao: true,
+        addtime: true,
+        uptime: true,
+        importer_info: true,
+        enname: true,
+        company_name: true,
+        country: true,
+        dfsendname: true,
+        dfsendaddress: true,
+        dfsendtel: true,
         origin_package_choice: true,
       },
       orderBy: { addtime: 'desc' },
@@ -55,14 +85,17 @@ export class SendOrderRepository {
    * 1688 物流建档运单（旧 tryGetOrders 尾段 SendOrder::create 字段 1:1）。
    * dump 必填列（uname/memberid/xiwgfei/xwdj/consignee）显式落；全零金额 1:1。
    */
-  async createFor1688Logistics(input: {
-    uid: number;
-    uname: string;
-    memberid: string | null;
-    email: string | null;
-    oids: number[];
-    receiver: { regionName?: string; detailAddress?: string };
-  }, tx?: LegacyPrisma.TransactionClient): Promise<{ sid: number }> {
+  async createFor1688Logistics(
+    input: {
+      uid: number;
+      uname: string;
+      memberid: string | null;
+      email: string | null;
+      oids: number[];
+      receiver: { regionName?: string; detailAddress?: string };
+    },
+    tx?: LegacyPrisma.TransactionClient,
+  ): Promise<{ sid: number }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const run = async (client: LegacyPrisma.TransactionClient) => {
       const row = await client.dg_sendorder.create({
@@ -119,24 +152,27 @@ export class SendOrderRepository {
    * ⚠ 与 1688 物流建档的差异：本路径落**收件人七列**与**代发发件三列**，
    * 且 consignee 非空（旧 `!empty($options['consignee'])` 才建单）。
    */
-  async createForDaifa(input: {
-    uid: number;
-    uname: string;
-    memberid: string | null;
-    email: string | null;
-    dfsendaddress: string;
-    dfsendname: string;
-    dfsendtel: string;
-    receiver: {
-      consignee: string | null;
-      address: string | null;
-      tel: string | null;
-      zip: string | null;
-      remark: string | null;
-      country: string | null;
-      deliveryname: string | null;
-    };
-  }, tx?: SendOrderTx): Promise<{ sid: number }> {
+  async createForDaifa(
+    input: {
+      uid: number;
+      uname: string;
+      memberid: string | null;
+      email: string | null;
+      dfsendaddress: string;
+      dfsendname: string;
+      dfsendtel: string;
+      receiver: {
+        consignee: string | null;
+        address: string | null;
+        tel: string | null;
+        zip: string | null;
+        remark: string | null;
+        country: string | null;
+        deliveryname: string | null;
+      };
+    },
+    tx?: SendOrderTx,
+  ): Promise<{ sid: number }> {
     const nowSec = Math.floor(Date.now() / 1000);
     const client = tx ?? this.db;
     const row = await client.dg_sendorder.create({

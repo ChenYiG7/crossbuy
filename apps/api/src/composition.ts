@@ -11,8 +11,18 @@ import {
   type OauthUserPort,
   type SendOrderPort,
 } from '@crossbuy/domain-order';
-import { InMemoryLoginRateLimiter, Md5PasswordVerifier, MemberRepository, MemberServiceImpl } from '@crossbuy/domain-member';
-import { AdminRepository, AdminServiceImpl, BcryptPasswordVerifier, type AdminService } from '@crossbuy/domain-admin';
+import {
+  InMemoryLoginRateLimiter,
+  Md5PasswordVerifier,
+  MemberRepository,
+  MemberServiceImpl,
+} from '@crossbuy/domain-member';
+import {
+  AdminRepository,
+  AdminServiceImpl,
+  BcryptPasswordVerifier,
+  type AdminService,
+} from '@crossbuy/domain-admin';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 
 /**
@@ -40,7 +50,8 @@ export function getWebhook1688Service(): Webhook1688Service {
       db: repo.db,
       alibaba: notImplementedAlibabaClient,
       recordSnapshot: record1688Snapshot,
-      update1688PaidOrders: (db, tid, payTimeSec, nowSec) => repo.update1688PaidOrders(db, tid, payTimeSec, nowSec),
+      update1688PaidOrders: (db, tid, payTimeSec, nowSec) =>
+        repo.update1688PaidOrders(db, tid, payTimeSec, nowSec),
       runTx: runInOrderTransaction,
       now: () => new Date(),
     });
@@ -70,7 +81,8 @@ export function getWebhook1688LogisticsService(): Webhook1688LogisticsService {
         const orderRepo = new OrderRepository();
         return {
           listBriefBySids: (sids) => orderRepo.listBriefBySids(orderRepo.db, sids),
-          listSidsByShipmentKeyword: (uid, keyword, isDf) => orderRepo.listSidsByShipmentKeyword(orderRepo.db, uid, keyword, isDf),
+          listSidsByShipmentKeyword: (uid, keyword, isDf) =>
+            orderRepo.listSidsByShipmentKeyword(orderRepo.db, uid, keyword, isDf),
         };
       })(),
       // 物流查询网址端口（SystemSetting 迁移前缺省 null → Google 搜索兜底，旧语义）
@@ -138,7 +150,13 @@ export function getChromeService(log: RiskLogger): ChromeService {
       repository: repo,
       alibaba: notImplementedChromeAlibaba,
       recordSnapshot: async (tid, detail, stage) => {
-        await record1688Snapshot(repo.db, tid, detail as Record<string, unknown>, stage, new Date());
+        await record1688Snapshot(
+          repo.db,
+          tid,
+          detail as Record<string, unknown>,
+          stage,
+          new Date(),
+        );
       },
       shipment: new ShipmentService({
         repository: repo,
@@ -146,7 +164,10 @@ export function getChromeService(log: RiskLogger): ChromeService {
         now: () => new Date(),
       }),
       riskLog: (info) => {
-        const { channel, message, ...rest } = info as { channel?: string; message?: string } & Record<string, unknown>;
+        const { channel, message, ...rest } = info as {
+          channel?: string;
+          message?: string;
+        } & Record<string, unknown>;
         log.warn({ channel, ...rest }, message ?? 'chrome webhook risk control');
       },
       auditLog: (info) => {

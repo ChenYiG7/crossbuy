@@ -18,15 +18,25 @@
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
-import { DOMAIN_WRITERS, CONTRACT_DOMAIN_ALIASES, NO_DEPLOY_PREFIXES } from '../deploy/blast-radius.config.mjs';
+import {
+  DOMAIN_WRITERS,
+  CONTRACT_DOMAIN_ALIASES,
+  NO_DEPLOY_PREFIXES,
+} from '../deploy/blast-radius.config.mjs';
 
 const APPS = ['web', 'mzk', 'admin', 'api', 'worker'];
 const ROOT = path.resolve(import.meta.dirname, '..');
 
 function gitDiffFiles(base) {
   const range = base ? `${base}...HEAD` : 'HEAD';
-  const out = execSync(`git -c core.quotepath=false diff --name-only ${range}`, { cwd: ROOT, encoding: 'utf8' });
-  return out.split('\n').map((s) => s.trim()).filter(Boolean);
+  const out = execSync(`git -c core.quotepath=false diff --name-only ${range}`, {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  return out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** 包名（@crossbuy/web）→ 部署单元短名（web）；非 app 的包返回 null（库，不是部署单元） */
@@ -49,7 +59,9 @@ function workspacePackages() {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
         if (!pkg.name?.startsWith('@crossbuy/')) continue;
         map.set(pkg.name, { dir: [base, name].join('/'), deps: pkg.dependencies ?? {} });
-      } catch { /* 解析失败跳过 */ }
+      } catch {
+        /* 解析失败跳过 */
+      }
     }
   }
   return map;
@@ -61,7 +73,9 @@ function classify(file, pkgs) {
     return { kind: 'app', app: appMatch[1], note: 'app 自身改动' };
   }
 
-  const domainMatch = file.match(/^packages\/domains\/([^/]+)\//) ?? file.match(/^packages\/contract\/src\/domains\/([^/]+)\.ts$/);
+  const domainMatch =
+    file.match(/^packages\/domains\/([^/]+)\//) ??
+    file.match(/^packages\/contract\/src\/domains\/([^/]+)\.ts$/);
   if (domainMatch) {
     const domain = CONTRACT_DOMAIN_ALIASES[domainMatch[1]] ?? domainMatch[1];
     const writers = DOMAIN_WRITERS[domain];
@@ -70,26 +84,43 @@ function classify(file, pkgs) {
   }
 
   if (file.startsWith('packages/contract/')) {
-    const consumers = [...pkgs.entries()]
-      .map(([k]) => toDeployUnit(k))
-      .filter(Boolean);
+    const consumers = [...pkgs.entries()].map(([k]) => toDeployUnit(k)).filter(Boolean);
     const rel = file.replace(/^packages\/contract\//, '');
-    return { kind: 'contract-shared', consumers, note: rel === 'src/core.ts' || rel === 'src/index.ts' ? '共享契约 → 全部消费方' : '契约包其它文件 → 全部消费方（保守）' };
+    return {
+      kind: 'contract-shared',
+      consumers,
+      note:
+        rel === 'src/core.ts' || rel === 'src/index.ts'
+          ? '共享契约 → 全部消费方'
+          : '契约包其它文件 → 全部消费方（保守）',
+    };
   }
 
   const pkgMatch = file.match(/^packages\/([^/]+)\//);
   if (pkgMatch) {
     // packages/domains/<d> 已在上面截获；这里处理 ui/db/config/auth/utils/notify
-    const candidates = [...pkgs.entries()].filter(([name, v]) => v.dir === `packages/${pkgMatch[1]}`);
+    const candidates = [...pkgs.entries()].filter(
+      ([name, v]) => v.dir === `packages/${pkgMatch[1]}`,
+    );
     if (candidates.length === 1) {
       const [pkgName] = candidates[0];
       const consumers = [...pkgs.entries()]
         .filter(([, v]) => v.deps[pkgName])
         .map(([k]) => toDeployUnit(k))
         .filter(Boolean);
-      if (consumers.length) return { kind: 'package', pkg: pkgMatch[1], consumers, note: `包 @crossbuy/${pkgMatch[1]} → 反向依赖（仅部署单元）` };
+      if (consumers.length)
+        return {
+          kind: 'package',
+          pkg: pkgMatch[1],
+          consumers,
+          note: `包 @crossbuy/${pkgMatch[1]} → 反向依赖（仅部署单元）`,
+        };
     }
-    return { kind: 'package-unmapped', pkg: pkgMatch[1], note: '未找到反向依赖（新包？检查扫描逻辑）' };
+    return {
+      kind: 'package-unmapped',
+      pkg: pkgMatch[1],
+      note: '未找到反向依赖（新包？检查扫描逻辑）',
+    };
   }
 
   if (NO_DEPLOY_PREFIXES.some((p) => file.startsWith(p)) || /\.md$/.test(file)) {
@@ -109,8 +140,8 @@ function main() {
   const pkgs = workspacePackages();
   const rows = files.map((f) => ({ file: f, ...classify(f, pkgs) }));
 
-  const deploySet = new Set();          // 需发布 app 集合
-  const coordinated = new Set();        // 域写路径协同标记
+  const deploySet = new Set(); // 需发布 app 集合
+  const coordinated = new Set(); // 域写路径协同标记
   const noDeploy = [];
   const alerts = [];
 
@@ -125,11 +156,14 @@ function main() {
         alerts.push(`${r.file} → 域 ${r.domain} 写方：${r.writers.join(', ')}（同窗口协同）`);
         break;
       case 'unknown-domain':
-        alerts.push(`⚠ ${r.file} → 域 ${r.domain} 未登记写方清单，先补 deploy/blast-radius.config.mjs 再发版`);
+        alerts.push(
+          `⚠ ${r.file} → 域 ${r.domain} 未登记写方清单，先补 deploy/blast-radius.config.mjs 再发版`,
+        );
         break;
       case 'contract-shared':
         r.consumers.forEach((a) => deploySet.add(a));
-        if (r.note.includes('共享契约')) alerts.push(`${r.file} → 共享契约：${r.consumers.join(', ')}`);
+        if (r.note.includes('共享契约'))
+          alerts.push(`${r.file} → 共享契约：${r.consumers.join(', ')}`);
         break;
       case 'package':
         r.consumers.forEach((a) => deploySet.add(a));
@@ -146,10 +180,17 @@ function main() {
     }
   }
 
-  console.log(`== 影响半径（${base ? `${base}...HEAD` : '工作树 vs HEAD'}，${files.length} 文件）==\n`);
-  console.log(deploySet.size
-    ? `需发布进程（${deploySet.size}）：${[...deploySet].sort().map((a) => `apps/${a}`).join(', ')}`
-    : '需发布进程：无');
+  console.log(
+    `== 影响半径（${base ? `${base}...HEAD` : '工作树 vs HEAD'}，${files.length} 文件）==\n`,
+  );
+  console.log(
+    deploySet.size
+      ? `需发布进程（${deploySet.size}）：${[...deploySet]
+          .sort()
+          .map((a) => `apps/${a}`)
+          .join(', ')}`
+      : '需发布进程：无',
+  );
   if (coordinated.size) {
     console.log(`⚠ 域写路径协同（D3）：${[...coordinated].join(', ')} —— 上述写方进程须同窗口发布`);
   }
@@ -159,7 +200,9 @@ function main() {
   console.log(`\n无需发版（${noDeploy.length}）：${noDeploy.length ? noDeploy.join(', ') : '—'}`);
   console.log(`\n逐文件归类：`);
   for (const r of rows) {
-    console.log(`  ${r.file}  →  ${r.kind}${r.app ? `(${r.app})` : ''}${r.domain ? `(${r.domain})` : ''}${r.consumers ? `(${r.consumers.join(',')})` : ''}`);
+    console.log(
+      `  ${r.file}  →  ${r.kind}${r.app ? `(${r.app})` : ''}${r.domain ? `(${r.domain})` : ''}${r.consumers ? `(${r.consumers.join(',')})` : ''}`,
+    );
   }
 }
 

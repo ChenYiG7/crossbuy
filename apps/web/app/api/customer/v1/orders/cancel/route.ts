@@ -1,10 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
-import {
-  envelopeFail,
-  envelopeOk,
-  openApiCancelOrderSchema,
-} from '@crossbuy/contract';
+import { envelopeFail, envelopeOk, openApiCancelOrderSchema } from '@crossbuy/contract';
 import { authenticate } from '@/server/authenticate';
 import { getOrderService } from '@/server/order';
 import { httpStatusForMemberError } from '@/server/http-status';
@@ -29,7 +25,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json(envelopeFail(400, '入参不合法', traceId), { status: 400 });
   }
 
-  const result = await getOrderService().cancelOrders(auth.principal, Array.isArray(parsed.data.orderIds) ? parsed.data.orderIds : parsed.data.orderIds.split(','));
+  const result = await getOrderService().cancelOrders(
+    auth.principal,
+    Array.isArray(parsed.data.orderIds) ? parsed.data.orderIds : parsed.data.orderIds.split(','),
+  );
   if (!result.ok) {
     const status = httpStatusForMemberError(result.error.code);
     return NextResponse.json(envelopeFail(status, result.error.message, traceId), { status });

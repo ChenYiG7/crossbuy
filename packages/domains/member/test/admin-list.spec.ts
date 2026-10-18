@@ -53,7 +53,10 @@ describe('listForAdmin 数据范围', () => {
       await insertUser(tx, { uname: 'vitest-adm-none', memberid: '' });
       await insertUser(tx, { uname: 'vitest-adm-null', memberid: null });
 
-      const res = await makeService(tx).listForAdmin({ kind: 'flags', flags: ['G'] }, { page: 1, limit: 50 });
+      const res = await makeService(tx).listForAdmin(
+        { kind: 'flags', flags: ['G'] },
+        { page: 1, limit: 50 },
+      );
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       const unames = res.value.items.map((i) => i.uname);
@@ -84,7 +87,10 @@ describe('listForAdmin 数据范围', () => {
       expect(unames).toContain('vitest-adm-searchme');
       expect(unames).toContain('vitest-adm-other');
 
-      const filtered = await makeService(tx).listForAdmin({ kind: 'all' }, { q: 'searchme', page: 1, limit: 100 });
+      const filtered = await makeService(tx).listForAdmin(
+        { kind: 'all' },
+        { q: 'searchme', page: 1, limit: 100 },
+      );
       expect(filtered.ok).toBe(true);
       if (!filtered.ok) return;
       expect(filtered.value.items.map((i) => i.uname)).toEqual(['vitest-adm-searchme']);
@@ -94,9 +100,16 @@ describe('listForAdmin 数据范围', () => {
   it('money 字符串承载（禁浮点）+ 分页 limit 生效', async () => {
     await withRollback(async (tx) => {
       for (let i = 0; i < 3; i++) {
-        await insertUser(tx, { uname: `vitest-adm-page${i}`, memberid: `P00${i}`, money: `${i}.25` });
+        await insertUser(tx, {
+          uname: `vitest-adm-page${i}`,
+          memberid: `P00${i}`,
+          money: `${i}.25`,
+        });
       }
-      const res = await makeService(tx).listForAdmin({ kind: 'all' }, { q: 'vitest-adm-page', page: 1, limit: 2 });
+      const res = await makeService(tx).listForAdmin(
+        { kind: 'all' },
+        { q: 'vitest-adm-page', page: 1, limit: 2 },
+      );
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       expect(res.value.total).toBe(3);

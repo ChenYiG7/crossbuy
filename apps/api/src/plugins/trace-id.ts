@@ -21,8 +21,7 @@ export const traceIdPlugin = fp(async (app: FastifyInstance): Promise<void> => {
   app.decorateRequest('traceId', '');
   app.addHook('onRequest', async (req, reply) => {
     const incoming = req.headers[HEADER];
-    req.traceId =
-      (typeof incoming === 'string' && incoming.trim()) || randomUUID();
+    req.traceId = (typeof incoming === 'string' && incoming.trim()) || randomUUID();
     reply.header(HEADER, req.traceId);
   });
 });

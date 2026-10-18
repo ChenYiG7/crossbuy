@@ -51,7 +51,10 @@ export default async function MemberPage() {
       </header>
       <ProfileSection profile={result.value} />
       {favorites.ok ? (
-        <FavoritesSection initialItems={favorites.value.items} initialTotal={favorites.value.total} />
+        <FavoritesSection
+          initialItems={favorites.value.items}
+          initialTotal={favorites.value.total}
+        />
       ) : null}
     </main>
   );

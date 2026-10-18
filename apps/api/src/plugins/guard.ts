@@ -36,11 +36,7 @@ export function ipAllowed(ip: string, rules: string[]): boolean {
   });
 }
 
-export function verifyHmac(
-  secret: string,
-  payload: string,
-  signature: string,
-): boolean {
+export function verifyHmac(secret: string, payload: string, signature: string): boolean {
   const expected = createHmac('sha256', secret).update(payload).digest('hex');
   const a = Buffer.from(expected, 'utf8');
   const b = Buffer.from(signature, 'utf8');
@@ -57,10 +53,7 @@ export interface GuardOptions {
 // ⚠ 必须 fp 包装：不用 fp 的话，插件内 addHook 只作用于**它自己内部**注册的路由，
 // 而业务路由是注册在同级 scope 上的兄弟 ⇒ 守卫形同虚设。
 // （首跑实测：无签名/错签名/白名单外 IP 全部 200，6 项守卫断言全 FAIL 才暴露。）
-export const guardPlugin = fp(async (
-  app: FastifyInstance,
-  opts: GuardOptions,
-): Promise<void> => {
+export const guardPlugin = fp(async (app: FastifyInstance, opts: GuardOptions): Promise<void> => {
   const { config } = opts;
   const exempt = opts.exempt ?? [];
   const allowRules = parseList(config.API_OPEN_IP_ALLOWLIST);
@@ -78,9 +71,7 @@ export const guardPlugin = fp(async (
   app.addHook('onRequest', async (req, reply) => {
     if (exempt.includes(req.routeOptions?.url ?? req.url)) return;
     if (!ipAllowed(req.ip, allowRules)) {
-      return reply
-        .code(403)
-        .send(envelopeFail(403, 'IP not allowed', req.traceId));
+      return reply.code(403).send(envelopeFail(403, 'IP not allowed', req.traceId));
     }
   });
 
@@ -92,9 +83,7 @@ export const guardPlugin = fp(async (
     if (!secret) {
       if (config.NODE_ENV === 'production') {
         // 鉴权不可用 ≠ 放行（docs/04 §4-5 的 503 语义）
-        return reply
-          .code(503)
-          .send(envelopeFail(503, 'auth unavailable', req.traceId));
+        return reply.code(503).send(envelopeFail(503, 'auth unavailable', req.traceId));
       }
       app.log.warn('[guard] dev 模式无签名密钥，跳过签名校验');
       return;
@@ -103,9 +92,7 @@ export const guardPlugin = fp(async (
     const ts = req.headers['x-timestamp'];
     const sig = req.headers['x-signature'];
     if (typeof ts !== 'string' || typeof sig !== 'string') {
-      return reply
-        .code(401)
-        .send(envelopeFail(401, 'missing signature headers', req.traceId));
+      return reply.code(401).send(envelopeFail(401, 'missing signature headers', req.traceId));
     }
 
     const tsNum = Number(ts);
@@ -114,9 +101,7 @@ export const guardPlugin = fp(async (
     }
     const skew = Math.abs(Date.now() / 1000 - tsNum);
     if (skew > config.API_OPEN_TS_TOLERANCE_SEC) {
-      return reply
-        .code(401)
-        .send(envelopeFail(401, 'timestamp out of window', req.traceId));
+      return reply.code(401).send(envelopeFail(401, 'timestamp out of window', req.traceId));
     }
 
     const body = req.body === undefined ? '' : JSON.stringify(req.body);

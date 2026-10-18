@@ -20,7 +20,9 @@ export const supplierProductSummarySchema = z.object({
   priceRange: z.array(z.object({ startQuantity: z.number(), price: z.number() })).nullable(),
   minOrderQuantity: z.number().int(),
   /** 店铺混批规则 JSON（{mixAmount?, mixNumber?}；null = 无） */
-  sellerMixSetting: z.object({ mixAmount: z.number().optional(), mixNumber: z.number().optional() }).nullable(),
+  sellerMixSetting: z
+    .object({ mixAmount: z.number().optional(), mixNumber: z.number().optional() })
+    .nullable(),
   onePieceFreePostage: z.boolean(),
 });
 export type SupplierProductSummary = z.infer<typeof supplierProductSummarySchema>;
@@ -170,7 +172,9 @@ export const goodsInfoInputSchema = z.object({
   /** 混批 JSON 字符串（{"generalHunpi":false,"mixAmount":800,"mixNumber":5}） */
   sellerMixSetting: z.string().optional(),
   quantity: z.number().int(),
-  props: z.array(z.object({ name: z.string().nullable(), value: z.string().nullable() })).optional(),
+  props: z
+    .array(z.object({ name: z.string().nullable(), value: z.string().nullable() }))
+    .optional(),
   skuId: z.string().optional(),
   minOrderQuantity: z.number().int().optional(),
   sendPrice: z.number().optional(),

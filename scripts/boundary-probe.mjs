@@ -32,7 +32,8 @@ const PROBES = [
     id: 'P2',
     desc: 'order 域 import member 域（横向依赖）',
     file: 'packages/domains/order/src/__probe_cross.ts',
-    content: "import type { MemberService } from '@crossbuy/domain-member';\nexport type Probe = MemberService;\n",
+    content:
+      "import type { MemberService } from '@crossbuy/domain-member';\nexport type Probe = MemberService;\n",
     expect: 'blocked',
   },
   {
@@ -76,8 +77,7 @@ try {
 
     const { status, stdout = '', stderr = '' } = runEslint(probe.file);
     const output = stdout + stderr;
-    const blockedByBoundaryRule =
-      status !== 0 && output.includes('no-restricted-imports');
+    const blockedByBoundaryRule = status !== 0 && output.includes('no-restricted-imports');
 
     let verdict;
     if (probe.expect === 'blocked') {

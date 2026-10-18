@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import Redis from 'ioredis';
-import type { CooldownStore, DistributedLock, IdempotencyStore, WithLockOptions, WithLockResult } from './types';
+import type {
+  CooldownStore,
+  DistributedLock,
+  IdempotencyStore,
+  WithLockOptions,
+  WithLockResult,
+} from './types';
 
 /**
  * Redis 连接（锁/冷却专用）。

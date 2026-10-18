@@ -34,7 +34,10 @@ describe('processOrderCreated（单元：内存幂等 + fake 通道）', () => {
     const { channel, sent } = fakeNotify();
     const idem = createInMemoryIdempotency();
     await processOrderCreated(base, { notify: channel, idempotency: idem });
-    await processOrderCreated({ ...base, orderIds: [2, 1] }, { notify: channel, idempotency: idem });
+    await processOrderCreated(
+      { ...base, orderIds: [2, 1] },
+      { notify: channel, idempotency: idem },
+    );
     // 另一组不同订单 → 才发第二封
     await processOrderCreated({ ...base, uid: 200 }, { notify: channel, idempotency: idem });
     expect(sent).toHaveLength(2);
@@ -53,9 +56,9 @@ describe('processOrderCreated（单元：内存幂等 + fake 通道）', () => {
     const { channel, sent, failWith } = fakeNotify();
     failWith({ ok: false, code: 'CHANNEL_UNAVAILABLE', message: 'down' });
     const idem = createInMemoryIdempotency();
-    await expect(
-      processOrderCreated(base, { notify: channel, idempotency: idem }),
-    ).rejects.toThrow(/邮件发送失败/);
+    await expect(processOrderCreated(base, { notify: channel, idempotency: idem })).rejects.toThrow(
+      /邮件发送失败/,
+    );
     expect(sent).toHaveLength(1); // 确实尝试发送过一次
     // 标记被清除 ⇒ 重试可再次发送（不卡在「已处理」）
     expect(await idem.has('order-created:100:1,2')).toBe(false);

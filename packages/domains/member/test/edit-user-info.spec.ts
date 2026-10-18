@@ -25,7 +25,11 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
     });
 
     await withRollback(async (tx) => {
-      const service = new MemberServiceImpl(new MemberRepository(tx), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
+      const service = new MemberServiceImpl(
+        new MemberRepository(tx),
+        new Md5PasswordVerifier(),
+        new InMemoryLoginRateLimiter(),
+      );
       const res = await service.updateProfile(memberPrincipal(uid), {
         regType: 1,
         trueName: 'tname',
@@ -120,14 +124,22 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
   });
 
   it('无效 regType（3）应被契约拒绝 —— 源：testEditUserInfoErrorWithInvalidRegType', async () => {
-    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
+    const service = new MemberServiceImpl(
+      new MemberRepository(legacyPrisma),
+      new Md5PasswordVerifier(),
+      new InMemoryLoginRateLimiter(),
+    );
     const res = await service.updateProfile(memberPrincipal(1), { regType: 3 });
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error.code).toBe('MEMBER_PROFILE_INVALID');
   });
 
   it('无效 useType（9）应被契约拒绝 —— 源：testEditUserInfoErrorWithInvalidUseType', async () => {
-    const service = new MemberServiceImpl(new MemberRepository(legacyPrisma), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
+    const service = new MemberServiceImpl(
+      new MemberRepository(legacyPrisma),
+      new Md5PasswordVerifier(),
+      new InMemoryLoginRateLimiter(),
+    );
     const res = await service.updateProfile(memberPrincipal(1), { useType: 9 });
     expect(res.ok).toBe(false);
   });
@@ -145,7 +157,11 @@ describe('EditUserInfo（旧 PHPUnit EditUserInfoTest 翻译）', () => {
 
     for (const useType of [1, 2, 3, 4, 5]) {
       await withRollback(async (tx) => {
-        const service = new MemberServiceImpl(new MemberRepository(tx), new Md5PasswordVerifier(), new InMemoryLoginRateLimiter());
+        const service = new MemberServiceImpl(
+          new MemberRepository(tx),
+          new Md5PasswordVerifier(),
+          new InMemoryLoginRateLimiter(),
+        );
         const res = await service.updateProfile(memberPrincipal(uid), { useType });
         expect(res.ok).toBe(true);
         const after = await new MemberRepository(tx).findProfile(uid);

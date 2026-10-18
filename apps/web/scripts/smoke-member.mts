@@ -158,12 +158,19 @@ async function main(): Promise<void> {
     console.log('[2] 未登录 / 错密码 / 不存在用户');
     const anon = await call('GET', '/api/customer/v1/member/me');
     check('未登录 GET me → 401', anon.status === 401 && anon.body.code === 401, anon.body);
-    check('未登录 me → 有 traceId', typeof anon.body.traceId === 'string' && anon.body.traceId.length > 0);
+    check(
+      '未登录 me → 有 traceId',
+      typeof anon.body.traceId === 'string' && anon.body.traceId.length > 0,
+    );
 
     const wrongPwd = await call('POST', '/api/customer/v1/auth/login', {
       body: { username: FIXTURE.uname, password: 'wrong' },
     });
-    check('错密码 → 401 MEMBER_LOGIN_FAILED', wrongPwd.status === 401 && wrongPwd.body.code === 401, wrongPwd.body);
+    check(
+      '错密码 → 401 MEMBER_LOGIN_FAILED',
+      wrongPwd.status === 401 && wrongPwd.body.code === 401,
+      wrongPwd.body,
+    );
 
     const noUser = await call('POST', '/api/customer/v1/auth/login', {
       body: { username: 'no-such-e2e-user', password: 'x' },
@@ -182,7 +189,11 @@ async function main(): Promise<void> {
     check('profile.useInquiry = true（reg_extra JSON）', login.body.data?.useInquiry === true);
 
     const cookie = sessionCookie(login.setCookie);
-    check('响应种下 cb_session（HttpOnly）', cookie !== null && /HttpOnly/i.test(login.setCookie ?? ''), login.setCookie);
+    check(
+      '响应种下 cb_session（HttpOnly）',
+      cookie !== null && /HttpOnly/i.test(login.setCookie ?? ''),
+      login.setCookie,
+    );
 
     console.log('[4] 带 cookie / Bearer 读 me');
     const me = await call('GET', '/api/customer/v1/member/me', { cookie: cookie ?? undefined });
@@ -193,16 +204,30 @@ async function main(): Promise<void> {
       body: { trueName: '演练用户改名', tel: '090-0000-0000', useType: 3 },
     });
     check('PATCH → 200', patched.status === 200, patched.body);
-    check('PATCH 响应即最新 profile（trueName 已改）', patched.body.data?.trueName === '演练用户改名');
-    const afterPatch = await call('GET', '/api/customer/v1/member/me', { cookie: cookie ?? undefined });
-    check('重读 me → 改动已落库', afterPatch.body.data?.trueName === '演练用户改名' && afterPatch.body.data?.useType === 3);
-    const anonPatch = await call('PATCH', '/api/customer/v1/member/me', { body: { trueName: 'x' } });
+    check(
+      'PATCH 响应即最新 profile（trueName 已改）',
+      patched.body.data?.trueName === '演练用户改名',
+    );
+    const afterPatch = await call('GET', '/api/customer/v1/member/me', {
+      cookie: cookie ?? undefined,
+    });
+    check(
+      '重读 me → 改动已落库',
+      afterPatch.body.data?.trueName === '演练用户改名' && afterPatch.body.data?.useType === 3,
+    );
+    const anonPatch = await call('PATCH', '/api/customer/v1/member/me', {
+      body: { trueName: 'x' },
+    });
     check('未登录 PATCH → 401', anonPatch.status === 401);
     const badPatch = await call('PATCH', '/api/customer/v1/member/me', {
       cookie: cookie ?? undefined,
       body: { useType: 9 },
     });
-    check('越界枚举 PATCH → 400（契约拒绝）', badPatch.status === 400 && badPatch.body.code === 400, badPatch.body);
+    check(
+      '越界枚举 PATCH → 400（契约拒绝）',
+      badPatch.status === 400 && badPatch.body.code === 400,
+      badPatch.body,
+    );
 
     console.log('[4.6] 收藏增删（旧 AddFavorite/DeleteFavorite/ListFavorite REST 化）');
     // 夹具用户 dfflag=1 ⇒ 收藏落 type=3（代发）——默认页签（非代发）看不见它，正好验证二值过滤
@@ -220,15 +245,39 @@ async function main(): Promise<void> {
     check('新增收藏 → 200', favCreate.status === 200, favCreate.body);
     const fid = (favCreate.body.data as { fid?: number } | null)?.fid;
     check('返回 fid', typeof fid === 'number' && fid > 0);
-    check('type=3（夹具用户 dfflag=1）', (favCreate.body.data as { type?: number } | null)?.type === 3);
-    check('goodssite=淘宝', (favCreate.body.data as { goodsSite?: string } | null)?.goodsSite === '淘宝');
-    check('goodsPrice 字符串（禁浮点）', (favCreate.body.data as { goodsPrice?: string } | null)?.goodsPrice === '19.8');
-    check('createdAt ISO +08:00', /^\d{4}-\d{2}-\d{2}T[\d:]{8}\+08:00$/.test((favCreate.body.data as { createdAt?: string } | null)?.createdAt ?? ''));
+    check(
+      'type=3（夹具用户 dfflag=1）',
+      (favCreate.body.data as { type?: number } | null)?.type === 3,
+    );
+    check(
+      'goodssite=淘宝',
+      (favCreate.body.data as { goodsSite?: string } | null)?.goodsSite === '淘宝',
+    );
+    check(
+      'goodsPrice 字符串（禁浮点）',
+      (favCreate.body.data as { goodsPrice?: string } | null)?.goodsPrice === '19.8',
+    );
+    check(
+      'createdAt ISO +08:00',
+      /^\d{4}-\d{2}-\d{2}T[\d:]{8}\+08:00$/.test(
+        (favCreate.body.data as { createdAt?: string } | null)?.createdAt ?? '',
+      ),
+    );
 
-    const favDefault = await call('GET', '/api/customer/v1/favorites', { cookie: cookie ?? undefined });
-    check('默认列表不含代发收藏（二值过滤）', (favDefault.body.data?.items ?? []).every((f: { fid: number }) => f.fid !== fid));
-    const favDaifa = await call('GET', '/api/customer/v1/favorites?type=3', { cookie: cookie ?? undefined });
-    check('type=3 列表含该收藏', (favDaifa.body.data?.items ?? []).some((f: { fid: number }) => f.fid === fid));
+    const favDefault = await call('GET', '/api/customer/v1/favorites', {
+      cookie: cookie ?? undefined,
+    });
+    check(
+      '默认列表不含代发收藏（二值过滤）',
+      (favDefault.body.data?.items ?? []).every((f: { fid: number }) => f.fid !== fid),
+    );
+    const favDaifa = await call('GET', '/api/customer/v1/favorites?type=3', {
+      cookie: cookie ?? undefined,
+    });
+    check(
+      'type=3 列表含该收藏',
+      (favDaifa.body.data?.items ?? []).some((f: { fid: number }) => f.fid === fid),
+    );
 
     const favDup = await call('POST', '/api/customer/v1/favorites', {
       cookie: cookie ?? undefined,
@@ -242,15 +291,23 @@ async function main(): Promise<void> {
     });
     check('重复 URL → 409', favDup.status === 409, favDup.body);
 
-    const favDel = await call('DELETE', `/api/customer/v1/favorites/${fid}`, { cookie: cookie ?? undefined });
+    const favDel = await call('DELETE', `/api/customer/v1/favorites/${fid}`, {
+      cookie: cookie ?? undefined,
+    });
     check('删除收藏 → 200', favDel.status === 200);
-    const favDelAgain = await call('DELETE', `/api/customer/v1/favorites/${fid}`, { cookie: cookie ?? undefined });
+    const favDelAgain = await call('DELETE', `/api/customer/v1/favorites/${fid}`, {
+      cookie: cookie ?? undefined,
+    });
     check('重复删除 → 404 not_found', favDelAgain.status === 404, favDelAgain.body);
     const favAnon = await call('POST', '/api/customer/v1/favorites', {
       body: { name: 'x', platform: 'taobao', nick: 'x', price: 1, detailUrl: 'https://e.com/1' },
     });
     check('未登录新增收藏 → 401', favAnon.status === 401);
-    check('cookie GET me → 200', me.status === 200 && me.body.data?.uname === FIXTURE.uname, me.body);
+    check(
+      'cookie GET me → 200',
+      me.status === 200 && me.body.data?.uname === FIXTURE.uname,
+      me.body,
+    );
 
     const token = cookie?.split('=')[1] ?? '';
     const bearer = await call('GET', '/api/customer/v1/member/me', { bearer: token });
@@ -262,7 +319,10 @@ async function main(): Promise<void> {
     });
     check('未登录加购 → 401', cartAnon.status === 401, cartAnon.body);
 
-    const cartNoList = await call('POST', '/api/customer/v1/carts', { cookie: cookie ?? undefined, body: {} });
+    const cartNoList = await call('POST', '/api/customer/v1/carts', {
+      cookie: cookie ?? undefined,
+      body: {},
+    });
     check(
       '缺 goodsList → 400 CART_GOODS_LIST_REQUIRED',
       cartNoList.status === 400 && cartNoList.body.message === 'goodsList is required',
@@ -300,9 +360,21 @@ async function main(): Promise<void> {
     check('落库 1 行', rows.length === 1, rows);
     // 夹具用户 dfflag=1 ⇒ 代发(3)；goodsid 由 URL 正则兜底解析（S39）
     check('type=3（夹具 dfflag=1 → 代发）', rows[0]?.['type'] === 3, rows[0]);
-    check('goodssite=淘宝 / goodsid 已解析', rows[0]?.['goodssite'] === '淘宝' && String(rows[0]?.['goodsid']) === '694784194003', rows[0]);
-    check('goodsprice=88.5 / goodsnum=3', Number(rows[0]?.['goodsprice']) === 88.5 && Number(rows[0]?.['goodsnum']) === 3, rows[0]);
-    check('uname 取会员当前值（S37 冗余列）', String(rows[0]?.['uname']) === FIXTURE.uname, rows[0]);
+    check(
+      'goodssite=淘宝 / goodsid 已解析',
+      rows[0]?.['goodssite'] === '淘宝' && String(rows[0]?.['goodsid']) === '694784194003',
+      rows[0],
+    );
+    check(
+      'goodsprice=88.5 / goodsnum=3',
+      Number(rows[0]?.['goodsprice']) === 88.5 && Number(rows[0]?.['goodsnum']) === 3,
+      rows[0],
+    );
+    check(
+      'uname 取会员当前值（S37 冗余列）',
+      String(rows[0]?.['uname']) === FIXTURE.uname,
+      rows[0],
+    );
     check(
       'sku_name 为旧 HTML 串',
       String(rows[0]?.['sku_name']) === '<font color=red>色:</font><font color=green> 赤 </font>',
@@ -314,23 +386,44 @@ async function main(): Promise<void> {
     const cartZhuan = await call('POST', '/api/customer/v1/carts', {
       cookie: cookie ?? undefined,
       body: {
-        goodsList: [{ platform: 'transshipment', title: '转运品', quantity: 1, sendPrice: 42.5, expressNo: 'EX1' }],
+        goodsList: [
+          {
+            platform: 'transshipment',
+            title: '转运品',
+            quantity: 1,
+            sendPrice: 42.5,
+            expressNo: 'EX1',
+          },
+        ],
       },
     });
-    check('转运加购 → 200 且 result=done', cartZhuan.status === 200 && (cartZhuan.body.data as { result?: string } | null)?.result === 'done', cartZhuan.body);
+    check(
+      '转运加购 → 200 且 result=done',
+      cartZhuan.status === 200 &&
+        (cartZhuan.body.data as { result?: string } | null)?.result === 'done',
+      cartZhuan.body,
+    );
     const zhuanRows = await legacyPrisma.$queryRawUnsafe<Array<Record<string, unknown>>>(
       `SELECT type, siteurl, goodsseller, sendprice FROM ${SCRATCH_DB}.dg_cart
          WHERE uname = '${FIXTURE.uname}' AND goodssite = '転送サービス'`,
     );
-    check('转运行 type=2 / siteurl=### / goodsseller 默认 shipforme',
-      zhuanRows[0]?.['type'] === 2 && zhuanRows[0]?.['siteurl'] === '###' && zhuanRows[0]?.['goodsseller'] === 'shipforme',
-      zhuanRows[0]);
+    check(
+      '转运行 type=2 / siteurl=### / goodsseller 默认 shipforme',
+      zhuanRows[0]?.['type'] === 2 &&
+        zhuanRows[0]?.['siteurl'] === '###' &&
+        zhuanRows[0]?.['goodsseller'] === 'shipforme',
+      zhuanRows[0],
+    );
 
     const cartValidate = await call('POST', '/api/customer/v1/carts', {
       cookie: cookie ?? undefined,
       body: { goodsList: [{ platform: 'taobao', title: 'x', quantity: 1 }], isValidate: 1 },
     });
-    check('isValidate=1 → 空串短路（旧怪癖）', (cartValidate.body.data as { result?: string } | null)?.result === '', cartValidate.body);
+    check(
+      'isValidate=1 → 空串短路（旧怪癖）',
+      (cartValidate.body.data as { result?: string } | null)?.result === '',
+      cartValidate.body,
+    );
     const afterValidate = await legacyPrisma.$queryRawUnsafe<Array<{ c: bigint }>>(
       `SELECT COUNT(*) AS c FROM ${SCRATCH_DB}.dg_cart WHERE uname = '${FIXTURE.uname}'`,
     );
@@ -346,7 +439,9 @@ async function main(): Promise<void> {
     check('未登录访问会员页 → 登录表单', anonHtml.includes('账号（邮箱或用户名）'));
 
     console.log('[6] 登出 + 篡改 cookie');
-    const logout = await call('POST', '/api/customer/v1/auth/logout', { cookie: cookie ?? undefined });
+    const logout = await call('POST', '/api/customer/v1/auth/logout', {
+      cookie: cookie ?? undefined,
+    });
     check('登出 → 200', logout.status === 200);
     // 登出 = 清 cookie（Set-Cookie 空值 + Max-Age=0）。JWT 无状态，已签发 token 在
     // TTL 内仍有效是**固有性质**（logout 路由注释已声明；即时失效需 Redis 黑名单，
@@ -358,7 +453,9 @@ async function main(): Promise<void> {
     );
     const noCookie = await call('GET', '/api/customer/v1/member/me');
     check('登出后无 cookie → 401', noCookie.status === 401, noCookie.body);
-    const afterLogout = await call('GET', '/api/customer/v1/member/me', { cookie: cookie ?? undefined });
+    const afterLogout = await call('GET', '/api/customer/v1/member/me', {
+      cookie: cookie ?? undefined,
+    });
     check('旧 token TTL 内仍有效（无状态固有性质）', afterLogout.status === 200, afterLogout.body);
 
     const tampered = await call('GET', '/api/customer/v1/member/me', {
@@ -366,7 +463,9 @@ async function main(): Promise<void> {
     });
     check('篡改 cookie → 401', tampered.status === 401, tampered.body);
 
-    const malformed = await call('GET', '/api/customer/v1/member/me', { cookie: 'cb_session=not-a-jwt' });
+    const malformed = await call('GET', '/api/customer/v1/member/me', {
+      cookie: 'cb_session=not-a-jwt',
+    });
     check('非法 JWT → 401', malformed.status === 401);
   } finally {
     child.kill();

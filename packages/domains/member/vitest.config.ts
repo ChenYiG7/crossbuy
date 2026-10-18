@@ -17,9 +17,7 @@ export default defineConfig({
     // 单例/并发：DB 测试串行，避免同库互相踩
     fileParallelism: false,
     env: {
-      DATABASE_URL:
-        process.env.TEST_DATABASE_URL ??
-        'mysql://root:root@127.0.0.1:3306/taotaro',
+      DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'mysql://root:root@127.0.0.1:3306/taotaro',
     },
   },
 });

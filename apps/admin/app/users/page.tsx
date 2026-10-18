@@ -33,7 +33,11 @@ export default async function UsersPage({
   }
   const scope: AdminScope = scopeResult.value;
 
-  const list = await getMemberService().listForAdmin(scope, { q: q?.trim() || undefined, page: 1, limit: 20 });
+  const list = await getMemberService().listForAdmin(scope, {
+    q: q?.trim() || undefined,
+    page: 1,
+    limit: 20,
+  });
   if (!list.ok) {
     throw new Error(`用户列表查询失败：${list.error.message}`);
   }
@@ -49,7 +53,9 @@ export default async function UsersPage({
     <main className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-6 p-8">
       <header className="grid gap-1.5">
         <h1 className="text-2xl font-semibold tracking-tight">淘太郎 · 运营后台</h1>
-        <p className="text-sm text-muted-foreground">M1 只读切片：会员列表（新老并行，员工可培训）</p>
+        <p className="text-sm text-muted-foreground">
+          M1 只读切片：会员列表（新老并行，员工可培训）
+        </p>
       </header>
       <UsersPanel scopeLabel={scopeLabel} scope={scope.kind} initial={list.value} />
     </main>

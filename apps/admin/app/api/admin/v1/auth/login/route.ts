@@ -28,7 +28,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!parsed.success) {
     const field = parsed.error.issues[0]?.path.join('.') ?? 'body';
     return NextResponse.json(
-      envelopeFail(400, `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`, traceId),
+      envelopeFail(
+        400,
+        `字段 ${field} 校验失败：${parsed.error.issues[0]?.message ?? ''}`,
+        traceId,
+      ),
       { status: 400 },
     );
   }

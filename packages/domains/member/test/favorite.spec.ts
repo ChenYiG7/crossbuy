@@ -180,9 +180,36 @@ describe('listFavorites（旧 ListFavoriteTest + FavoriteControllerTest 翻译�
       // 直接造三行：daigou / daifa / NULL（NULL 行旧系统也存在，过滤必须含它）
       await tx.dg_favorite.createMany({
         data: [
-          { uid, uname: 'vitest-fav-list', typeid: 0, goodsurl: 'u1', goodsname: '代购收藏', goodsprice: 1, type: FAVORITE_TYPE.DAIGOU, addtime: 100 },
-          { uid, uname: 'vitest-fav-list', typeid: 0, goodsurl: 'u2', goodsname: '代发收藏', goodsprice: 2, type: FAVORITE_TYPE.DAIFA, addtime: 200 },
-          { uid, uname: 'vitest-fav-list', typeid: 0, goodsurl: 'u3', goodsname: '无类型收藏', goodsprice: 3, type: null, addtime: 300 },
+          {
+            uid,
+            uname: 'vitest-fav-list',
+            typeid: 0,
+            goodsurl: 'u1',
+            goodsname: '代购收藏',
+            goodsprice: 1,
+            type: FAVORITE_TYPE.DAIGOU,
+            addtime: 100,
+          },
+          {
+            uid,
+            uname: 'vitest-fav-list',
+            typeid: 0,
+            goodsurl: 'u2',
+            goodsname: '代发收藏',
+            goodsprice: 2,
+            type: FAVORITE_TYPE.DAIFA,
+            addtime: 200,
+          },
+          {
+            uid,
+            uname: 'vitest-fav-list',
+            typeid: 0,
+            goodsurl: 'u3',
+            goodsname: '无类型收藏',
+            goodsprice: 3,
+            type: null,
+            addtime: 300,
+          },
         ],
       });
 
@@ -192,7 +219,9 @@ describe('listFavorites（旧 ListFavoriteTest + FavoriteControllerTest 翻译�
       expect(def.value.total).toBe(2); // daigou + NULL，代发被过滤
       expect(def.value.items.map((f) => f.goodsName)).toEqual(['无类型收藏', '代购收藏']); // fid 倒序
 
-      const daifa = await service.listFavorites(memberPrincipal(uid), { type: FAVORITE_TYPE.DAIFA });
+      const daifa = await service.listFavorites(memberPrincipal(uid), {
+        type: FAVORITE_TYPE.DAIFA,
+      });
       expect(daifa.ok).toBe(true);
       if (!daifa.ok) return;
       expect(daifa.value.total).toBe(1);
@@ -206,8 +235,26 @@ describe('listFavorites（旧 ListFavoriteTest + FavoriteControllerTest 翻译�
       const other = await createUser(tx, 'vitest-fav-other2');
       await tx.dg_favorite.createMany({
         data: [
-          { uid: me, uname: 'vitest-fav-me', typeid: 0, goodsurl: 'm1', goodsname: '我的', goodsprice: 1, type: FAVORITE_TYPE.DAIGOU, addtime: 100 },
-          { uid: other, uname: 'vitest-fav-other2', typeid: 0, goodsurl: 'o1', goodsname: '别人的', goodsprice: 1, type: FAVORITE_TYPE.DAIGOU, addtime: 200 },
+          {
+            uid: me,
+            uname: 'vitest-fav-me',
+            typeid: 0,
+            goodsurl: 'm1',
+            goodsname: '我的',
+            goodsprice: 1,
+            type: FAVORITE_TYPE.DAIGOU,
+            addtime: 100,
+          },
+          {
+            uid: other,
+            uname: 'vitest-fav-other2',
+            typeid: 0,
+            goodsurl: 'o1',
+            goodsname: '别人的',
+            goodsprice: 1,
+            type: FAVORITE_TYPE.DAIGOU,
+            addtime: 200,
+          },
         ],
       });
       const res = await makeService(tx).listFavorites(memberPrincipal(me), {});

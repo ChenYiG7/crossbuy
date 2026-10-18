@@ -6,7 +6,15 @@
 //
 // 用法：node scripts/import-claude-skills.mjs [--dry]
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync, cpSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  cpSync,
+} from 'node:fs';
 import { join, basename } from 'node:path';
 
 const DRY = process.argv.includes('--dry');

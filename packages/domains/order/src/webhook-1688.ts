@@ -58,9 +58,20 @@ export const ORDER_TYPE_DAIGOU = 1;
 
 export interface Webhook1688Deps {
   /** 快照写入（platform-snapshot.record1688Snapshot；失败不阻断推进——旧 record1688 语义） */
-  recordSnapshot: (db: Db, tid: string, detail: Record<string, unknown>, stage: PlatformSnapshotStage, now: Date) => Promise<boolean>;
+  recordSnapshot: (
+    db: Db,
+    tid: string,
+    detail: Record<string, unknown>,
+    stage: PlatformSnapshotStage,
+    now: Date,
+  ) => Promise<boolean>;
   /** update1688PaidOrders（repository 条件 UPDATE；单语句原子，db=单例连接或 batch 事务句柄） */
-  update1688PaidOrders: (db: Db, tid: string, payTimeSec: number, nowSec: number) => Promise<number>;
+  update1688PaidOrders: (
+    db: Db,
+    tid: string,
+    payTimeSec: number,
+    nowSec: number,
+  ) => Promise<number>;
   /** 批量事件事务运行器（apps/api 注入 $transaction；单事件分支不用） */
   runTx: <T>(fn: (tx: Db) => Promise<T>) => Promise<T>;
   alibaba: AlibabaOrderClient;
@@ -137,7 +148,9 @@ export class Webhook1688Service {
     }
     await this.deps.recordSnapshot(this.deps.db, tid, detail, 'paid', this.deps.now());
     const base = (detail.baseInfo ?? {}) as Record<string, unknown>;
-    const stepList = Array.isArray(base.newStepOrderList) ? (base.newStepOrderList as Array<Record<string, unknown>>) : [];
+    const stepList = Array.isArray(base.newStepOrderList)
+      ? (base.newStepOrderList as Array<Record<string, unknown>>)
+      : [];
     let payTimeRaw: unknown = base.payTime ?? null;
     for (const step of stepList) {
       if (step.payStatus !== 2) {
@@ -159,7 +172,9 @@ export class Webhook1688Service {
   /** 旧 ORDER_BATCH_PAY 分支 1:1（整批一个事务；任一失败回滚整批） */
   private async handleBatchPay(data: Record<string, unknown>): Promise<Webhook1688Outcome> {
     const type = 'ORDER_BATCH_PAY';
-    const batch = Array.isArray(data.batchPay) ? (data.batchPay as Array<Record<string, unknown>>) : [];
+    const batch = Array.isArray(data.batchPay)
+      ? (data.batchPay as Array<Record<string, unknown>>)
+      : [];
     const failures: Array<{ reason: string; retryable: boolean }> = [];
 
     try {
@@ -177,7 +192,12 @@ export class Webhook1688Service {
           }
           const base = (detail.baseInfo ?? {}) as Record<string, unknown>;
           const payTimeSec = parsePayTime(base.payTime ?? null, this.deps.now());
-          await this.deps.update1688PaidOrders(tx, tid, payTimeSec, Math.floor(this.deps.now().getTime() / 1000));
+          await this.deps.update1688PaidOrders(
+            tx,
+            tid,
+            payTimeSec,
+            Math.floor(this.deps.now().getTime() / 1000),
+          );
         }
       });
       if (failures.length > 0) {
@@ -201,9 +221,18 @@ export class Webhook1688Service {
     return this.runUpdate(type, tid, payTimeSec);
   }
 
-  private async runUpdate(type: string, tid: string, payTimeSec: number): Promise<Webhook1688Outcome> {
+  private async runUpdate(
+    type: string,
+    tid: string,
+    payTimeSec: number,
+  ): Promise<Webhook1688Outcome> {
     try {
-      await this.deps.update1688PaidOrders(this.deps.db, tid, payTimeSec, Math.floor(this.deps.now().getTime() / 1000));
+      await this.deps.update1688PaidOrders(
+        this.deps.db,
+        tid,
+        payTimeSec,
+        Math.floor(this.deps.now().getTime() / 1000),
+      );
       return this.ok(type);
     } catch {
       return this.fail(`${type}: db update failed`, true);
@@ -211,7 +240,10 @@ export class Webhook1688Service {
   }
 
   private ok(eventType: string, reason?: string): Webhook1688Outcome {
-    return { ack: { success: true, event_type: eventType, ...(reason ? { reason } : {}) }, retryable: false };
+    return {
+      ack: { success: true, event_type: eventType, ...(reason ? { reason } : {}) },
+      retryable: false,
+    };
   }
 
   private fail(reason: string, retryable: boolean): Webhook1688Outcome {

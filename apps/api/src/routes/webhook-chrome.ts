@@ -46,7 +46,9 @@ export async function webhookChromeRoutes(app: ZodApp, opts: { config: ApiConfig
 
 /** 信封 → 域入参（旧 webhookForChrome 的 `$oids`/`$extra` 组装 1:1） */
 function toChromeInput(body: z.infer<typeof chromeWebhookSchema>): ChromeWebhookInput {
-  const oids = Array.isArray(body.oids) ? body.oids.map((v) => String(v)).join(',') : (body.oids ?? '');
+  const oids = Array.isArray(body.oids)
+    ? body.oids.map((v) => String(v)).join(',')
+    : (body.oids ?? '');
   return {
     oids: String(oids),
     tradeId: body.trade_id === null || body.trade_id === undefined ? '' : String(body.trade_id),
@@ -55,9 +57,9 @@ function toChromeInput(body: z.infer<typeof chromeWebhookSchema>): ChromeWebhook
     orderDetail: decodeOrderDetail(body.order_detail),
     // 旧 `Arr::get($extra,'skip_price_check', false)`：0/1/'0'/'1'/'true' 都当布尔用
     skipPriceCheck:
-      body.skip_price_check === true
-      || body.skip_price_check === 1
-      || body.skip_price_check === '1'
-      || body.skip_price_check === 'true',
+      body.skip_price_check === true ||
+      body.skip_price_check === 1 ||
+      body.skip_price_check === '1' ||
+      body.skip_price_check === 'true',
   };
 }

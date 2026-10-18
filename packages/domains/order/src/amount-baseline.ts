@@ -41,7 +41,9 @@ export interface AmountSummary<T extends AmountOrderRow = AmountOrderRow> {
  * 旧 `isAmountCalculationExcludedState`：`in_array((int)$state, $invalidStates, true)`。
  * ⚠ `(int)null === 0` 不在无效态内 ⇒ **state 为 null 的订单参与计算**（怪癖，照抄）。
  */
-export function isAmountCalculationExcludedState(state: number | string | null | undefined): boolean {
+export function isAmountCalculationExcludedState(
+  state: number | string | null | undefined,
+): boolean {
   return INVALID_STATES.includes(Math.trunc(Number(state ?? 0)) as (typeof INVALID_STATES)[number]);
 }
 
@@ -51,11 +53,16 @@ export function filterOrdersForAmountCalculation<T extends AmountOrderRow>(order
 }
 
 /** 旧 `summarizeAmountCalculationOrders`（1:1，含「先过滤再累加」的顺序） */
-export function summarizeAmountCalculationOrders<T extends AmountOrderRow>(orders: T[]): AmountSummary<T> {
+export function summarizeAmountCalculationOrders<T extends AmountOrderRow>(
+  orders: T[],
+): AmountSummary<T> {
   const amountOrders = filterOrdersForAmountCalculation(orders);
 
   const goodsTotal = moneyOf(
-    amountOrders.reduce((acc, order) => acc + Number(order.goodsnum ?? 0) * Number(order.goodsprice ?? 0), 0),
+    amountOrders.reduce(
+      (acc, order) => acc + Number(order.goodsnum ?? 0) * Number(order.goodsprice ?? 0),
+      0,
+    ),
   );
   const sendpriceTotal = moneyOf(
     amountOrders.reduce((acc, order) => acc + Number(order.sendprice ?? 0), 0),
@@ -127,12 +134,12 @@ export function computePriceBaseline(input: PriceBaselineInput): PriceBaseline {
     realPay,
     blocked,
     blockMessage: blocked
-      ? '实际付款不能大于当前本地价格基线，已阻断自动改价。'
-        + ` 本地商品合计：${goodsTotal}`
-        + ` 本地运费：${dbSendPrice}`
-        + ` 平台运费：${sendPrice}`
-        + ` 本地价格基线：${originalPrice}`
-        + ` 实际付款：${realPay}`
+      ? '实际付款不能大于当前本地价格基线，已阻断自动改价。' +
+        ` 本地商品合计：${goodsTotal}` +
+        ` 本地运费：${dbSendPrice}` +
+        ` 平台运费：${sendPrice}` +
+        ` 本地价格基线：${originalPrice}` +
+        ` 实际付款：${realPay}`
       : null,
     riskLog: {
       localGoodsTotal: goodsTotal,
@@ -172,7 +179,9 @@ function floatOf(value: unknown): number {
   return 0;
 }
 
-export function extractAlibabaAmounts(baseInfo: Record<string, unknown> | null | undefined): AlibabaAmounts {
+export function extractAlibabaAmounts(
+  baseInfo: Record<string, unknown> | null | undefined,
+): AlibabaAmounts {
   const couponFee = moneyOf(floatOf(baseInfo?.['couponFee']));
   const rawTotal = moneyOf(floatOf(baseInfo?.['totalAmount']));
   const couponAdded = couponFee !== 0;
@@ -211,7 +220,10 @@ export function extractTaobaoGlobalAmounts(detail: TaobaoGlobalDetail): {
   const rawPostFee = Number(detail.domestic_post_fee ?? 0);
   const postFee =
     rawPostFee === 0
-      ? (detail.sub_purchase_orders ?? []).reduce((acc, item) => acc + Number(item?.domestic_post_fee ?? 0), 0)
+      ? (detail.sub_purchase_orders ?? []).reduce(
+          (acc, item) => acc + Number(item?.domestic_post_fee ?? 0),
+          0,
+        )
       : rawPostFee;
 
   const shippingFee = moneyOf(postFee / 100);

@@ -33,7 +33,10 @@ export function memberPrincipal(memberId: number): Principal {
 }
 
 /** 后台端 Principal 收口构造（Session + Redis RBAC 校验后调用） */
-export function adminPrincipal(adminId: number, opts?: { belongCompany?: CompanyId; permissions?: readonly string[] }): Principal {
+export function adminPrincipal(
+  adminId: number,
+  opts?: { belongCompany?: CompanyId; permissions?: readonly string[] },
+): Principal {
   return {
     subject: String(adminId),
     kind: 'admin',
@@ -43,7 +46,10 @@ export function adminPrincipal(adminId: number, opts?: { belongCompany?: Company
 }
 
 /** 开放 API Principal 收口构造（apps/api 签名/key 校验后调用） */
-export function openApiPrincipal(clientId: string, opts?: { permissions?: readonly string[] }): Principal {
+export function openApiPrincipal(
+  clientId: string,
+  opts?: { permissions?: readonly string[] },
+): Principal {
   return {
     subject: clientId,
     kind: 'openapi',

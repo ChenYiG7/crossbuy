@@ -19,7 +19,13 @@ import type { Db } from './repository';
 import { money, moneyEquals, moneyOf } from './money';
 
 /** 旧 Order::AMOUNT_FIELDS——这些字段变更才触发同步 */
-const AMOUNT_FIELDS = ['goodsprice', 'goodsnum', 'goodsprice1', 'bargainprice', 'sendprice'] as const;
+const AMOUNT_FIELDS = [
+  'goodsprice',
+  'goodsnum',
+  'goodsprice1',
+  'bargainprice',
+  'sendprice',
+] as const;
 
 /** 组内订单行（syncByOids 的最小列集，旧 select 1:1） */
 interface AmountOrderRow {
@@ -63,7 +69,10 @@ function INVALID(state: number | null): boolean {
  * 旧 Order::loadAmountCarrierCandidateOrders：候选 = 组内活跃单；
  * 若候选恰属同一个非空 tid，则扩为**该 tid 全组活跃单**（可能超出传入集合）。
  */
-async function loadAmountCarrierCandidates(db: Db, rows: AmountOrderRow[]): Promise<AmountOrderRow[]> {
+async function loadAmountCarrierCandidates(
+  db: Db,
+  rows: AmountOrderRow[],
+): Promise<AmountOrderRow[]> {
   const active = rows.filter((r) => isActive(r.state)).sort((a, b) => a.oid - b.oid);
   if (active.length === 0) return [];
 
@@ -85,7 +94,10 @@ async function loadAmountCarrierCandidates(db: Db, rows: AmountOrderRow[]): Prom
  * ② 兜底看 v2_order_detail（coupon_fee≠0 或 seller_change_amount≠0 的 max(id)）；
  * ③ 再兜底 = 候选 max(oid)。
  */
-export async function resolveAmountCarrier(db: Db, rows: AmountOrderRow[]): Promise<AmountOrderRow | null> {
+export async function resolveAmountCarrier(
+  db: Db,
+  rows: AmountOrderRow[],
+): Promise<AmountOrderRow | null> {
   const candidates = await loadAmountCarrierCandidates(db, rows);
   if (candidates.length === 0) return null;
 
@@ -95,13 +107,21 @@ export async function resolveAmountCarrier(db: Db, rows: AmountOrderRow[]): Prom
   if (holder) return holder;
 
   const detailHolderId = await db.v2_order_detail.findFirst({
-    where: { id: { in: candidates.map((r) => r.oid) }, OR: [{ coupon_fee: { not: 0 } }, { seller_change_amount: { not: 0 } }] },
+    where: {
+      id: { in: candidates.map((r) => r.oid) },
+      OR: [{ coupon_fee: { not: 0 } }, { seller_change_amount: { not: 0 } }],
+    },
     orderBy: { id: 'desc' },
     select: { id: true },
   });
   if (detailHolderId) {
-    return candidates.find((r) => r.oid === detailHolderId.id)
-      ?? ((await db.dg_order.findUnique({ where: { oid: detailHolderId.id }, select: ORDER_SELECT })) as AmountOrderRow | null);
+    return (
+      candidates.find((r) => r.oid === detailHolderId.id) ??
+      ((await db.dg_order.findUnique({
+        where: { oid: detailHolderId.id },
+        select: ORDER_SELECT,
+      })) as AmountOrderRow | null)
+    );
   }
 
   return candidates.sort((a, b) => b.oid - a.oid)[0] ?? null;
@@ -140,7 +160,10 @@ export async function migrateAmountCarrier(
   const currentHolder = await resolveAmountCarrier(db, group);
   if (!currentHolder) return null;
   if (currentHolder.oid === target.oid) {
-    return (await db.dg_order.findUnique({ where: { oid: target.oid }, select: ORDER_SELECT })) as AmountOrderRow | null;
+    return (await db.dg_order.findUnique({
+      where: { oid: target.oid },
+      select: ORDER_SELECT,
+    })) as AmountOrderRow | null;
   }
 
   const carrierValues = {
@@ -163,16 +186,29 @@ export async function migrateAmountCarrier(
     // Prisma 的 Json 空值要用 Prisma.JsonNull 表达；本文件不引 @crossbuy/db（边界纪律）⇒
     // 「读到的行原样回写」用 as never 收口（值域与读源同构，无运行期风险）
     const detailData = { ...rest, updated_at: createdAt } as never;
-    const existing = await db.v2_order_detail.findUnique({ where: { id: target.oid }, select: { id: true } });
+    const existing = await db.v2_order_detail.findUnique({
+      where: { id: target.oid },
+      select: { id: true },
+    });
     if (existing) {
       await db.v2_order_detail.update({ where: { id: target.oid }, data: detailData });
     } else {
-      await db.v2_order_detail.create({ data: { ...(detailData as object), id: target.oid, created_at: createdAt, updated_at: createdAt } as never });
+      await db.v2_order_detail.create({
+        data: {
+          ...(detailData as object),
+          id: target.oid,
+          created_at: createdAt,
+          updated_at: createdAt,
+        } as never,
+      });
     }
     await db.v2_order_detail.delete({ where: { id: currentHolder.oid } });
   }
 
-  return (await db.dg_order.findUnique({ where: { oid: target.oid }, select: ORDER_SELECT })) as AmountOrderRow | null;
+  return (await db.dg_order.findUnique({
+    where: { oid: target.oid },
+    select: ORDER_SELECT,
+  })) as AmountOrderRow | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +229,11 @@ function calculateBargainpriceFromOrders(rows: AmountOrderRow[]): number {
 }
 
 /** 旧 syncGoodsprice1ByBargainprice：显式 bargainprice 意图时按行占比反摊 goodsprice1 */
-async function syncGoodsprice1ByBargainprice(db: Db, rows: AmountOrderRow[], totalBargainprice: number): Promise<void> {
+async function syncGoodsprice1ByBargainprice(
+  db: Db,
+  rows: AmountOrderRow[],
+  totalBargainprice: number,
+): Promise<void> {
   const sum = money(rows.reduce((acc, r) => acc + r.goodsprice * (r.goodsnum ?? 0), 0));
   if (sum <= 0) return;
 
@@ -209,13 +249,21 @@ async function syncGoodsprice1ByBargainprice(db: Db, rows: AmountOrderRow[], tot
     const oldGoodsprice1 = money(r.goodsprice1 ?? 0);
 
     if (!moneyEquals(newGoodsprice1, oldGoodsprice1)) {
-      await db.dg_order.updateMany({ where: { oid: r.oid }, data: { goodsprice1: newGoodsprice1 } });
+      await db.dg_order.updateMany({
+        where: { oid: r.oid },
+        data: { goodsprice1: newGoodsprice1 },
+      });
     }
   }
 }
 
 /** 旧 normalizeOrderSendprice：carrier 持有组内 sendprice 总额，其余清零 */
-async function normalizeOrderSendprice(db: Db, rows: AmountOrderRow[], active: AmountOrderRow[], carrier: AmountOrderRow | null): Promise<void> {
+async function normalizeOrderSendprice(
+  db: Db,
+  rows: AmountOrderRow[],
+  active: AmountOrderRow[],
+  carrier: AmountOrderRow | null,
+): Promise<void> {
   const totalSendprice = money(active.reduce((acc, r) => acc + (r.sendprice ?? 0), 0));
   for (const r of rows) {
     const expected = carrier && r.oid === carrier.oid ? totalSendprice : 0;
@@ -251,10 +299,15 @@ async function normalizeOrderBargainprice(
 
 /** 旧 syncSendOrders：组内 sid 非空者 → dg_sendorder.bargainprice = Σ(该 sid 下活跃单 bargainprice) */
 async function syncSendOrders(db: Db, rows: AmountOrderRow[]): Promise<void> {
-  const sids = [...new Set(rows.map((r) => r.sid).filter((s): s is string => s !== null && s !== ''))];
+  const sids = [
+    ...new Set(rows.map((r) => r.sid).filter((s): s is string => s !== null && s !== '')),
+  ];
   for (const sid of sids) {
     // dg_sendorder.sid 是 Int 主键（dg_order.sid 是字符串列）——旧 Laravel find('123') 同样隐式转 int
-    const sendOrder = await db.dg_sendorder.findUnique({ where: { sid: Number(sid) }, select: { sid: true, bargainprice: true } });
+    const sendOrder = await db.dg_sendorder.findUnique({
+      where: { sid: Number(sid) },
+      select: { sid: true, bargainprice: true },
+    });
     if (!sendOrder) continue;
 
     const bargainprice = money(
@@ -303,10 +356,18 @@ async function syncFapiao(db: Db, rows: AmountOrderRow[]): Promise<void> {
 let syncing = false;
 
 /** 旧 OrderAmountSyncService::syncByOids（重入保护 + 组循环归一化 + 下游同步） */
-export async function syncOrderAmountsByOids(db: Db, rawOids: number[], changedFields: string[] = []): Promise<void> {
+export async function syncOrderAmountsByOids(
+  db: Db,
+  rawOids: number[],
+  changedFields: string[] = [],
+): Promise<void> {
   const oids = [...new Set(rawOids.map((o) => Math.trunc(o)).filter((o) => o > 0))];
   if (oids.length === 0 || syncing) return;
-  if (changedFields.length > 0 && !changedFields.some((f) => (AMOUNT_FIELDS as readonly string[]).includes(f))) return;
+  if (
+    changedFields.length > 0 &&
+    !changedFields.some((f) => (AMOUNT_FIELDS as readonly string[]).includes(f))
+  )
+    return;
 
   syncing = true;
   try {
@@ -322,7 +383,11 @@ export async function syncOrderAmountsByOids(db: Db, rawOids: number[], changedF
         groups.push([row.oid]);
       } else {
         const groupOids = (
-          await db.dg_order.findMany({ where: { tid: row.tid }, select: { oid: true }, orderBy: { oid: 'asc' } })
+          await db.dg_order.findMany({
+            where: { tid: row.tid },
+            select: { oid: true },
+            orderBy: { oid: 'asc' },
+          })
         ).map((g) => g.oid);
         groups.push(groupOids);
       }
@@ -355,7 +420,14 @@ export async function syncOrderAmountsByOids(db: Db, rawOids: number[], changedF
       const carrier = await resolveAmountCarrier(db, orders);
 
       await normalizeOrderSendprice(db, orders, active, carrier);
-      await normalizeOrderBargainprice(db, orders, active, totalBargainprice, carrier, hasExplicitBargainpriceIntent);
+      await normalizeOrderBargainprice(
+        db,
+        orders,
+        active,
+        totalBargainprice,
+        carrier,
+        hasExplicitBargainpriceIntent,
+      );
 
       const refreshed = (await db.dg_order.findMany({
         where: { oid: { in: groupOids } },
@@ -409,7 +481,11 @@ export class DeferredAmountSync {
   async dispatch(db: Db, rawOids: number[], changedFields: string[] = []): Promise<void> {
     const oids = [...new Set(rawOids.map((o) => Math.trunc(o)).filter((o) => o > 0))];
     if (oids.length === 0 || syncing) return;
-    if (changedFields.length > 0 && !changedFields.some((f) => (AMOUNT_FIELDS as readonly string[]).includes(f))) return;
+    if (
+      changedFields.length > 0 &&
+      !changedFields.some((f) => (AMOUNT_FIELDS as readonly string[]).includes(f))
+    )
+      return;
 
     if (this.deferLevel > 0) {
       for (const oid of oids) this.pendingOids.add(oid);

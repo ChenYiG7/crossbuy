@@ -91,7 +91,9 @@ const ORDER_FROM_ANY_ACTIVE: readonly OrderStatusCode[] = [
  * 收录（→1/→2/→5/→9/→12/→10）；无白名单的分支（→3/→4/→6/→7/→11）按旧真实守卫
  * （仅禁终态）收录为全活跃态——这是 **1:1 保真**不是放宽；R2 收敛时再收紧（S19）。
  */
-export const ORDER_STATUS_TRANSITIONS: Readonly<Record<OrderStatusCode, readonly OrderStatusCode[]>> = {
+export const ORDER_STATUS_TRANSITIONS: Readonly<
+  Record<OrderStatusCode, readonly OrderStatusCode[]>
+> = {
   /** 回改重新下单：6→1（BatchUpdateOrder:436 白名单仅 6，PAID 被注释）；2/9→1（BatchUpdateOrderState:92） */
   [OrderStatus.WAIT_CREATE]: [OrderStatus.PAID, OrderStatus.INVALID, OrderStatus.AFTER_SALE],
   /** 1→2（1688 支付 webhook / admin 手动确认，白名单仅 1）；3/9→2（BatchUpdateOrderState:98 回改） */
@@ -210,14 +212,19 @@ export const openApiGoodsItemSchema = z.object({
   /** 1688 一件零售价——服务端按平台 SKU 实价覆盖，未设置为 null 不转 0 */
   retailPrice: z.string().nullable().optional(),
   /** 是否一件包邮 */
-  onePieceFreePostage: z.union([z.literal(0), z.literal(1)]).nullable().optional(),
+  onePieceFreePostage: z
+    .union([z.literal(0), z.literal(1)])
+    .nullable()
+    .optional(),
   /** 价格区间（字符串透传） */
   priceRange: z.string().max(100).nullable().optional(),
   /** 混批设置（字符串透传） */
   sellerMixSetting: z.string().max(255).nullable().optional(),
   /** 规格；缺省时服务端补全 */
   props: z
-    .array(z.object({ name: z.string().nullable().optional(), value: z.string().nullable().optional() }))
+    .array(
+      z.object({ name: z.string().nullable().optional(), value: z.string().nullable().optional() }),
+    )
     .nullable()
     .optional(),
   /** 最低起订量——按同一商品全部 SKU 合计校验，不是单个 SKU */
@@ -362,7 +369,8 @@ export const BargainDisplayStatus = {
   /** 有降价 */
   SAVED: 'saved',
 } as const;
-export type BargainDisplayStatusCode = (typeof BargainDisplayStatus)[keyof typeof BargainDisplayStatus];
+export type BargainDisplayStatusCode =
+  (typeof BargainDisplayStatus)[keyof typeof BargainDisplayStatus];
 
 /** mark_flag 位标记值（旧 MARK_FLAG_VALUE_*：两位一个标记，favorite 占 0-1 位、arrival 占 2-3 位） */
 export const MarkFlagValue = {
@@ -442,7 +450,13 @@ export const memberOrderRowSchema = z.object({
   goodsPrice: z.string(),
   /** 砍后单价（0 = 无改价记录） */
   goodsPrice1: z.string(),
-  bargainStatus: z.enum([BargainDisplayStatus.BEFORE_START, BargainDisplayStatus.INVALID, BargainDisplayStatus.PENDING, BargainDisplayStatus.NONE, BargainDisplayStatus.SAVED]),
+  bargainStatus: z.enum([
+    BargainDisplayStatus.BEFORE_START,
+    BargainDisplayStatus.INVALID,
+    BargainDisplayStatus.PENDING,
+    BargainDisplayStatus.NONE,
+    BargainDisplayStatus.SAVED,
+  ]),
   /** (goodsprice − goodsprice1) × goodsnum；before_start/invalid/pending 为 null */
   bargainAmount: z.string().nullable(),
   goodsNum: z.number().int(),
@@ -535,13 +549,15 @@ export const webhook1688LogisticsMessageSchema = z.object({
     regionName: z.string().optional(),
     detailAddress: z.string().optional(),
   }),
-  itemList: z.array(z.object({
-    auctionUrl: z.string().optional(),
-    auctionTitle: z.string().optional(),
-    pictureUrl: z.string().optional(),
-    quantity: z.number().optional(),
-    skuName: z.string().optional(),
-  })),
+  itemList: z.array(
+    z.object({
+      auctionUrl: z.string().optional(),
+      auctionTitle: z.string().optional(),
+      pictureUrl: z.string().optional(),
+      quantity: z.number().optional(),
+      skuName: z.string().optional(),
+    }),
+  ),
 });
 export type Webhook1688LogisticsMessage = z.infer<typeof webhook1688LogisticsMessageSchema>;
 
@@ -567,10 +583,12 @@ export type ShipmentChromeInput = z.infer<typeof shipmentChromeSchema>;
 export const shipmentBatchItemSchema = z.object({
   tid: z.string(),
   express_detail: z.object({
-    expressId: z.array(z.object({
-      expressNo: z.string(),
-      companyNo: z.string().optional().default(''),
-    })),
+    expressId: z.array(
+      z.object({
+        expressNo: z.string(),
+        companyNo: z.string().optional().default(''),
+      }),
+    ),
   }),
 });
 export type ShipmentBatchItem = z.infer<typeof shipmentBatchItemSchema>;
@@ -579,10 +597,12 @@ export type ShipmentBatchItem = z.infer<typeof shipmentBatchItemSchema>;
 export const shipmentBatchResultSchema = z.object({
   code: z.union([z.literal(200), z.literal(40000)]),
   msg: z.string().optional(),
-  data: z.object({
-    failed_tids: z.array(z.string()),
-    idempotent_tids: z.array(z.string()),
-  }).optional(),
+  data: z
+    .object({
+      failed_tids: z.array(z.string()),
+      idempotent_tids: z.array(z.string()),
+    })
+    .optional(),
 });
 export type ShipmentBatchResult = z.infer<typeof shipmentBatchResultSchema>;
 
@@ -655,7 +675,9 @@ export const chromeProductItemSchema = z
     quantity: z.union([z.string(), z.number()]).optional(),
     price: z.union([z.string(), z.number()]).optional(),
     itemAmount: z.union([z.string(), z.number()]).optional(),
-    skuInfos: z.array(z.object({ name: z.string().optional(), value: z.string().optional() }).passthrough()).nullish(),
+    skuInfos: z
+      .array(z.object({ name: z.string().optional(), value: z.string().optional() }).passthrough())
+      .nullish(),
   })
   .passthrough();
 

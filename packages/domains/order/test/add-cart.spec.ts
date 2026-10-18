@@ -55,8 +55,14 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
   });
 
   it('generateSkuAttrsHash：与属性顺序无关（sortAttrs 按 name 排序）', () => {
-    const a = generateSkuAttrsHash([{ name: 'サイズ', value: 'M' }, { name: '色', value: '赤' }]);
-    const b = generateSkuAttrsHash([{ name: '色', value: '赤' }, { name: 'サイズ', value: 'M' }]);
+    const a = generateSkuAttrsHash([
+      { name: 'サイズ', value: 'M' },
+      { name: '色', value: '赤' },
+    ]);
+    const b = generateSkuAttrsHash([
+      { name: '色', value: '赤' },
+      { name: 'サイズ', value: 'M' },
+    ]);
     expect(a).toBe(b);
     expect(generateSkuAttrsHash([])).toBe(generateSkuAttrsHash([]));
   });
@@ -70,7 +76,9 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
 
   it('compareExtraFields：null/空串等价，"0" 按 empty 处理，差异即不合', () => {
     const base = { goodsremark: '', outid: null, var1: ' ', yanhuofba: 'FBA' };
-    expect(compareExtraFields(base, { goodsremark: '', outid: '', var1: ' ', yanhuofba: 'FBA' })).toBe(true);
+    expect(
+      compareExtraFields(base, { goodsremark: '', outid: '', var1: ' ', yanhuofba: 'FBA' }),
+    ).toBe(true);
     expect(compareExtraFields({ outid: '0' }, { outid: '' })).toBe(true);
     expect(compareExtraFields({ var1: 'Y' }, { var1: 'N' })).toBe(false);
   });
@@ -92,30 +100,43 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
     expect(
       resolvePlatformSku(goods, { shangpin_sku: '' }, [{ name: 'サイズ', value: 'M' }])?.skuId,
     ).toBe('s2');
-    expect(resolvePlatformSku({ title: 't', skus: [{ skuId: 'only' }] }, { shangpin_sku: 'zzz' })?.skuId).toBe('only');
-    expect(resolvePlatformSku(goods, { shangpin_sku: 'nope' }, [{ name: 'x', value: 'y' }])).toBeNull();
+    expect(
+      resolvePlatformSku({ title: 't', skus: [{ skuId: 'only' }] }, { shangpin_sku: 'zzz' })?.skuId,
+    ).toBe('only');
+    expect(
+      resolvePlatformSku(goods, { shangpin_sku: 'nope' }, [{ name: 'x', value: 'y' }]),
+    ).toBeNull();
     expect(resolvePlatformSku({ title: 't', skus: [] }, { shangpin_sku: 's1' })).toBeNull();
   });
 
   it('propsFromPlatformSku：skuAttributes 优先，否则按 properties 查 props_list', () => {
-    expect(propsFromPlatformSku({ skuAttributes: [{ attributeName: '色', value: ' 赤 ' }] }, {})).toEqual([
+    expect(
+      propsFromPlatformSku({ skuAttributes: [{ attributeName: '色', value: ' 赤 ' }] }, {}),
+    ).toEqual([{ name: '色', value: '赤' }]);
+    expect(propsFromPlatformSku({ properties: '1:2' }, { '1:2': '色: 赤' })).toEqual([
       { name: '色', value: '赤' },
     ]);
-    expect(propsFromPlatformSku({ properties: '1:2' }, { '1:2': '色: 赤' })).toEqual([{ name: '色', value: '赤' }]);
     expect(propsFromPlatformSku({ properties: '1:2' }, {})).toEqual([]);
   });
 
   it('resolvePlatformImage：props_img 命中优先，否则首张 item_imgs', () => {
     expect(
-      resolvePlatformImage({ title: 't', propsImg: { '1:2': 'http://img/a' }, itemImgs: ['http://img/b'] }, { properties: '1:2' }),
+      resolvePlatformImage(
+        { title: 't', propsImg: { '1:2': 'http://img/a' }, itemImgs: ['http://img/b'] },
+        { properties: '1:2' },
+      ),
     ).toBe('http://img/a');
-    expect(resolvePlatformImage({ title: 't', itemImgs: [{ url: 'http://img/c' }] }, {})).toBe('http://img/c');
+    expect(resolvePlatformImage({ title: 't', itemImgs: [{ url: 'http://img/c' }] }, {})).toBe(
+      'http://img/c',
+    );
     expect(resolvePlatformImage({ title: 't' }, {})).toBe('');
   });
 
   it('mixRule：平台优先 / 回落请求 JSON / 全 0 视为无规则', () => {
     const goodsInfo = { platform: '1688', title: 't', quantity: 1 } as never;
-    expect(mixRule({ title: 't', sellerMixSetting: { mixAmount: 800, mixNumber: 0 } }, goodsInfo)).toEqual({
+    expect(
+      mixRule({ title: 't', sellerMixSetting: { mixAmount: 800, mixNumber: 0 } }, goodsInfo),
+    ).toEqual({
       mixAmount: 800,
       mixNumber: 0,
     });
@@ -124,7 +145,9 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
       mixNumber: 5,
     });
     expect(mixRule(null, { ...goodsInfo, sellerMixSetting: 'not-json' } as never)).toBeNull();
-    expect(mixRule({ title: 't', sellerMixSetting: { mixAmount: 0, mixNumber: 0 } }, goodsInfo)).toBeNull();
+    expect(
+      mixRule({ title: 't', sellerMixSetting: { mixAmount: 0, mixNumber: 0 } }, goodsInfo),
+    ).toBeNull();
   });
 
   it('resolveMinOrderQuantity：平台 0/缺失 → 1（不是 0，旧代码原话）', () => {
@@ -136,13 +159,22 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
   });
 
   it('shopKey：有卖家标识走 shop，否则退化 goods', () => {
-    expect(shopKey({ title: 't', sellerInfo: { openid: 'o1' } }, '1688', 'g1')).toBe('1688:shop:o1');
+    expect(shopKey({ title: 't', sellerInfo: { openid: 'o1' } }, '1688', 'g1')).toBe(
+      '1688:shop:o1',
+    );
     expect(shopKey(null, '1688', 'g1')).toBe('1688:goods:g1');
   });
 
   it('findBelowMinOrderQuantity：混批达标放行 / 否则拦截首个违规行', () => {
     const line = (over: Partial<Parameters<typeof findBelowMinOrderQuantity>[0][number]>) => ({
-      key: 'k', title: 'T', quantity: 2, amount: 200, min: 5, shopKey: 's', hasMix: false, mix: null,
+      key: 'k',
+      title: 'T',
+      quantity: 2,
+      amount: 200,
+      min: 5,
+      shopKey: 's',
+      hasMix: false,
+      mix: null,
       ...over,
     });
     expect(findBelowMinOrderQuantity([line({ quantity: 9 })])).toBeNull();
@@ -154,7 +186,9 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
         line({ quantity: 2, amount: 400, hasMix: true, mix: { mixAmount: 800, mixNumber: 0 } }),
       ]),
     ).toBeNull();
-    expect(shopKeysMeetingMix([line({ hasMix: true, mix: { mixAmount: 800, mixNumber: 0 } })])).toEqual({});
+    expect(
+      shopKeysMeetingMix([line({ hasMix: true, mix: { mixAmount: 800, mixNumber: 0 } })]),
+    ).toEqual({});
   });
 
   it('parsePriceRangeJson：缺 price/startQuantity 任一键 → null', () => {
@@ -166,8 +200,14 @@ describe('加购纯函数（旧 AddCartMutation 私有方法 1:1）', () => {
   });
 
   it('buildRepurchaseItems：只带非空值，数组原样标量转串', () => {
-    const items = buildRepurchaseItems(['s1'], [3], [{ var1: 'Y', outid: null, props: [{ name: 'a', value: 'b' }] }]);
-    expect(items).toEqual([{ skuId: 's1', quantity: 3, var1: 'Y', props: [{ name: 'a', value: 'b' }] }]);
+    const items = buildRepurchaseItems(
+      ['s1'],
+      [3],
+      [{ var1: 'Y', outid: null, props: [{ name: 'a', value: 'b' }] }],
+    );
+    expect(items).toEqual([
+      { skuId: 's1', quantity: 3, var1: 'Y', props: [{ name: 'a', value: 'b' }] },
+    ]);
   });
 });
 
@@ -181,7 +221,9 @@ async function seedUser(tx: Tx, dfflag = 0) {
   await tx.$executeRawUnsafe(
     `INSERT INTO dg_users (uname, password, card, memberid, email, money, dfflag, utype, validity, dffee, state)
      VALUES (?, 'x', 'test', ?, NULL, 100, ?, 0, 0, 10, 1)`,
-    uname, uname, dfflag,
+    uname,
+    uname,
+    dfflag,
   );
   const row = await tx.dg_users.findFirst({ where: { uname }, select: { uid: true, uname: true } });
   expect(row).toBeTruthy();
@@ -196,11 +238,23 @@ async function seedCart(tx: Tx, input: Record<string, unknown>) {
        offer_price, one_piece_price, sendprice, goodsnum, min_order_quantity, goodsseller, goodssite,
        goodsid, sku_name, goodsremark, addtime, add_from, ${CART_EMPTY_COLS})
      VALUES (?, ?, ?, 0, ?, ?, ?, ?, 0, 0, 0, ?, 0, ?, ?, ?, ?, ?, ?, 0,
-       ${CART_EMPTY_COLS.split(',').map(() => `''`).join(',')})`,
-    gid, input.uid, input.uname ?? '', input.type ?? 1, input.goodsurl ?? 'https://e.com/p?id=1001',
-    input.goodsname ?? 'テスト商品', input.goodsprice ?? 100, input.goodsnum ?? 2,
-    input.goodsseller ?? 'shopA', input.goodssite ?? '淘宝', input.goodsid ?? '1001',
-    input.sku_name ?? '', input.goodsremark ?? '', Math.floor(Date.now() / 1000),
+       ${CART_EMPTY_COLS.split(',')
+         .map(() => `''`)
+         .join(',')})`,
+    gid,
+    input.uid,
+    input.uname ?? '',
+    input.type ?? 1,
+    input.goodsurl ?? 'https://e.com/p?id=1001',
+    input.goodsname ?? 'テスト商品',
+    input.goodsprice ?? 100,
+    input.goodsnum ?? 2,
+    input.goodsseller ?? 'shopA',
+    input.goodssite ?? '淘宝',
+    input.goodsid ?? '1001',
+    input.sku_name ?? '',
+    input.goodsremark ?? '',
+    Math.floor(Date.now() / 1000),
   );
   return gid;
 }
@@ -256,7 +310,11 @@ function makeDeps(tx: Tx, opts: StubOpts = {}) {
     supplierShop: {
       findByOpenId: async () => null,
       create: async () => ({ id: 1, title: 't', nickname: null }),
-      update: async (id, patch) => ({ id, title: patch.title ?? null, nickname: patch.nickname ?? null }),
+      update: async (id, patch) => ({
+        id,
+        title: patch.title ?? null,
+        nickname: patch.nickname ?? null,
+      }),
     },
     sideEffects: {
       enqueueSyncSupplierProduct: async (id) => void calls.syncProduct.push(id),
@@ -293,7 +351,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
             shopNick: 'shopA',
             price: 88.5,
             quantity: 3,
-            props: [{ name: '色', value: '赤' }, { name: '', value: 'x' }, { name: 'y', value: null }],
+            props: [
+              { name: '色', value: '赤' },
+              { name: '', value: 'x' },
+              { name: 'y', value: null },
+            ],
             addFrom: 1,
           },
         ],
@@ -302,7 +364,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       if (!res.ok) return;
       expect(res.value.result).toBe('done');
 
-      const rows = await (tx as unknown as { dg_cart: { findMany: (a: unknown) => Promise<Array<Record<string, unknown>>> } }).dg_cart.findMany({
+      const rows = await (
+        tx as unknown as {
+          dg_cart: { findMany: (a: unknown) => Promise<Array<Record<string, unknown>>> };
+        }
+      ).dg_cart.findMany({
         where: { uid: user.uid },
       });
       expect(rows).toHaveLength(1);
@@ -338,7 +404,14 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       const { deps } = makeDeps(tx, { dfflag: 1 });
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
-        goodsList: [{ platform: '1688', url: 'https://detail.1688.com/offer/2002.html', title: 'A', quantity: 1 }],
+        goodsList: [
+          {
+            platform: '1688',
+            url: 'https://detail.1688.com/offer/2002.html',
+            title: 'A',
+            quantity: 1,
+          },
+        ],
         returnCartId: true,
       });
       expect(res.ok).toBe(true);
@@ -346,7 +419,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       expect(res.value.cartIds).toHaveLength(1);
       expect(res.value.result).toBe(String(res.value.cartIds[0]));
 
-      const row = await (tx as unknown as { dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).dg_cart.findFirst({
+      const row = await (
+        tx as unknown as {
+          dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> };
+        }
+      ).dg_cart.findFirst({
         where: { uid: user.uid },
       });
       expect(row?.['type']).toBe(3); // 代发
@@ -362,11 +439,17 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       const { deps } = makeDeps(tx);
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
-        goodsList: [{ platform: 'transshipment', title: 'B', quantity: 1, sendPrice: 42.5, expressNo: 'EX1' }],
+        goodsList: [
+          { platform: 'transshipment', title: 'B', quantity: 1, sendPrice: 42.5, expressNo: 'EX1' },
+        ],
       });
       expect(res.ok).toBe(true);
 
-      const row = await (tx as unknown as { dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).dg_cart.findFirst({
+      const row = await (
+        tx as unknown as {
+          dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> };
+        }
+      ).dg_cart.findFirst({
         where: { uid: user.uid },
       });
       expect(row?.['type']).toBe(2);
@@ -390,7 +473,9 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       expect(res.ok).toBe(true);
       if (!res.ok) return;
       expect(res.value.result).toBe('');
-      const count = await (tx as unknown as { dg_cart: { count: (a: unknown) => Promise<number> } }).dg_cart.count({
+      const count = await (
+        tx as unknown as { dg_cart: { count: (a: unknown) => Promise<number> } }
+      ).dg_cart.count({
         where: { uid: user.uid },
       });
       expect(count).toBe(0);
@@ -428,7 +513,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       });
       expect(res.ok).toBe(true);
 
-      const rows = await (tx as unknown as { dg_cart: { findMany: (a: unknown) => Promise<Array<Record<string, unknown>>> } }).dg_cart.findMany({
+      const rows = await (
+        tx as unknown as {
+          dg_cart: { findMany: (a: unknown) => Promise<Array<Record<string, unknown>>> };
+        }
+      ).dg_cart.findMany({
         where: { uid: user.uid },
       });
       expect(rows).toHaveLength(1);
@@ -464,7 +553,15 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       const { deps } = makeDeps(tx);
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
-        goodsList: [{ platform: 'taobao', url: 'https://item.taobao.com/item.htm?id=1001', title: 'A', quantity: 1, addFrom: 6 }],
+        goodsList: [
+          {
+            platform: 'taobao',
+            url: 'https://item.taobao.com/item.htm?id=1001',
+            title: 'A',
+            quantity: 1,
+            addFrom: 6,
+          },
+        ],
       });
       expect(res.ok).toBe(false);
       if (res.ok) return;
@@ -479,7 +576,15 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       const { deps, calls } = makeDeps(tx, { supplierProductId: 555 });
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
-        goodsList: [{ platform: '1688', url: 'https://detail.1688.com/offer/2002.html', title: 'A', quantity: 1, productId: 555 }],
+        goodsList: [
+          {
+            platform: '1688',
+            url: 'https://detail.1688.com/offer/2002.html',
+            title: 'A',
+            quantity: 1,
+            productId: 555,
+          },
+        ],
         returnCartId: true,
       });
       expect(res.ok).toBe(true);
@@ -488,7 +593,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       expect(calls.syncProduct).toEqual([555]);
       expect(calls.subscribeProduct).toEqual([555]);
 
-      const row = await (tx as unknown as { dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).dg_cart.findFirst({
+      const row = await (
+        tx as unknown as {
+          dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> };
+        }
+      ).dg_cart.findFirst({
         where: { uid: user.uid },
       });
       expect(row?.['supplier_product_id']).toBe(555);
@@ -533,7 +642,11 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       });
       expect(res.ok).toBe(true);
 
-      const row = await (tx as unknown as { dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).dg_cart.findFirst({
+      const row = await (
+        tx as unknown as {
+          dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> };
+        }
+      ).dg_cart.findFirst({
         where: { uid: user.uid },
       });
       expect(Number(row?.['goodsprice'])).toBe(66.67); // round2
@@ -555,8 +668,22 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
         goodsList: [
-          { platform: '1688', url: 'https://detail.1688.com/offer/2002.html', title: 'A', quantity: 2, price: 10, minOrderQuantity: 5 },
-          { platform: '1688', url: 'https://detail.1688.com/offer/2002.html', title: 'A', quantity: 1, price: 10, minOrderQuantity: 5 },
+          {
+            platform: '1688',
+            url: 'https://detail.1688.com/offer/2002.html',
+            title: 'A',
+            quantity: 2,
+            price: 10,
+            minOrderQuantity: 5,
+          },
+          {
+            platform: '1688',
+            url: 'https://detail.1688.com/offer/2002.html',
+            title: 'A',
+            quantity: 1,
+            price: 10,
+            minOrderQuantity: 5,
+          },
         ],
         checkProductMinOrderQuantity: true,
       });
@@ -575,11 +702,24 @@ describe('AddCartService（旧 batchAddCart 1:1；真实 MySQL + 回滚）', () 
       const { deps } = makeDeps(tx);
 
       const res = await new AddCartService(deps).addCarts(member(user.uid), {
-        goodsList: [{ platform: 'taobao', title: 'A', quantity: 1, FBA: 'anything', outId: 'OID-1', var1: 'Y' }],
+        goodsList: [
+          {
+            platform: 'taobao',
+            title: 'A',
+            quantity: 1,
+            FBA: 'anything',
+            outId: 'OID-1',
+            var1: 'Y',
+          },
+        ],
       });
       expect(res.ok).toBe(true);
 
-      const row = await (tx as unknown as { dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> } }).dg_cart.findFirst({
+      const row = await (
+        tx as unknown as {
+          dg_cart: { findFirst: (a: unknown) => Promise<Record<string, unknown> | null> };
+        }
+      ).dg_cart.findFirst({
         where: { uid: user.uid },
       });
       expect(row?.['yanhuofba']).toBe('FBA');

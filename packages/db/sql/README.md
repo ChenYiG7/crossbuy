@@ -4,32 +4,32 @@
 
 ## 文件与执行顺序
 
-| # | 文件 | 用途 | 读写 | 阶段 |
-|---|---|---|---|---|
-| — | `precheck-username-duplicate.sql` | `dg_users.uname` 重名核查 | 只读 | 前置 |
-| — | `disambiguate-username-proposal.sql` | 重名账号「保留/改名」建议 | 只读 | 前置 |
-| ① | `0001-member-domain-up.sql` | 建 **16** 张 member 新表（**由 schema.prisma 生成，勿手改**；原占位表 `ledger_entry` 已移出本段，见 ⑲） | 建表 | T0 |
-| ② | `0001a-member-username-collation.sql` | 把 `member.username` 排序规则定为 `utf8mb4_general_ci`（**手工 SQL**） | ALTER | T0 |
-| ③ | `0002-member-backfill-t1.sql` | 建消歧映射表 `_t1_username_fix`/`_t1_username_merge` + **重名 fail-fast 守卫** + 回填 member 域**核心三表**（`member_address` 已加 `JOIN member` 过滤孤儿）+ 顶 AUTO_INCREMENT（幂等） | 写新表 | T1 |
-| ④ | `0003-member-backfill-verify.sql` | 21 项断言（**期望值全部按当前源 + 映射表实时计算**，禁写死生产快照数字） | 只读 | T1 |
-| ⑤ | `0004-member-backfill-t1-part2.sql` | 回填 **13 张侧表**（webhook/oauth/favorite/browse/benefit/log/area/PAT/idempotency） | 写新表 | T1 |
-| ⑥ | `0005-member-backfill-verify-part2.sql` | 侧表行数 + 外键悬空 + id 保留断言 | 只读 | T1 |
-| ⑦ | `0002-order-domain-up.sql` | 建 **26 张 order 域新表**（由 schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
-| ⑧ | `0002a-order-tid-collation.sql` | tid 家族 4 列统一 `utf8mb4_general_ci`（**手工 SQL**，Prisma 不支持列级 collation） | ALTER | T0 |
-| ⑨ | `0006-order-source-import.sql` | **本地演练专用**：从本地 `taotaro` 副本导入 21 张 order 域旧表到 `crossbuy_dryrun` | 写旧表副本 | 演练 |
-| ⑩ | `0007-order-backfill-t1.sql` | 回填**核心三件套**：`order_groups`（tid 建组）+ `orders`（oid 对齐分片存储过程）+ `order_status_histories`（幂等） | 写新表 | T1 |
-| ⑪ | `0008-order-backfill-t1-part2.sql` | 回填 **19 张侧表**（shops/platform*/import/cart/message/examination/split/增值服务） | 写新表 | T1 |
-| ⑫ | `0009-order-backfill-verify.sql` | 21 项断言（组数/砍价总额/逐组金额/孤儿/JSON/状态分布/自增） | 只读 | T1 |
-| ⑬ | `0003-send-order-domain-up.sql` | 建 **6 张 send-order 域新表**（schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
-| ⑭ | `0010-send-order-source-import.sql` | **本地演练专用**：导入 `dg_sendorder` / `v2_sendorder_value_added_service` / `dg_fapiao`（sid 命中子集） | 写旧表副本 | 演练 |
-| ⑮ | `0011-send-order-backfill-t1.sql` | 回填核心：`send_orders`（sid 对齐）+ `send_order_status_histories` + `orders.send_order_id` 单侧关联校正 | 写新表 | T1 |
-| ⑯ | `0012-send-order-backfill-t1-part2.sql` | 回填侧表：`send_order_value_added_services` / `invoices`（29,238）+ labels/invoice_events（本地无源表 PREPARE 跳过） | 写新表 | T1 |
-| ⑰ | `0013-send-order-backfill-verify.sql` | 18 项断言（sid 对齐/五费总额/保险独立/砍价/返金/sn 长度/发票/fid/悬空/状态分布/计费重/同捆/totalfee 禁回填） | 只读 | T1 |
-| ⑱ | `0014-member-source-import.sql` | **本地演练专用**：导入 member 域 15 张旧源表到演练库；**逐表择优取源**（`taotaro` → `crossbuy_dryrun`）+ `_drill_import_log` 审计 + `biz_code` 补列 + **禁在源库里跑**守卫 + 三项自检 | 写旧表副本 | 演练 |
-| ⑲ | `0015-finance-domain-up.sql` | 建 **12 张 finance 域新表**（accounts / ledger_entries / recharge_orders / exchange_rates / reconciliation_batches / reconciliation_diffs / fee_rules / alert_events / alert_channels / alert_rules / legacy_sync_watermarks / ledger_entry_orders；schema.prisma 增量 diff 生成，勿手改） | 建表 | T0 |
-| ⑳ | `0016-finance-source-import.sql` | **本地演练专用**：导入 finance 域 5 张旧源（`dg_record` 502,167 / `dg_rechargerecord` 34,918 / `finance_order_cash_flow` 884,653 / `relation_*_cash_flow` 2,282,843 / `dg_huilv` 76,623）；`dg_record_old` 与 `v2_worldfirst_*` 本机**不存在** ⇒ 审计里记 SKIP，不是脚本缺陷 |
-| ㉑ | `0017-finance-backfill-t1.sql` | 回填核心：`_t1_flow_type_map`（21 个 action + 兜底 + 采购 change_type）→ `accounts`（MEMBER + 5 平台户）→ `ledger_entries`（`dg_record` 批 5 万 / `cash_flow` 批 5 万）→ `recharge_orders`（只装正向）→ `ledger_entry_orders` → `exchange_rates`（同时刻取 `MAX(hid)`）→ 16 条历史缺陷基线登记。**非并发安全**（§1 会 DROP 重建 `_t1_*`） |
-| ㉒ | `0018-finance-backfill-verify.sql` | 31 项只读断言（E7+F12+G10+H2）：E 组行/金额双侧配平、F 组不变式与词表覆盖（含幂等键词表一致性）、G 组单据/汇率/**链断基线双侧独立算**、H 组尾切片下只能当 INFO 的两条 |
+| #   | 文件                                    | 用途                                                                                                                                                                                                                                                                                                                                      | 读写       | 阶段 |
+| --- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ---- |
+| —   | `precheck-username-duplicate.sql`       | `dg_users.uname` 重名核查                                                                                                                                                                                                                                                                                                                 | 只读       | 前置 |
+| —   | `disambiguate-username-proposal.sql`    | 重名账号「保留/改名」建议                                                                                                                                                                                                                                                                                                                 | 只读       | 前置 |
+| ①   | `0001-member-domain-up.sql`             | 建 **16** 张 member 新表（**由 schema.prisma 生成，勿手改**；原占位表 `ledger_entry` 已移出本段，见 ⑲）                                                                                                                                                                                                                                   | 建表       | T0   |
+| ②   | `0001a-member-username-collation.sql`   | 把 `member.username` 排序规则定为 `utf8mb4_general_ci`（**手工 SQL**）                                                                                                                                                                                                                                                                    | ALTER      | T0   |
+| ③   | `0002-member-backfill-t1.sql`           | 建消歧映射表 `_t1_username_fix`/`_t1_username_merge` + **重名 fail-fast 守卫** + 回填 member 域**核心三表**（`member_address` 已加 `JOIN member` 过滤孤儿）+ 顶 AUTO_INCREMENT（幂等）                                                                                                                                                    | 写新表     | T1   |
+| ④   | `0003-member-backfill-verify.sql`       | 21 项断言（**期望值全部按当前源 + 映射表实时计算**，禁写死生产快照数字）                                                                                                                                                                                                                                                                  | 只读       | T1   |
+| ⑤   | `0004-member-backfill-t1-part2.sql`     | 回填 **13 张侧表**（webhook/oauth/favorite/browse/benefit/log/area/PAT/idempotency）                                                                                                                                                                                                                                                      | 写新表     | T1   |
+| ⑥   | `0005-member-backfill-verify-part2.sql` | 侧表行数 + 外键悬空 + id 保留断言                                                                                                                                                                                                                                                                                                         | 只读       | T1   |
+| ⑦   | `0002-order-domain-up.sql`              | 建 **26 张 order 域新表**（由 schema.prisma 增量 diff 生成，勿手改）                                                                                                                                                                                                                                                                      | 建表       | T0   |
+| ⑧   | `0002a-order-tid-collation.sql`         | tid 家族 4 列统一 `utf8mb4_general_ci`（**手工 SQL**，Prisma 不支持列级 collation）                                                                                                                                                                                                                                                       | ALTER      | T0   |
+| ⑨   | `0006-order-source-import.sql`          | **本地演练专用**：从本地 `taotaro` 副本导入 21 张 order 域旧表到 `crossbuy_dryrun`                                                                                                                                                                                                                                                        | 写旧表副本 | 演练 |
+| ⑩   | `0007-order-backfill-t1.sql`            | 回填**核心三件套**：`order_groups`（tid 建组）+ `orders`（oid 对齐分片存储过程）+ `order_status_histories`（幂等）                                                                                                                                                                                                                        | 写新表     | T1   |
+| ⑪   | `0008-order-backfill-t1-part2.sql`      | 回填 **19 张侧表**（shops/platform*/import/cart/message/examination/split/增值服务）                                                                                                                                                                                                                                                      | 写新表     | T1   |
+| ⑫   | `0009-order-backfill-verify.sql`        | 21 项断言（组数/砍价总额/逐组金额/孤儿/JSON/状态分布/自增）                                                                                                                                                                                                                                                                               | 只读       | T1   |
+| ⑬   | `0003-send-order-domain-up.sql`         | 建 **6 张 send-order 域新表**（schema.prisma 增量 diff 生成，勿手改）                                                                                                                                                                                                                                                                     | 建表       | T0   |
+| ⑭   | `0010-send-order-source-import.sql`     | **本地演练专用**：导入 `dg_sendorder` / `v2_sendorder_value_added_service` / `dg_fapiao`（sid 命中子集）                                                                                                                                                                                                                                  | 写旧表副本 | 演练 |
+| ⑮   | `0011-send-order-backfill-t1.sql`       | 回填核心：`send_orders`（sid 对齐）+ `send_order_status_histories` + `orders.send_order_id` 单侧关联校正                                                                                                                                                                                                                                  | 写新表     | T1   |
+| ⑯   | `0012-send-order-backfill-t1-part2.sql` | 回填侧表：`send_order_value_added_services` / `invoices`（29,238）+ labels/invoice_events（本地无源表 PREPARE 跳过）                                                                                                                                                                                                                      | 写新表     | T1   |
+| ⑰   | `0013-send-order-backfill-verify.sql`   | 18 项断言（sid 对齐/五费总额/保险独立/砍价/返金/sn 长度/发票/fid/悬空/状态分布/计费重/同捆/totalfee 禁回填）                                                                                                                                                                                                                              | 只读       | T1   |
+| ⑱   | `0014-member-source-import.sql`         | **本地演练专用**：导入 member 域 15 张旧源表到演练库；**逐表择优取源**（`taotaro` → `crossbuy_dryrun`）+ `_drill_import_log` 审计 + `biz_code` 补列 + **禁在源库里跑**守卫 + 三项自检                                                                                                                                                     | 写旧表副本 | 演练 |
+| ⑲   | `0015-finance-domain-up.sql`            | 建 **12 张 finance 域新表**（accounts / ledger_entries / recharge_orders / exchange_rates / reconciliation_batches / reconciliation_diffs / fee_rules / alert_events / alert_channels / alert_rules / legacy_sync_watermarks / ledger_entry_orders；schema.prisma 增量 diff 生成，勿手改）                                                | 建表       | T0   |
+| ⑳   | `0016-finance-source-import.sql`        | **本地演练专用**：导入 finance 域 5 张旧源（`dg_record` 502,167 / `dg_rechargerecord` 34,918 / `finance_order_cash_flow` 884,653 / `relation_*_cash_flow` 2,282,843 / `dg_huilv` 76,623）；`dg_record_old` 与 `v2_worldfirst_*` 本机**不存在** ⇒ 审计里记 SKIP，不是脚本缺陷                                                              |
+| ㉑  | `0017-finance-backfill-t1.sql`          | 回填核心：`_t1_flow_type_map`（21 个 action + 兜底 + 采购 change_type）→ `accounts`（MEMBER + 5 平台户）→ `ledger_entries`（`dg_record` 批 5 万 / `cash_flow` 批 5 万）→ `recharge_orders`（只装正向）→ `ledger_entry_orders` → `exchange_rates`（同时刻取 `MAX(hid)`）→ 16 条历史缺陷基线登记。**非并发安全**（§1 会 DROP 重建 `_t1_*`） |
+| ㉒  | `0018-finance-backfill-verify.sql`      | 31 项只读断言（E7+F12+G10+H2）：E 组行/金额双侧配平、F 组不变式与词表覆盖（含幂等键词表一致性）、G 组单据/汇率/**链断基线双侧独立算**、H 组尾切片下只能当 INFO 的两条                                                                                                                                                                     |
 
 > ✅ 全流程已在**本地 MySQL 9.7.2** 用「生产 DDL + 无 PII 合成样本」演练通过（member 核心三表 15/15 PASS；侧表 25 项全 PASS；3 遍幂等；回退验证 OK），见 `docs/plans/03-T1本地演练报告.md`。
 > ✅ **#3g 硬化后的复跑已完成（2026-10-16，空库 `crossbuy_t1v` 从零跑全链）**：T0 四段 60 表零警告、`0003` **17 PASS + 4 INFO + 0 FAIL**、`0005` 24 项 PASS、order `0009` / send-order `0013` 关键金额与源分毫不差、守卫两种破坏手法都被拦停、两遍计数与 Σbalance 不变。证据与踩到的新坑见 `docs/plans/03` **§十**。
@@ -55,12 +55,12 @@
 
 ★ **截点用「段首行号 − 2」算，不要手抄行号**（2026-10-16 教训：schema 每加一行注释，下面所有截点全体右移；抄死的行号会让某一段少截/多截一张表，而 diff 照样「成功」生成）。段首 = `// <域> 域` 那行，−1 是分隔线 `// ===`，−2 是它上面的空行：
 
-| 段 | 文件 | from | to | 表数（2026-10-16 实测） |
-|---|---|---|---|---|
-| member | `0001-member-domain-up.sql` | `--from-empty` | 段首 510 − 2 = **508** | **16**（★ 原占位表 `ledger_entry` 已移出，见下） |
-| finance | `0015-finance-domain-up.sql` | 508 | 段首 909 − 2 = **907** | 12（28 模型累计） |
-| order | `0002-order-domain-up.sql` | 907 | 段首 1788 − 2 = **1786** | 26（54 模型累计） |
-| send-order | `0003-send-order-domain-up.sql` | 1786 | 整份 `prisma/schema.prisma` | 6（整份 60） |
+| 段         | 文件                            | from           | to                          | 表数（2026-10-16 实测）                          |
+| ---------- | ------------------------------- | -------------- | --------------------------- | ------------------------------------------------ |
+| member     | `0001-member-domain-up.sql`     | `--from-empty` | 段首 510 − 2 = **508**      | **16**（★ 原占位表 `ledger_entry` 已移出，见下） |
+| finance    | `0015-finance-domain-up.sql`    | 508            | 段首 909 − 2 = **907**      | 12（28 模型累计）                                |
+| order      | `0002-order-domain-up.sql`      | 907            | 段首 1788 − 2 = **1786**    | 26（54 模型累计）                                |
+| send-order | `0003-send-order-domain-up.sql` | 1786           | 整份 `prisma/schema.prisma` | 6（整份 60）                                     |
 
 ```bash
 cd packages/db
@@ -81,10 +81,10 @@ $P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel pri
 ```
 
 > ⚠ **这四条 `migrate diff` 必须逐条写死执行，禁止塞进 `for` 循环用位置参数取文件名。**
->   2026-10-16 我把「from/to/输出」拼成一个字符串再 `set -- $m` 拆，`$5` 在第三、四轮取到了
->   `prisma/schema.prisma` 本身，重定向直接**把正本 schema 截成 0 字节**（`git checkout --` 才救回来）。
->   同理，`> 文件` 的截断发生在命令执行**之前**，prisma 报错也不会还原它。
->   凡覆盖式重定向，先把目标文件名写成字面量、再逐条核对 `wc -c`。
+> 2026-10-16 我把「from/to/输出」拼成一个字符串再 `set -- $m` 拆，`$5` 在第三、四轮取到了
+> `prisma/schema.prisma` 本身，重定向直接**把正本 schema 截成 0 字节**（`git checkout --` 才救回来）。
+> 同理，`> 文件` 的截断发生在命令执行**之前**，prisma 报错也不会还原它。
+> 凡覆盖式重定向，先把目标文件名写成字面量、再逐条核对 `wc -c`。
 
 > ⚠️ **改 schema 后必须重新生成**，禁手改这些文件。行号会随段落移动而失效——**每次重生成前先 `grep -n '^// \(member\|finance\|order\|send-order\) 域' prisma/schema.prisma` 重新取截点**，并核对 `grep -c 'CREATE TABLE'` 与表数一致（本轮实测 16/12/26/6 = 60）。
 > ✅ 2026-10-15 实测：插入 finance 段并重基线后，`0002-order`/`0003-send-order` 两份 DDL **逐字节不变**（`git diff` 为空）——这是「基线移动不引入漂移」的判据。
@@ -97,7 +97,7 @@ $P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel pri
 ## order 域回填要点（⑩ `0007` / ⑪ `0008`）
 
 1. **Q5 拍板落地**：`order_groups` 按 tid 建组（`bargain_amount = SUM(bargainprice)`，口径无关）；空 tid 单独立成组（`legacy_order_id` = oid 作幂等键——tid 为 NULL 时 UNIQUE 不去重）。本地实测：26,078 组（tid 组 22,823 + 独立组 3,255），砍价总额 372,331.23 与源**分毫不差**（A3 断言）。
-2. **暂存表必须 ANALYZE**：新建+插满的 InnoDB 表持久统计为空，相关子查询选错计划——本地实测组表 INSERT 从 290s+ 降到 2.2s。`_t1_valid_order` / `_t1_order_group`  populate 后紧跟 `ANALYZE TABLE`。
+2. **暂存表必须 ANALYZE**：新建+插满的 InnoDB 表持久统计为空，相关子查询选错计划——本地实测组表 INSERT 从 290s+ 降到 2.2s。`_t1_valid_order` / `_t1_order_group` populate 后紧跟 `ANALYZE TABLE`。
 3. **tid collation 全家一致**：`order_groups.tid` 经 0002a 改 `general_ci` 后，暂存表 `_t1_valid_order.tid` 也须显式 `general_ci`，否则 JOIN 报 `ERROR 1267 Illegal mix of collations`（0002a 注释预告的坑，演练中实际踩到）。
 4. **分片存储过程**：`_backfill_orders(batch_size)` 按 `oid > last ORDER BY oid LIMIT n` 逐批推进（oid 有空洞禁等分区间）；本地 73,291 行 / 批 20,000 跑 4 批共 6 秒；生产 587 万行建议批 50,000。
 5. **组关联禁 OR 条件**：`g.tid=o.tid OR g.legacy_order_id=o.oid` 走不了索引（本地实测 10 分钟跑不完）——必须先建 `_t1_order_group` 映射表（两个分支各走 UNIQUE 索引 UNION），主查询只做 PK JOIN。
@@ -147,12 +147,12 @@ $P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel pri
 
 **不该跟着改的**（按列义判断，非按精度判断）：
 
-| 位置 | 为什么保留 |
-|---|---|
-| `member.float_rate` `(10,2)` | Q3 判死列，处置未拍板 |
-| `invoices.order_weight` `(10,2)`、`invoices.low_multiple` `(10,2)` | 重量与倍率，**不是金额** |
-| `0011` 的 `CAST(countweight AS DECIMAL(12,4)) * 1000` | 千克→克，需要 4 位小数 |
-| `shops.currency` DEFAULT `'JPY'`（= `0002` DDL 内那条） | **外部平台店铺自己的结算币种**（`v2_ecommerce_shop`），与本系统账本面值无关；`0008` 对 `v2_ecommerce_order.price`「2999 JPY」的拆分同理 |
+| 位置                                                               | 为什么保留                                                                                                                              |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `member.float_rate` `(10,2)`                                       | Q3 判死列，处置未拍板                                                                                                                   |
+| `invoices.order_weight` `(10,2)`、`invoices.low_multiple` `(10,2)` | 重量与倍率，**不是金额**                                                                                                                |
+| `0011` 的 `CAST(countweight AS DECIMAL(12,4)) * 1000`              | 千克→克，需要 4 位小数                                                                                                                  |
+| `shops.currency` DEFAULT `'JPY'`（= `0002` DDL 内那条）            | **外部平台店铺自己的结算币种**（`v2_ecommerce_shop`），与本系统账本面值无关；`0008` 对 `v2_ecommerce_order.price`「2999 JPY」的拆分同理 |
 
 **静态验证已做**（临时空库 `crossbuy_ddlcheck`，跑 `0001 → 0001a → 0002 → 0002a → 0003`）：49 表建成、`decimal(14,2)`×65、`decimal(12,8)`×1、`decimal(10,2)`×3（即上表保留项）、`balance_currency`/`charged_currency` 默认值实测 CNY、`member.username` + 4 个 `tid` 仍 `utf8mb4_general_ci`。
 
@@ -171,11 +171,11 @@ $P migrate diff --from-schema-datamodel /tmp/b3.prisma --to-schema-datamodel pri
 
 ## #3g 硬化（2026-10-15 改，**2026-10-16 空库复跑验证通过**）
 
-| # | 缺陷 | 修法 | 复跑证据（`docs/plans/03` §十） |
-|---|---|---|---|
-| ② | `0003` 的 A1/A3/B6/B7 把**生产快照数字**（8 组 / 8 改名 / 1 合并）写死成 expected → 换任何一份源必然无谓 FAIL，「校验绿灯」失去意义 | 期望值**改为按当前源 + 映射表实时计算**；映射由 TEMPORARY 升为实体表 `_t1_username_fix`/`_t1_username_merge`（`0002` §1 建、保留作审计），`0003` 跨会话读它 ⇒ 脚本与校验**读同一份映射** | 快照匹配映射时 **17 PASS + 4 INFO + 0 FAIL**；用生产映射跑本地快照则 `A3=6 / A5=1 / B6=7≠13 / B7=0≠1` **如实报 FAIL**（= 映射与源不同步的真实信号，非脚本 bug） |
-| ③ | `member_address` 回填**没有 `JOIN member` 过滤孤儿** → 生产会产生悬空 `member_id`，Prisma 必需关系 `include` 直接报错 | `0002` §4 加 `JOIN member m ON m.id = a.uid`；`0003` B2 期望值同步改「源中非孤儿地址数」，B12 升硬 PASS，新增 B13 INFO | `member_address` **2,147** 行、悬空 **0**、被过滤孤儿 **7,324** 行（本地副本 `dg_address` 9,471 行、父会员存在者 2,147） |
-| ④ | member 域旧源表**只能手工复现**；`0006` 又假定 `dg_users` 已存在 | 新增 `0014-member-source-import.sql`；`0006` §0 改自愈化 | 空库 `crossbuy_t1v` 从零跑全链 rc=0；`0006` 首跑不再报 `Table doesn't exist`；`0014` 审计 15 行来源/行数全对 |
+| #   | 缺陷                                                                                                                                | 修法                                                                                                                                                                                     | 复跑证据（`docs/plans/03` §十）                                                                                                                                 |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ②   | `0003` 的 A1/A3/B6/B7 把**生产快照数字**（8 组 / 8 改名 / 1 合并）写死成 expected → 换任何一份源必然无谓 FAIL，「校验绿灯」失去意义 | 期望值**改为按当前源 + 映射表实时计算**；映射由 TEMPORARY 升为实体表 `_t1_username_fix`/`_t1_username_merge`（`0002` §1 建、保留作审计），`0003` 跨会话读它 ⇒ 脚本与校验**读同一份映射** | 快照匹配映射时 **17 PASS + 4 INFO + 0 FAIL**；用生产映射跑本地快照则 `A3=6 / A5=1 / B6=7≠13 / B7=0≠1` **如实报 FAIL**（= 映射与源不同步的真实信号，非脚本 bug） |
+| ③   | `member_address` 回填**没有 `JOIN member` 过滤孤儿** → 生产会产生悬空 `member_id`，Prisma 必需关系 `include` 直接报错               | `0002` §4 加 `JOIN member m ON m.id = a.uid`；`0003` B2 期望值同步改「源中非孤儿地址数」，B12 升硬 PASS，新增 B13 INFO                                                                   | `member_address` **2,147** 行、悬空 **0**、被过滤孤儿 **7,324** 行（本地副本 `dg_address` 9,471 行、父会员存在者 2,147）                                        |
+| ④   | member 域旧源表**只能手工复现**；`0006` 又假定 `dg_users` 已存在                                                                    | 新增 `0014-member-source-import.sql`；`0006` §0 改自愈化                                                                                                                                 | 空库 `crossbuy_t1v` 从零跑全链 rc=0；`0006` 首跑不再报 `Table doesn't exist`；`0014` 审计 15 行来源/行数全对                                                    |
 
 > ★ **升实体表的真正理由不是「方便」**：临时表**只对创建它的会话可见**，而 verify 脚本天然另起会话 → 旧版 `0003` 只能把 8 行映射**再抄一遍字面量**。那就是第二份真相，必然与正本漂移。任何「校验脚本要读回填脚本的输入」的场景，都禁用 TEMPORARY 表承载那份输入。
 >

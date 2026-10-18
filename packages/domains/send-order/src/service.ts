@@ -15,7 +15,14 @@ import type { LegacyWhere, SendOrderRepository, SendOrderTx } from './repository
  */
 export interface SendOrderOrdersPort {
   /** sid → 订单摘要（mark_flag/yanhuofba/type/sendprice；arrival/FBA/合计兜底用） */
-  listBriefBySids(sids: number[]): Promise<Map<number, Array<{ markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number }>>>;
+  listBriefBySids(
+    sids: number[],
+  ): Promise<
+    Map<
+      number,
+      Array<{ markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number }>
+    >
+  >;
   /** orderKeyword 反查 sid（六列 like + dfflag type 分流） */
   listSidsByShipmentKeyword(uid: number, keyword: string, isDf: boolean): Promise<number[]>;
 }
@@ -67,24 +74,27 @@ export interface SendOrderService {
    * STATE_WAITING=1 / OTYPE_3=3 / 全零金额 + 收件人七列 + 代发发件三列。
    * oids 先落空串，订单建完后由 order 域调 updateSendOrderOids 回写（1:1 旧两步骤）。
    */
-  createForDaifa(input: {
-    uid: number;
-    uname: string;
-    memberid: string | null;
-    email: string | null;
-    dfsendaddress: string;
-    dfsendname: string;
-    dfsendtel: string;
-    receiver: {
-      consignee: string | null;
-      address: string | null;
-      tel: string | null;
-      zip: string | null;
-      remark: string | null;
-      country: string | null;
-      deliveryname: string | null;
-    };
-  }, tx?: SendOrderTx): Promise<{ sid: number }>;
+  createForDaifa(
+    input: {
+      uid: number;
+      uname: string;
+      memberid: string | null;
+      email: string | null;
+      dfsendaddress: string;
+      dfsendname: string;
+      dfsendtel: string;
+      receiver: {
+        consignee: string | null;
+        address: string | null;
+        tel: string | null;
+        zip: string | null;
+        remark: string | null;
+        country: string | null;
+        deliveryname: string | null;
+      };
+    },
+    tx?: SendOrderTx,
+  ): Promise<{ sid: number }>;
 
   /** 回写运单 oids（旧 `$sendOrder->oids = implode(',', $orderIds); $sendOrder->save();`） */
   updateSendOrderOids(sid: number, oids: number[], tx?: SendOrderTx): Promise<void>;
@@ -98,7 +108,12 @@ export interface SendOrderService {
     principal: Principal,
     query: SendOrderListQuery,
     isDf: boolean,
-  ): Promise<Result<{ rows: SendOrderMemberRow[]; page: number; pageSize: number }, { code: string; message: string }>>;
+  ): Promise<
+    Result<
+      { rows: SendOrderMemberRow[]; page: number; pageSize: number },
+      { code: string; message: string }
+    >
+  >;
 }
 
 export class SendOrderServiceImpl implements SendOrderService {
@@ -114,7 +129,12 @@ export class SendOrderServiceImpl implements SendOrderService {
     principal: Principal,
     rawQuery: SendOrderListQuery,
     isDf: boolean,
-  ): Promise<Result<{ rows: SendOrderMemberRow[]; page: number; pageSize: number }, { code: string; message: string }>> {
+  ): Promise<
+    Result<
+      { rows: SendOrderMemberRow[]; page: number; pageSize: number },
+      { code: string; message: string }
+    >
+  > {
     if (principal.kind !== 'member') {
       return err({ code: 'NO_PERMISSIONS', message: '非会员主体' });
     }
@@ -145,8 +165,12 @@ export class SendOrderServiceImpl implements SendOrderService {
       } else {
         const kw = { contains: query.keyword };
         // ⚠ 旧 `sid LIKE` 对 Int 列隐式转换——Prisma 无法 LIKE 整数，纯数字时等值、否则跳过（S28 同族）
-        const sidFilter = /^\d+$/.test(query.keyword) ? [{ sid: { equals: Number(query.keyword) } }] : [];
-        AND.push({ OR: [...sidFilter, { oids: kw }, { address: kw }, { sn: kw }, { consignee: kw }] });
+        const sidFilter = /^\d+$/.test(query.keyword)
+          ? [{ sid: { equals: Number(query.keyword) } }]
+          : [];
+        AND.push({
+          OR: [...sidFilter, { oids: kw }, { address: kw }, { sn: kw }, { consignee: kw }],
+        });
       }
     }
 
@@ -181,12 +205,18 @@ export class SendOrderServiceImpl implements SendOrderService {
       }
       // calculateTotalfee：round2 四项 + domestic
       const totalSendFee = round2(
-        round2(Number(r.freight)) + round2(Number(r.serverfee)) + round2(Number(r.customsfee)) + round2(Number(r.remotefee)) + domestic,
+        round2(Number(r.freight)) +
+          round2(Number(r.serverfee)) +
+          round2(Number(r.customsfee)) +
+          round2(Number(r.remotefee)) +
+          domestic,
       );
 
       // resolveArrivalField：首订单 mark_flag arrival 位非 0（无订单 = 0）
       const firstOrder = orders[0];
-      const arrivalFlag = firstOrder ? ((firstOrder.markFlag ?? 0) >> MARK_FLAG_ARRIVAL_POSITION) & 0b11 : 0;
+      const arrivalFlag = firstOrder
+        ? ((firstOrder.markFlag ?? 0) >> MARK_FLAG_ARRIVAL_POSITION) & 0b11
+        : 0;
       const arrival = arrivalFlag === 0 ? 0 : 1;
 
       // resolveFBAField：任一订单 yanhuofba === 'FBA'
@@ -222,7 +252,8 @@ export class SendOrderServiceImpl implements SendOrderService {
       let shippingWebsiteUrl = '';
       if (r.deliveryname) {
         const resolved = this.shippingWebsitePort.resolve(r.deliveryname);
-        shippingWebsiteUrl = resolved ?? `https://www.google.co.jp/search?q=${encodeURIComponent(r.deliveryname)}`;
+        shippingWebsiteUrl =
+          resolved ?? `https://www.google.co.jp/search?q=${encodeURIComponent(r.deliveryname)}`;
       }
 
       projected.push({

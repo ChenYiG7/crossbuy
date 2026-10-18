@@ -2,12 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { Queue, Worker } from 'bullmq';
 import { createConnection, DEFAULT_JOB_OPTIONS, QUEUES } from '@crossbuy/jobs';
-import {
-  createRedis,
-  createRedisIdempotency,
-  waitForRedis,
-  type Redis,
-} from '@crossbuy/cache';
+import { createRedis, createRedisIdempotency, waitForRedis, type Redis } from '@crossbuy/cache';
 import type { NotifyChannel, Notification } from '@crossbuy/notify';
 import { processOrderCreated, type OrderCreatedJobData } from '../src/jobs/order-created';
 
@@ -87,24 +82,29 @@ describe('order-created 集成（真实 BullMQ + Redis）', () => {
       { connection: createConnection(REDIS_URL) },
     );
     try {
+      // ★ 业务数据每 run 随机化：幂等键 = uid + sorted orderIds（30 天 TTL），
+      // 用确定性数据会让上一 run 的 claim 标记把本 run 的首发判成「已处理」而跳过
+      const uid = 7_000_000 + Math.floor(Math.random() * 9_000_000);
+      const o1 = 1_000_000 + Math.floor(Math.random() * 9_000_000);
+      const o2 = 1_000_000 + Math.floor(Math.random() * 9_000_000);
       const jobId = `it-${randomUUID()}`;
       const job = await queue.add(
         'order-created',
-        { uid: 7, orderIds: [11, 12], totalJpy: 9000, email: 'u7@x.com' },
+        { uid, orderIds: [o1, o2], totalJpy: 9000, email: `u${uid}@x.com` },
         { jobId, ...DEFAULT_JOB_OPTIONS },
       );
       await waitForJob(worker, job.id!);
 
       expect(sent).toHaveLength(1);
-      expect(sent[0].target).toBe('u7@x.com');
+      expect(sent[0].target).toBe(`u${uid}@x.com`);
       expect(sent[0].title).toContain('订单已提交');
 
       // 同一 jobId 再入队一次（模拟上游重放）→ 因幂等标记仍在，不再发信
       const dupId = `it-dup-${randomUUID()}`;
-      // 用不同 jobId 但相同业务键，验证跨 jobId 幂等（BullMQ 只拦同 jobId）
+      // 用不同 jobId 但相同业务键（顺序无关），验证跨 jobId 幂等（BullMQ 只拦同 jobId）
       await queue.add(
         'order-created',
-        { uid: 7, orderIds: [12, 11], totalJpy: 9000, email: 'u7@x.com' },
+        { uid, orderIds: [o2, o1], totalJpy: 9000, email: `u${uid}@x.com` },
         { jobId: dupId, ...DEFAULT_JOB_OPTIONS },
       );
       await waitForJob(worker, dupId);

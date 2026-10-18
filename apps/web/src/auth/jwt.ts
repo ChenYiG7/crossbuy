@@ -16,8 +16,7 @@ export interface MemberTokenPayload {
 }
 
 export type TokenVerifyOutcome =
-  | { ok: true; payload: MemberTokenPayload }
-  | { ok: false; code: 'MALFORMED_TOKEN' | 'EXPIRED' };
+  { ok: true; payload: MemberTokenPayload } | { ok: false; code: 'MALFORMED_TOKEN' | 'EXPIRED' };
 
 export async function signMemberToken(
   uid: number,

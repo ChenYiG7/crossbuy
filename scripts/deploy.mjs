@@ -20,7 +20,15 @@
  * 发布目录」为止，远端操作不进脚本（无凭据进仓红线）。
  */
 import { execSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  readdirSync,
+  statSync,
+} from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -71,15 +79,21 @@ if (NEXT_APPS.has(app)) {
   const standalone = path.join(srcDir, '.next', 'standalone');
   const serverJs = path.join(standalone, 'apps', app, 'server.js');
   if (!existsSync(serverJs)) {
-    console.error(`✗ standalone 产物缺 server.js（期望 ${path.relative(ROOT, serverJs)}）——检查 output:'standalone' 是否生效`);
+    console.error(
+      `✗ standalone 产物缺 server.js（期望 ${path.relative(ROOT, serverJs)}）——检查 output:'standalone' 是否生效`,
+    );
     process.exit(1);
   }
   // standalone 目录树整体拷贝（含 apps/<app>/server.js 与仓库根 node_modules 副本）
   cpSync(standalone, outDir, { recursive: true });
   // 官方要求补齐：静态资源与 public 不进 standalone
-  cpSync(path.join(srcDir, '.next', 'static'), path.join(outDir, 'apps', app, '.next', 'static'), { recursive: true });
+  cpSync(path.join(srcDir, '.next', 'static'), path.join(outDir, 'apps', app, '.next', 'static'), {
+    recursive: true,
+  });
   if (existsSync(path.join(srcDir, 'public'))) {
-    cpSync(path.join(srcDir, 'public'), path.join(outDir, 'apps', app, 'public'), { recursive: true });
+    cpSync(path.join(srcDir, 'public'), path.join(outDir, 'apps', app, 'public'), {
+      recursive: true,
+    });
   }
   startCmd = `PORT=<port> HOSTNAME=127.0.0.1 node apps/${app}/server.js`;
 } else {

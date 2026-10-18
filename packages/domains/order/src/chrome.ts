@@ -183,11 +183,15 @@ export function normalizeSkuValue(value: string): string {
 }
 
 /** 旧 `Order::getSkuName()`：sku_name 为空 → 用 goodssize/goodscolor 拼 HTML（尺码在前） */
-export function chromeSkuName(order: Pick<ChromeOrderRow, 'sku_name' | 'goodssize' | 'goodscolor'>): string {
+export function chromeSkuName(
+  order: Pick<ChromeOrderRow, 'sku_name' | 'goodssize' | 'goodscolor'>,
+): string {
   let skuName = order.sku_name ?? '';
   if (!skuName) {
-    if (order.goodssize) skuName += `<font color=red>尺码:</font><font color=green>${order.goodssize}</font>`;
-    if (order.goodscolor) skuName += `<font color=red>颜色:</font><font color=green>${order.goodscolor}</font>`;
+    if (order.goodssize)
+      skuName += `<font color=red>尺码:</font><font color=green>${order.goodssize}</font>`;
+    if (order.goodscolor)
+      skuName += `<font color=red>颜色:</font><font color=green>${order.goodscolor}</font>`;
   }
   return skuName;
 }
@@ -219,7 +223,8 @@ export function parseChromeSkuPairs(skuName: string): Record<string, string> | n
 // sku 解析（旧 searchSkuDetail 1:1，detailType=1 面）
 // ---------------------------------------------------------------------------
 
-export type SkuSearchResult = { ok: true; detail: PlatformProductItem } | { ok: false; msg: string };
+export type SkuSearchResult =
+  { ok: true; detail: PlatformProductItem } | { ok: false; msg: string };
 
 function skuMissMessage(itemId: string): string {
   return `查询商品信息失败，请确认是否漏下或多下，或者采购过程中点击了后台其他订单。若核对订单信息无误，请到后台手动填写或联系开发人员。${itemId}`;
@@ -240,7 +245,9 @@ export function searchSkuDetail(
   detailType = 1,
 ): SkuSearchResult {
   if (detailType !== 1) {
-    throw new Error(`searchSkuDetail: detailType=${detailType} 未迁移（M3 淘宝全球购建单面，TODO(#18)）`);
+    throw new Error(
+      `searchSkuDetail: detailType=${detailType} 未迁移（M3 淘宝全球购建单面，TODO(#18)）`,
+    );
   }
 
   // 旧 `collect($items)->where('productID', $itemId)`（PHP 松比较：数字/字符串混用）
@@ -309,10 +316,16 @@ export function searchSkuDetail(
   if (errorMsg !== '') return { ok: false, msg: errorMsg };
 
   if (matched.length > 1) {
-    return { ok: false, msg: `下单信息中存在重复规格的商品，请核对您的下单是否正确或联系开发人员排查：${itemId} ${expectSkuName}` };
+    return {
+      ok: false,
+      msg: `下单信息中存在重复规格的商品，请核对您的下单是否正确或联系开发人员排查：${itemId} ${expectSkuName}`,
+    };
   }
   if (matched.length === 1) return { ok: true, detail: matched[0]! };
-  return { ok: false, msg: `下单信息中缺少以下规格商品，请核对是否漏下或联系开发人员排查：${itemId} ${expectSkuName}` };
+  return {
+    ok: false,
+    msg: `下单信息中缺少以下规格商品，请核对是否漏下或联系开发人员排查：${itemId} ${expectSkuName}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -320,12 +333,16 @@ export function searchSkuDetail(
 // ---------------------------------------------------------------------------
 
 /** 旧「拼凑版」分支：`$orderDetail['sub_orders']` → productItems（price/itemAmount 恒 0，S47） */
-export function buildProductItemsFromSubOrders(subOrders: Array<Record<string, unknown>>): PlatformProductItem[] {
+export function buildProductItemsFromSubOrders(
+  subOrders: Array<Record<string, unknown>>,
+): PlatformProductItem[] {
   const items: PlatformProductItem[] = [];
   for (const subOrder of subOrders) {
     const title = String(subOrder['name'] ?? '');
     const skuInfosRaw = subOrder['sku_infos'];
-    const skuInfos = Array.isArray(skuInfosRaw) ? (skuInfosRaw as Array<{ name?: string; value?: string }>) : [];
+    const skuInfos = Array.isArray(skuInfosRaw)
+      ? (skuInfosRaw as Array<{ name?: string; value?: string }>)
+      : [];
 
     const item: PlatformProductItem = {
       itemAmount: 0,
@@ -346,7 +363,9 @@ export function buildProductItemsFromSubOrders(subOrders: Array<Record<string, u
 }
 
 /** 旧「淘宝订单详情（mainOrders）」分支：赠品（subOrder.id 空）直接跳过 */
-export function buildProductItemsFromMainOrders(subOrders: Array<Record<string, unknown>>): PlatformProductItem[] {
+export function buildProductItemsFromMainOrders(
+  subOrders: Array<Record<string, unknown>>,
+): PlatformProductItem[] {
   const items: PlatformProductItem[] = [];
   for (const subOrder of subOrders) {
     if (!subOrder['id']) continue;
@@ -362,7 +381,9 @@ export function buildProductItemsFromMainOrders(subOrders: Array<Record<string, 
       name: String(itemInfo['title'] ?? ''),
       productID: String(itemInfo['id'] ?? ''),
       // 旧 `$skuInfos = $subOrderItem['skuText']`（不是数组也原样塞）
-      skuInfos: Array.isArray(itemInfo['skuText']) ? (itemInfo['skuText'] as Array<{ name?: string; value?: string }>) : [],
+      skuInfos: Array.isArray(itemInfo['skuText'])
+        ? (itemInfo['skuText'] as Array<{ name?: string; value?: string }>)
+        : [],
       price,
       quantity,
     };
@@ -394,7 +415,9 @@ export interface ChromeAdminIdentity {
 
 /** 1688 订单详情端口（旧 `resolveAlibabaSdkByTradeId($tradeId)->getOrderDetail()`；SDK 未迁移 ⇒ 返回 null） */
 export interface AlibabaOrderDetailPort {
-  getOrderDetail(tradeId: string): Promise<{ baseInfo: Record<string, unknown>; productItems: PlatformProductItem[] } | null>;
+  getOrderDetail(
+    tradeId: string,
+  ): Promise<{ baseInfo: Record<string, unknown>; productItems: PlatformProductItem[] } | null>;
 }
 
 /** chrome 回传入参（信封解出后的形态） */
@@ -413,9 +436,15 @@ export interface ChromeDeps {
   /** 1688 详情端口（SDK 面；未迁移时组合根给恒 null 实现 → 40000「获取订单信息失败」，S48） */
   alibaba: AlibabaOrderDetailPort;
   /** 平台金额快照端口（旧 PlatformOrderAmountSnapshotService::record1688；失败不阻断） */
-  recordSnapshot?: (tid: string, detail: { baseInfo: Record<string, unknown>; productItems: PlatformProductItem[] }, stage: 'sync' | 'price_modified') => Promise<void>;
+  recordSnapshot?: (
+    tid: string,
+    detail: { baseInfo: Record<string, unknown>; productItems: PlatformProductItem[] },
+    stage: 'sync' | 'price_modified',
+  ) => Promise<void>;
   /** 发货回传（旧 updateExpressNoForChrome；ACTION_SAVE_EXPRESS） */
-  shipment?: { updateExpressNoForChrome(input: unknown): Promise<{ code: 200 | 40000; msg?: string }> };
+  shipment?: {
+    updateExpressNoForChrome(input: unknown): Promise<{ code: 200 | 40000; msg?: string }>;
+  };
   /** 审计日志端口（旧 Log::channel('order_update') + admin_operation_log；R1 默认 no-op） */
   auditLog?: (info: { change: Record<string, unknown>; oids: number[] }) => void;
   /** 风控日志端口（旧 Log::channel('webhook_1688')->warning） */
@@ -456,7 +485,10 @@ export class ChromeService {
    * 返回 `null` 表示该 action 未迁移（路由层据此回 40000 并留痕）。
    */
   async handle(input: ChromeWebhookInput, admin: ChromeAdminIdentity): Promise<ChromeResult> {
-    const ctx: ChromeContext = { ...chromeContextOf(input, admin), detailAction: this.readDetailAction(input.orderDetail) };
+    const ctx: ChromeContext = {
+      ...chromeContextOf(input, admin),
+      detailAction: this.readDetailAction(input.orderDetail),
+    };
 
     switch (input.action) {
       case CHROME_ACTION.GET:
@@ -469,7 +501,10 @@ export class ChromeService {
         break;
     }
 
-    if (input.tradeType !== CHROME_TRADE_TYPE.ALIBABA && input.tradeType !== CHROME_TRADE_TYPE.TAOBAO) {
+    if (
+      input.tradeType !== CHROME_TRADE_TYPE.ALIBABA &&
+      input.tradeType !== CHROME_TRADE_TYPE.TAOBAO
+    ) {
       return { code: 40000, msg: 'wrong type' };
     }
 
@@ -506,7 +541,9 @@ export class ChromeService {
   // -------------------------------------------------------------------------
 
   /** 旧 validateOrderByOidAndTradeId 的 `switch ($type)`（淘宝两分支 + 1688 SDK 分支） */
-  private async loadPlatformOrder(ctx: ChromeContext): Promise<NormalizedPlatformOrder | ChromeResult> {
+  private async loadPlatformOrder(
+    ctx: ChromeContext,
+  ): Promise<NormalizedPlatformOrder | ChromeResult> {
     const { input, orderDetail, detailAction } = ctx;
     const tradeId = input.tradeId;
 
@@ -519,7 +556,8 @@ export class ChromeService {
       await this.deps.recordSnapshot?.(
         tradeId,
         detail,
-        detailAction === CHROME_ACTION.MODIFY_ORDER || detailAction === CHROME_ACTION.MODIFY_ORDER_BY_API
+        detailAction === CHROME_ACTION.MODIFY_ORDER ||
+          detailAction === CHROME_ACTION.MODIFY_ORDER_BY_API
           ? 'price_modified'
           : 'sync',
       );
@@ -557,7 +595,9 @@ export class ChromeService {
 
     // 淘宝订单详情（mainOrders 版）
     const mainOrders = orderDetail['mainOrders'];
-    const first = Array.isArray(mainOrders) ? (mainOrders[0] as Record<string, unknown> | undefined) : undefined;
+    const first = Array.isArray(mainOrders)
+      ? (mainOrders[0] as Record<string, unknown> | undefined)
+      : undefined;
     if (!first) return { code: 40000, msg: '获取淘宝订单详情失败。' };
 
     const realTradeId = String(first['id'] ?? '');
@@ -569,13 +609,17 @@ export class ChromeService {
     }
 
     const payInfo = (first['payInfo'] ?? {}) as Record<string, unknown>;
-    const postFees = Array.isArray(payInfo['postFees']) ? (payInfo['postFees'] as Array<Record<string, unknown>>) : [];
+    const postFees = Array.isArray(payInfo['postFees'])
+      ? (payInfo['postFees'] as Array<Record<string, unknown>>)
+      : [];
     return {
       shippingFee: parsePostFeeValue(postFees[0]?.['value']),
       totalAmount: moneyOf(Number(payInfo['actualFee'] ?? 0)),
       couponFee: 0,
       productItems: buildProductItemsFromMainOrders(
-        Array.isArray(first['subOrders']) ? (first['subOrders'] as Array<Record<string, unknown>>) : [],
+        Array.isArray(first['subOrders'])
+          ? (first['subOrders'] as Array<Record<string, unknown>>)
+          : [],
       ),
     };
   }
@@ -622,7 +666,8 @@ export class ChromeService {
         let itemId = String(order.goodsid ?? '');
         const pairs = parseChromeSkuPairs(skuName);
         // 拼凑版订单用标题代替 id（旧 `preg_replace('/[^a-zA-Z\p{Script=Han}\d]/u','', $goodsname)`）
-        if (action === CHROME_ACTION.MODIFY_ORDER) itemId = String(order.goodsname ?? '').replace(/[^a-zA-Z\p{Script=Han}\d]/gu, '');
+        if (action === CHROME_ACTION.MODIFY_ORDER)
+          itemId = String(order.goodsname ?? '').replace(/[^a-zA-Z\p{Script=Han}\d]/gu, '');
 
         let detail: PlatformProductItem;
         let uniqueKey: string;
@@ -670,7 +715,14 @@ export class ChromeService {
         entry.sku_info = pairs ? skuInfo : {};
         entry.ids.push(order.oid);
 
-        const priceError = this.correctAndCheckPrice(entry, detail, order, type, action, skipPriceCheck);
+        const priceError = this.correctAndCheckPrice(
+          entry,
+          detail,
+          order,
+          type,
+          action,
+          skipPriceCheck,
+        );
         if (priceError) return { code: 40000, msg: priceError };
       }
     }
@@ -718,7 +770,10 @@ export class ChromeService {
         action,
         ...baseline.riskLog,
       });
-      return { code: 40000, msg: baseline.blockMessage ?? '实际付款不能大于当前本地价格基线，已阻断自动改价。' };
+      return {
+        code: 40000,
+        msg: baseline.blockMessage ?? '实际付款不能大于当前本地价格基线，已阻断自动改价。',
+      };
     }
 
     return {
@@ -774,7 +829,10 @@ export class ChromeService {
     action: number | null,
     skipPriceCheck: boolean,
   ): string | null {
-    if (type !== CHROME_TRADE_TYPE.ALIBABA && (type !== CHROME_TRADE_TYPE.TAOBAO || action === CHROME_ACTION.SAVE)) {
+    if (
+      type !== CHROME_TRADE_TYPE.ALIBABA &&
+      (type !== CHROME_TRADE_TYPE.TAOBAO || action === CHROME_ACTION.SAVE)
+    ) {
       return null;
     }
 
@@ -920,7 +978,10 @@ export class ChromeService {
     const ordersWithoutPayid = orders.filter((o) => !o.payid);
     if (ordersWithoutPayid.length > 0) {
       if (!input.admin.payid) {
-        return { status: false, message: '当前账号未绑定采购员，暂不允许更新单号。请联系管理员处理。' };
+        return {
+          status: false,
+          message: '当前账号未绑定采购员，暂不允许更新单号。请联系管理员处理。',
+        };
       }
       await this.repo.updateOrdersForChrome(
         this.db,
@@ -962,7 +1023,11 @@ export class ChromeService {
           }));
           let carrier = null as Awaited<ReturnType<typeof resolveAmountCarrier>>;
           if (amountRows.length === 1) {
-            carrier = await migrateAmountCarrier(tx, amountRows[0]!, shanghaiWallClock(this.deps.now()));
+            carrier = await migrateAmountCarrier(
+              tx,
+              amountRows[0]!,
+              shanghaiWallClock(this.deps.now()),
+            );
           }
           carrier ??= await resolveAmountCarrier(tx, amountRows);
 
@@ -977,7 +1042,12 @@ export class ChromeService {
 
           // ⑩ 红包（旧 V2OrderDetail::updateOrCreate，恒写不比较）
           if (!carrier) throw new Error('所选订单均为无效订单，不能参与返金计算。');
-          await this.repo.upsertOrderDetailCouponFee(tx, carrier.oid, input.couponFee, shanghaiWallClock(this.deps.now()));
+          await this.repo.upsertOrderDetailCouponFee(
+            tx,
+            carrier.oid,
+            input.couponFee,
+            shanghaiWallClock(this.deps.now()),
+          );
 
           // ⑪ 砍价
           if (!carrier) throw new Error('所选订单均为无效订单，不能参与砍价计算。');
@@ -1028,14 +1098,21 @@ export class ChromeService {
 }
 
 /** 供组合根/路由复用的 `$extra` 构造（旧 webhookForChrome 的 extra 组装 1:1） */
-export function chromeContextOf(input: ChromeWebhookInput, admin: ChromeAdminIdentity): ChromeContext {
+export function chromeContextOf(
+  input: ChromeWebhookInput,
+  admin: ChromeAdminIdentity,
+): ChromeContext {
   return {
     input,
-    oids: input.oids.split(',').map((s) => Number(s)).filter((n) => Number.isInteger(n) && n > 0),
+    oids: input.oids
+      .split(',')
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n > 0),
     orderDetail: input.orderDetail ?? {},
-    detailAction: input.orderDetail?.action === undefined || input.orderDetail?.action === null
-      ? null
-      : Number(input.orderDetail.action),
+    detailAction:
+      input.orderDetail?.action === undefined || input.orderDetail?.action === null
+        ? null
+        : Number(input.orderDetail.action),
     admin,
   };
 }

@@ -1,4 +1,9 @@
-import { BargainDisplayStatus, ORDER_INVALID_STATUSES, OrderStatus, type BargainDisplayStatusCode } from '@crossbuy/contract';
+import {
+  BargainDisplayStatus,
+  ORDER_INVALID_STATUSES,
+  OrderStatus,
+  type BargainDisplayStatusCode,
+} from '@crossbuy/contract';
 
 /**
  * 订单列表行投影的纯函数集（旧 Member/OrderType resolve* + OrderBarrain + parseSkuName 1:1）。
@@ -20,7 +25,10 @@ export function bargainDisplayFromSec(dateStr: string): number {
 }
 
 /** item_location 拆分：禁运原因（去 MADE_IN_CHINA 词）/ 中国制造标记（只留 MADE_IN_CHINA 词） */
-export function splitItemLocation(itemLocation: string | null): { reason: string | null; madeInChina: string | null } {
+export function splitItemLocation(itemLocation: string | null): {
+  reason: string | null;
+  madeInChina: string | null;
+} {
   if (!itemLocation) return { reason: null, madeInChina: null };
   const parts = itemLocation.split(' ');
   const madeInChinaWords = parts.filter((w) => w === MADE_IN_CHINA_YES || w === MADE_IN_CHINA_NO);
@@ -32,7 +40,11 @@ export function splitItemLocation(itemLocation: string | null): { reason: string
  * 旧 Order::parseSkuName 1:1：sku_name 的 `<font color=red>名[:：<font color=green>值` 标签解析；
  * 空 sku_name 回退 goodssize（尺码）/ goodscolor（颜色）。
  */
-export function parseSkuName(skuName: string, goodsSize: string | null, goodsColor: string | null): Array<{ name: string; value: string }> {
+export function parseSkuName(
+  skuName: string,
+  goodsSize: string | null,
+  goodsColor: string | null,
+): Array<{ name: string; value: string }> {
   const detail: Array<{ name: string; value: string }> = [];
   if (!skuName) {
     if (goodsSize) detail.push({ name: '尺码', value: goodsSize });
@@ -64,7 +76,8 @@ export function bargainDisplayOf(
   goodsNum: number,
   displayFromSec: number,
 ): { status: BargainDisplayStatusCode; amount: string | null } {
-  if (addtimeSec < displayFromSec) return { status: BargainDisplayStatus.BEFORE_START, amount: null };
+  if (addtimeSec < displayFromSec)
+    return { status: BargainDisplayStatus.BEFORE_START, amount: null };
   if ((ORDER_INVALID_STATUSES as readonly number[]).includes(state)) {
     return { status: BargainDisplayStatus.INVALID, amount: null };
   }
@@ -72,7 +85,8 @@ export function bargainDisplayOf(
     const amount = Math.round((goodsPrice - goodsPrice1) * goodsNum * 100) / 100;
     return { status: BargainDisplayStatus.SAVED, amount: amount.toFixed(2) };
   }
-  if (state === OrderStatus.WAIT_CREATE) return { status: BargainDisplayStatus.PENDING, amount: null };
+  if (state === OrderStatus.WAIT_CREATE)
+    return { status: BargainDisplayStatus.PENDING, amount: null };
   return { status: BargainDisplayStatus.NONE, amount: '0.00' };
 }
 

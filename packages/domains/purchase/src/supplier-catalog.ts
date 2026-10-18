@@ -54,7 +54,12 @@ export interface CatalogLockPort {
   /**
    * 取锁执行；抢不到（超时）返回 false——调用方按旧 LockTimeoutException 分支兜底。
    */
-  withLock<T>(key: string, ttlSeconds: number, waitSeconds: number, fn: () => Promise<T>): Promise<{ acquired: boolean; value?: T }>;
+  withLock<T>(
+    key: string,
+    ttlSeconds: number,
+    waitSeconds: number,
+    fn: () => Promise<T>,
+  ): Promise<{ acquired: boolean; value?: T }>;
 }
 
 export interface SupplierCatalogService {
@@ -73,7 +78,10 @@ export interface SupplierCatalogService {
   createShop(input: { appid: number; openid: string; title: string }): Promise<SupplierShop>;
 
   /** 旧 `$platformShop->save()`（title/nickname 都可能为空） */
-  updateShop(id: number, patch: { title?: string; nickname?: string | null }): Promise<SupplierShop>;
+  updateShop(
+    id: number,
+    patch: { title?: string; nickname?: string | null },
+  ): Promise<SupplierShop>;
 
   /**
    * 批量读供应商商品（只读；旧 with(['supplierProduct']) 的 R1 子集列）。
@@ -108,7 +116,9 @@ export function productSyncLockKey(goodsId: string): string {
 }
 
 /** 旧 getPriceRange：json_decode 后必须是数组，且每项同时含 price 与 startQuantity */
-export function parsePriceRange(raw: string | null | undefined): Array<{ price: unknown; startQuantity: unknown }> | null {
+export function parsePriceRange(
+  raw: string | null | undefined,
+): Array<{ price: unknown; startQuantity: unknown }> | null {
   if (!raw) return null;
   let decoded: unknown;
   try {
@@ -135,25 +145,30 @@ export class SupplierCatalogServiceImpl implements SupplierCatalogService {
     const existing = await this.deps.repository.findSupplierProduct(input.platform, input.goodsId);
     if (existing) return { id: existing.id };
 
-    const lock = await this.deps.lockPort.withLock(productSyncLockKey(input.goodsId), 10, 5, async () => {
-      const again = await this.deps.repository.findSupplierProduct(input.platform, input.goodsId);
-      if (again) return { id: again.id };
-      const created = await this.deps.repository.createSupplierProduct({
-        platform: input.platform,
-        goodsId: input.goodsId,
-        shopId: input.shopId,
-        goodsUrl: input.goodsUrl,
-        goodsName: input.goodsName,
-        imgUrl: input.imgUrl,
-        price: input.price,
-        priceRange: input.priceRange,
-        minOrderQuantity: input.minOrderQuantity,
-        onePieceFreePostage: input.onePieceFreePostage,
-        sellerMixSetting: input.sellerMixSetting,
-        createdAt: (this.deps.clock ?? (() => new Date()))(),
-      });
-      return { id: created.id };
-    });
+    const lock = await this.deps.lockPort.withLock(
+      productSyncLockKey(input.goodsId),
+      10,
+      5,
+      async () => {
+        const again = await this.deps.repository.findSupplierProduct(input.platform, input.goodsId);
+        if (again) return { id: again.id };
+        const created = await this.deps.repository.createSupplierProduct({
+          platform: input.platform,
+          goodsId: input.goodsId,
+          shopId: input.shopId,
+          goodsUrl: input.goodsUrl,
+          goodsName: input.goodsName,
+          imgUrl: input.imgUrl,
+          price: input.price,
+          priceRange: input.priceRange,
+          minOrderQuantity: input.minOrderQuantity,
+          onePieceFreePostage: input.onePieceFreePostage,
+          sellerMixSetting: input.sellerMixSetting,
+          createdAt: (this.deps.clock ?? (() => new Date()))(),
+        });
+        return { id: created.id };
+      },
+    );
     if (lock.acquired && lock.value) return lock.value;
 
     // 旧 LockTimeoutException 分支：其他请求可能已创建成功 → 兜底再查一次
@@ -172,7 +187,10 @@ export class SupplierCatalogServiceImpl implements SupplierCatalogService {
     return withDisplayName(row);
   }
 
-  async updateShop(id: number, patch: { title?: string; nickname?: string | null }): Promise<SupplierShop> {
+  async updateShop(
+    id: number,
+    patch: { title?: string; nickname?: string | null },
+  ): Promise<SupplierShop> {
     const row = await this.deps.repository.updateSupplierShop(id, patch);
     return withDisplayName(row);
   }
@@ -190,7 +208,11 @@ export class SupplierCatalogServiceImpl implements SupplierCatalogService {
   }
 }
 
-function withDisplayName(row: { id: number; title: string; nickname: string | null }): SupplierShop {
+function withDisplayName(row: {
+  id: number;
+  title: string;
+  nickname: string | null;
+}): SupplierShop {
   return {
     id: row.id,
     title: row.title,

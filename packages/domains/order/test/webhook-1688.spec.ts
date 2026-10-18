@@ -23,8 +23,14 @@ async function seedOrder1688(
      VALUES (?, 1, 'wk1688', 'wk1688', ?, NULL, ?, ?, 100, 0, 1, 0,
              0, 0, 'https://e.com/x', 'x', ?, ?, ?, '', ?,
              ?, '', '', '', '', '', '', '', '', '', '', '', '')`,
-    oid, tid, overrides.type ?? 1, overrides.state ?? 1, overrides.extend ?? null,
-    overrides.addtime ?? now, overrides.uptime ?? now, overrides.goodssite ?? '1688',
+    oid,
+    tid,
+    overrides.type ?? 1,
+    overrides.state ?? 1,
+    overrides.extend ?? null,
+    overrides.addtime ?? now,
+    overrides.uptime ?? now,
+    overrides.goodssite ?? '1688',
     overrides.conttime ?? 0,
   );
   return { oid, tid };
@@ -54,7 +60,9 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
       Math.floor(Date.UTC(2025, 0, 17, 12, 34, 56, 789) / 1000) - 9 * 3600,
     );
     // PHP strtotime 按会话时区解释（生产 +08:00）——实现用 Date.parse（本地时区），测试机同 +08
-    expect(parsePayTime('2025-01-17 12:34:56')).toBe(Math.floor(new Date(2025, 0, 17, 12, 34, 56).getTime() / 1000));
+    expect(parsePayTime('2025-01-17 12:34:56')).toBe(
+      Math.floor(new Date(2025, 0, 17, 12, 34, 56).getTime() / 1000),
+    );
     expect(parsePayTime('garbage', now)).toBe(nowSec);
   });
 
@@ -67,10 +75,9 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
 
       const affected = await repo.update1688PaidOrders(tx, a.tid, 1_760_000_000, nowSec);
       expect(affected).toBe(1);
-      const row = await tx.$queryRawUnsafe<Array<{ state: number; conttime: number; extend: string | null; uptime: number }>>(
-        'SELECT state, conttime, extend, uptime FROM dg_order WHERE oid = ?',
-        a.oid,
-      );
+      const row = await tx.$queryRawUnsafe<
+        Array<{ state: number; conttime: number; extend: string | null; uptime: number }>
+      >('SELECT state, conttime, extend, uptime FROM dg_order WHERE oid = ?', a.oid);
       expect(Number(row[0]!.state)).toBe(2);
       expect(Number(row[0]!.conttime)).toBe(nowSec); // 首次回填
       expect(JSON.parse(row[0]!.extend ?? '{}')).toEqual({ payTime: 1_760_000_000 });
@@ -129,16 +136,25 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
         },
       });
 
-      const outcome = await svc.handle({ type: 'ORDER_BUYER_VIEW_ORDER_PAY', data: { orderId: order.tid, currentStatus: 'waitsellersend' } });
+      const outcome = await svc.handle({
+        type: 'ORDER_BUYER_VIEW_ORDER_PAY',
+        data: { orderId: order.tid, currentStatus: 'waitsellersend' },
+      });
       expect(outcome.retryable).toBe(false);
       expect(outcome.ack.success).toBe(true);
       expect(outcome.ack.event_type).toBe('ORDER_BUYER_VIEW_ORDER_PAY');
 
-      const row = await tx.$queryRawUnsafe<Array<{ state: number }>>('SELECT state FROM dg_order WHERE oid = ?', order.oid);
+      const row = await tx.$queryRawUnsafe<Array<{ state: number }>>(
+        'SELECT state FROM dg_order WHERE oid = ?',
+        order.oid,
+      );
       expect(Number(row[0]!.state)).toBe(2);
 
       // currentStatus 不符 → 静默 success（1:1 旧 break）
-      const skipped = await svc.handle({ type: 'ORDER_BUYER_VIEW_ORDER_PAY', data: { orderId: 'Tx', currentStatus: 'other' } });
+      const skipped = await svc.handle({
+        type: 'ORDER_BUYER_VIEW_ORDER_PAY',
+        data: { orderId: 'Tx', currentStatus: 'other' },
+      });
       expect(skipped.ack.success).toBe(true);
 
       // 未知事件 → 静默 success（旧 switch 无 default）
@@ -146,7 +162,10 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
       expect(unknown.ack.success).toBe(true);
 
       // 建单事件 → S24：success + job pipeline pending
-      const buyerMake = await svc.handle({ type: 'ORDER_BUYER_VIEW_BUYER_MAKE', data: { orderId: 'T1' } });
+      const buyerMake = await svc.handle({
+        type: 'ORDER_BUYER_VIEW_BUYER_MAKE',
+        data: { orderId: 'T1' },
+      });
       expect(buyerMake.ack.reason).toBe('job pipeline pending');
     });
   });
@@ -155,16 +174,25 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const svc = makeService(); // 默认 alibaba stub 返回 null
-      const pay = await svc.handle({ type: 'ORDER_BUYER_VIEW_ORDER_PAY', data: { orderId: 'T-nope', currentStatus: 'waitsellersend' } });
+      const pay = await svc.handle({
+        type: 'ORDER_BUYER_VIEW_ORDER_PAY',
+        data: { orderId: 'T-nope', currentStatus: 'waitsellersend' },
+      });
       expect(pay.retryable).toBe(true);
       expect(pay.ack.success).toBe(false);
       expect(pay.ack.reason).toContain('getOrderDetail failed');
 
-      const batch = await svc.handle({ type: 'ORDER_BATCH_PAY', data: { batchPay: [{ orderId: 'T-x' }] } });
+      const batch = await svc.handle({
+        type: 'ORDER_BATCH_PAY',
+        data: { batchPay: [{ orderId: 'T-x' }] },
+      });
       expect(batch.retryable).toBe(true);
 
       // tid 空的批量项 → 200 + retryable:false（重试无用）
-      const badBatch = await svc.handle({ type: 'ORDER_BATCH_PAY', data: { batchPay: [{ orderId: '' }] } });
+      const badBatch = await svc.handle({
+        type: 'ORDER_BATCH_PAY',
+        data: { batchPay: [{ orderId: '' }] },
+      });
       expect(badBatch.retryable).toBe(false);
       void tx;
     });
@@ -201,11 +229,24 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
       const t1 = new Date('2026-10-17T10:00:00+08:00');
       const t2 = new Date('2026-10-17T11:00:00+08:00');
 
-      await record1688Snapshot(tx, tid, {
-        baseInfo: { totalAmount: 100, shippingFee: 10 },
-        productItems: [{ price: 50, quantity: 2 }],
-      }, 'created', t1);
-      const first = await tx.$queryRawUnsafe<Array<{ first_stage: string; latest_stage: string; latest_goods_total: string; paid_at: Date | null }>>(
+      await record1688Snapshot(
+        tx,
+        tid,
+        {
+          baseInfo: { totalAmount: 100, shippingFee: 10 },
+          productItems: [{ price: 50, quantity: 2 }],
+        },
+        'created',
+        t1,
+      );
+      const first = await tx.$queryRawUnsafe<
+        Array<{
+          first_stage: string;
+          latest_stage: string;
+          latest_goods_total: string;
+          paid_at: Date | null;
+        }>
+      >(
         'SELECT first_stage, latest_stage, latest_goods_total, paid_at FROM v2_platform_order_amount WHERE tid = ?',
         tid,
       );
@@ -214,11 +255,19 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
       expect(Number(first[0]!.latest_goods_total)).toBe(100);
 
       // paid 后到（stage 单调）；金额更新（时间只前进）
-      await record1688Snapshot(tx, tid, {
-        baseInfo: { totalAmount: 120, shippingFee: 10, couponFee: 5 },
-        productItems: [{ price: 60, quantity: 2 }],
-      }, 'paid', t2);
-      const after = await tx.$queryRawUnsafe<Array<{ latest_stage: string; latest_goods_total: string; paid_at: Date | null }>>(
+      await record1688Snapshot(
+        tx,
+        tid,
+        {
+          baseInfo: { totalAmount: 120, shippingFee: 10, couponFee: 5 },
+          productItems: [{ price: 60, quantity: 2 }],
+        },
+        'paid',
+        t2,
+      );
+      const after = await tx.$queryRawUnsafe<
+        Array<{ latest_stage: string; latest_goods_total: string; paid_at: Date | null }>
+      >(
         'SELECT latest_stage, latest_goods_total, paid_at FROM v2_platform_order_amount WHERE tid = ?',
         tid,
       );
@@ -227,14 +276,19 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
       expect(after[0]!.paid_at).not.toBeNull();
 
       // created 阶段迟到（旧 300s 延迟 Job 场景）：阶段不退 paid；金额时间戳更旧 → 不覆盖
-      await record1688Snapshot(tx, tid, {
-        baseInfo: { totalAmount: 999 },
-        productItems: [],
-      }, 'created', new Date('2026-10-17T09:00:00+08:00'));
-      const stale = await tx.$queryRawUnsafe<Array<{ latest_stage: string; latest_goods_total: string }>>(
-        'SELECT latest_stage, latest_goods_total FROM v2_platform_order_amount WHERE tid = ?',
+      await record1688Snapshot(
+        tx,
         tid,
+        {
+          baseInfo: { totalAmount: 999 },
+          productItems: [],
+        },
+        'created',
+        new Date('2026-10-17T09:00:00+08:00'),
       );
+      const stale = await tx.$queryRawUnsafe<
+        Array<{ latest_stage: string; latest_goods_total: string }>
+      >('SELECT latest_stage, latest_goods_total FROM v2_platform_order_amount WHERE tid = ?', tid);
       expect(stale[0]!.latest_stage).toBe('paid');
       expect(Number(stale[0]!.latest_goods_total)).toBe(120);
     });
@@ -242,7 +296,12 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
 
   it('extractSnapshot：goods_total=Σ price×quantity、seller_adjust=Σ adjustFee、raw 白名单', () => {
     const x = extractSnapshot({
-      baseInfo: { totalAmount: 133, shippingFee: 10.005, couponFee: 2, newStepOrderList: [{ stepNo: 1, adjustFee: 3, payFee: 9 }] },
+      baseInfo: {
+        totalAmount: 133,
+        shippingFee: 10.005,
+        couponFee: 2,
+        newStepOrderList: [{ stepNo: 1, adjustFee: 3, payFee: 9 }],
+      },
       productItems: [{ price: 50, quantity: 2, productID: 'p1', junk: 'drop' }],
     });
     expect(x.goods_total).toBe(100);
@@ -251,6 +310,14 @@ describe('1688 支付 webhook（webhookFor1688 支付面复现）', () => {
     expect(x.coupon_fee).toBe(2);
     expect(x.seller_adjust).toBe(3);
     expect(Object.keys(x.raw.baseInfo)).not.toContain('junk');
-    expect(x.raw.productItems[0]).toEqual({ productID: 'p1', name: undefined, price: 50, quantity: 2, itemAmount: undefined, entryDiscount: undefined, status: undefined });
+    expect(x.raw.productItems[0]).toEqual({
+      productID: 'p1',
+      name: undefined,
+      price: 50,
+      quantity: 2,
+      itemAmount: undefined,
+      entryDiscount: undefined,
+      status: undefined,
+    });
   });
 });

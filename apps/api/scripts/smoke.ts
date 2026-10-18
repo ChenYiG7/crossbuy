@@ -31,9 +31,7 @@ function check(name: string, cond: boolean, detail?: unknown): void {
 }
 
 function sign(ts: number, method: string, url: string, body = ''): string {
-  return createHmac('sha256', SECRET)
-    .update(`${ts}\n${method}\n${url}\n${body}`)
-    .digest('hex');
+  return createHmac('sha256', SECRET).update(`${ts}\n${method}\n${url}\n${body}`).digest('hex');
 }
 
 async function main(): Promise<void> {
@@ -46,7 +44,11 @@ async function main(): Promise<void> {
       check(`${url} → 200`, res.statusCode === 200, res.statusCode);
       check(`${url} → code=0`, body.code === 0, body);
       check(`${url} → data.status=ok`, body.data?.status === 'ok', body.data);
-      check(`${url} → 带 traceId`, typeof body.traceId === 'string' && body.traceId.length > 0, body.traceId);
+      check(
+        `${url} → 带 traceId`,
+        typeof body.traceId === 'string' && body.traceId.length > 0,
+        body.traceId,
+      );
     }
     // traceId 入参透传（上游链路能串起来）
     const res = await app.inject({
@@ -54,7 +56,10 @@ async function main(): Promise<void> {
       url: '/api/open/v1/health',
       headers: { 'x-trace-id': 'trace-from-upstream' },
     });
-    check('入参 X-Trace-Id 被透传', res.json<{ traceId: string }>().traceId === 'trace-from-upstream');
+    check(
+      '入参 X-Trace-Id 被透传',
+      res.json<{ traceId: string }>().traceId === 'trace-from-upstream',
+    );
     await app.close();
   }
 
@@ -99,7 +104,10 @@ async function main(): Promise<void> {
       headers: { 'x-timestamp': String(ts), 'x-signature': sign(ts, 'GET', url) },
     });
     check('正确签名 → 200', okRes.statusCode === 200, okRes.statusCode);
-    check('正确签名 → data.pong=true', okRes.json<{ data: { pong: boolean } }>().data?.pong === true);
+    check(
+      '正确签名 → data.pong=true',
+      okRes.json<{ data: { pong: boolean } }>().data?.pong === true,
+    );
 
     // 签名含 body：POST 篡改 body 必须失效（GET 带 body 不解析，验证不了这点）
     const echoUrl = '/api/open/v1/echo';
@@ -135,12 +143,23 @@ async function main(): Promise<void> {
   console.log('[4] IP 白名单');
   {
     const app = await buildApp(
-      loadConfig({ ...BASE, API_OPEN_IP_ALLOWLIST: '203.0.113.0/24, 198.51.100.7' } as NodeJS.ProcessEnv),
+      loadConfig({
+        ...BASE,
+        API_OPEN_IP_ALLOWLIST: '203.0.113.0/24, 198.51.100.7',
+      } as NodeJS.ProcessEnv),
     );
     const ts = Math.floor(Date.now() / 1000);
-    const headers = { 'x-timestamp': String(ts), 'x-signature': sign(ts, 'GET', '/api/open/v1/ping') };
+    const headers = {
+      'x-timestamp': String(ts),
+      'x-signature': sign(ts, 'GET', '/api/open/v1/ping'),
+    };
 
-    const denied = await app.inject({ method: 'GET', url: '/api/open/v1/ping', remoteAddress: '1.2.3.4', headers });
+    const denied = await app.inject({
+      method: 'GET',
+      url: '/api/open/v1/ping',
+      remoteAddress: '1.2.3.4',
+      headers,
+    });
     check('白名单外 IP → 403', denied.statusCode === 403, denied.statusCode);
 
     const allowedCidr = await app.inject({
@@ -149,7 +168,11 @@ async function main(): Promise<void> {
       remoteAddress: '203.0.113.55',
       headers,
     });
-    check('CIDR 命中（203.0.113.0/24）→ 200', allowedCidr.statusCode === 200, allowedCidr.statusCode);
+    check(
+      'CIDR 命中（203.0.113.0/24）→ 200',
+      allowedCidr.statusCode === 200,
+      allowedCidr.statusCode,
+    );
 
     const allowedExact = await app.inject({
       method: 'GET',
@@ -177,14 +200,26 @@ async function main(): Promise<void> {
 
   console.log('[6] chrome 回传（后台登录态鉴权 + 契约）');
   {
-    const app = await buildApp(loadConfig({ ...BASE, AUTH_SESSION_SECRET: 'smoke-admin-secret' } as NodeJS.ProcessEnv));
+    const app = await buildApp(
+      loadConfig({ ...BASE, AUTH_SESSION_SECRET: 'smoke-admin-secret' } as NodeJS.ProcessEnv),
+    );
 
     // 文档登记（新路由必须出现在 OpenAPI）
-    const doc = (await app.inject({ method: 'GET', url: '/docs/json' })).json<{ paths: Record<string, unknown> }>();
-    check('文档含 /api/webhook/v1/chrome', '/api/webhook/v1/chrome' in doc.paths, Object.keys(doc.paths));
+    const doc = (await app.inject({ method: 'GET', url: '/docs/json' })).json<{
+      paths: Record<string, unknown>;
+    }>();
+    check(
+      '文档含 /api/webhook/v1/chrome',
+      '/api/webhook/v1/chrome' in doc.paths,
+      Object.keys(doc.paths),
+    );
 
     // 无凭证 / 错凭证 / 非 admin 令牌 → 401（不看绿，看它拦没拦住）
-    const noAuth = await app.inject({ method: 'POST', url: '/api/webhook/v1/chrome', payload: { oids: '1', action: 1 } });
+    const noAuth = await app.inject({
+      method: 'POST',
+      url: '/api/webhook/v1/chrome',
+      payload: { oids: '1', action: 1 },
+    });
     check('chrome 无凭证 → 401', noAuth.statusCode === 401, noAuth.statusCode);
 
     const badAuth = await app.inject({
@@ -218,7 +253,11 @@ async function main(): Promise<void> {
       headers: { authorization: 'Bearer not-a-jwt' },
     });
     // 契约校验（zod body）在 handler 之前 ⇒ 缺 action 直接被 400 拦住，不会进业务
-    check('chrome 缺 action → 400（契约守卫，不放行）', missingAction.statusCode === 400, missingAction.statusCode);
+    check(
+      'chrome 缺 action → 400（契约守卫，不放行）',
+      missingAction.statusCode === 400,
+      missingAction.statusCode,
+    );
     await app.close();
   }
 

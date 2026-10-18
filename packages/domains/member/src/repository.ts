@@ -53,9 +53,7 @@ const PROFILE_COLUMN = {
 } as const;
 
 /** dg_users.update 的 data 类型（从生成的 client 反推，避免手写 any） */
-type ProfileUpdateData = Parameters<
-  LegacyPrismaClient['dg_users']['update']
->[0]['data'];
+type ProfileUpdateData = Parameters<LegacyPrismaClient['dg_users']['update']>[0]['data'];
 
 /** 旧系统 ORDER_UNENABLE（User.php 常量，0 = 已锁定） */
 const ORDER_UNENABLE = 0;
@@ -197,7 +195,7 @@ export class MemberRepository {
    * q/utype/state 是 REST 面新增便利过滤（LIKE/精确），不改旧默认行为（全量 uid 倒序分页）。
    */
   async listForAdmin(
-    scope: Exclude<AdminScope, { kind: "none" }>,
+    scope: Exclude<AdminScope, { kind: 'none' }>,
     query: AdminUserListQuery,
   ): Promise<{ items: AdminUserListItem[]; total: number }> {
     const scopeWhere: LegacyPrisma.dg_usersWhereInput =
@@ -430,7 +428,9 @@ export class MemberRepository {
    * 会员金额因子（旧 $user 的 dfflag/dffee/utype；购物车金额/服务费计算用）。
    * dg_users 属主读口的窄投影——跨域消费走 order 域的 MemberFactorsPort。
    */
-  async getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null> {
+  async getMoneyFactors(
+    uid: number,
+  ): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null> {
     const row = await this.db.dg_users.findUnique({
       where: { uid },
       // uname：加购链路 `Cart::create` 的冗余列来源（旧 `$user->uname`，见 docs/plans/08 S37 同族）
@@ -438,11 +438,19 @@ export class MemberRepository {
     });
     if (!row) return null;
     // dffee 列是 Decimal（金额单入口纪律：读入即 number 化的窄投影在此收口）
-    return { isDf: (row.dfflag ?? 0) === 1, dffee: Number(row.dffee ?? 0), utype: row.utype ?? 0, uname: row.uname ?? null };
+    return {
+      isDf: (row.dfflag ?? 0) === 1,
+      dffee: Number(row.dffee ?? 0),
+      utype: row.utype ?? 0,
+      uname: row.uname ?? null,
+    };
   }
 
   /** appid + openid 查 oauth 绑定（旧 OauthLogin::with(['user'])->where(appid)->where(openid)->first()） */
-  async findOauthLogin(appid: string, openid: string): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null } | null> {
+  async findOauthLogin(
+    appid: string,
+    openid: string,
+  ): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null } | null> {
     // 旧库无外键 → Prisma 无关系字段（S19 同源），with(['user']) 拆两步查
     const login = await this.db.v2_oauth_login.findFirst({
       where: { appid, openid, deleted_at: null },
@@ -474,12 +482,15 @@ export class MemberRepository {
    * （旧 TODO「分配 memberId」至今未实现）；password = md5(随机+时间)（旧 Str::random().time()）。
    * 同一事务：用户与 oauth 绑定原子。
    */
-  async createOauthUser(input: {
-    appid: string;
-    openid: string;
-    uname: string;
-    tel: string | null;
-  }, tx?: LegacyPrisma.TransactionClient): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null }> {
+  async createOauthUser(
+    input: {
+      appid: string;
+      openid: string;
+      uname: string;
+      tel: string | null;
+    },
+    tx?: LegacyPrisma.TransactionClient,
+  ): Promise<{ uid: number; uname: string; memberid: string | null; email: string | null }> {
     // tx 透传（Prisma 禁嵌套事务；测试复用外层 rollback 事务）
     const run = async (client: LegacyPrisma.TransactionClient) => {
       const row = await client.dg_users.create({

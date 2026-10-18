@@ -65,11 +65,27 @@ function makeOrder(uid: number, overrides: Record<string, unknown> = {}) {
     addtime: Math.floor(Date.now() / 1000),
     uptime: Math.floor(Date.now() / 1000),
     // dg_order 无默认必填字符串列（introspect 实测，禁省略）
-    yanhuofba: '', yanhuojinyun: '', yanhuozengzhi: '', yanhuoasin: '', yanhuofnsku: '',
-    baozhuang: '', hbbaozhuang: '', baonum: '', SKU: '',
-    shangpin_sku: '', FNSKU: '', shangpin_fnsku: '', name: '',
-    shangpin_name: '', amazon: '', putong: '', shangpin_amazon: '',
-    fuzhuang: '', tiebiao: '', huanbaoz: '', qita: '',
+    yanhuofba: '',
+    yanhuojinyun: '',
+    yanhuozengzhi: '',
+    yanhuoasin: '',
+    yanhuofnsku: '',
+    baozhuang: '',
+    hbbaozhuang: '',
+    baonum: '',
+    SKU: '',
+    shangpin_sku: '',
+    FNSKU: '',
+    shangpin_fnsku: '',
+    name: '',
+    shangpin_name: '',
+    amazon: '',
+    putong: '',
+    shangpin_amazon: '',
+    fuzhuang: '',
+    tiebiao: '',
+    huanbaoz: '',
+    qita: '',
     ...overrides,
   };
 }
@@ -79,22 +95,35 @@ function memberPrincipal(uid: number): Principal {
 }
 
 function makeService(tx: LegacyPrisma.TransactionClient): OrderServiceImpl {
-  return new OrderServiceImpl(new OrderRepository(tx), () => new Date('2026-10-17T10:00:00+08:00'), (fn) => fn(tx));
+  return new OrderServiceImpl(
+    new OrderRepository(tx),
+    () => new Date('2026-10-17T10:00:00+08:00'),
+    (fn) => fn(tx),
+  );
 }
 
-async function seedUser(tx: LegacyPrisma.TransactionClient, overrides: Record<string, unknown> = {}) {
+async function seedUser(
+  tx: LegacyPrisma.TransactionClient,
+  overrides: Record<string, unknown> = {},
+) {
   const row = makeUser(overrides);
   const created = await tx.dg_users.create({ data: { ...row } as never });
   return created;
 }
 
-async function seedOrder(tx: LegacyPrisma.TransactionClient, overrides: Record<string, unknown> = {}) {
+async function seedOrder(
+  tx: LegacyPrisma.TransactionClient,
+  overrides: Record<string, unknown> = {},
+) {
   const row = makeOrder(overrides.uid as number, overrides);
   const { oid, ...data } = row;
   // raw INSERT：本地 dump 落后生产 schema（缺 buyer_remark_icon 等列），Prisma create
   // 会引用不存在的列。只写取消链路相关列 + dump 无默认必填列（information_schema 核实）。
   const cols = ['oid', ...Object.keys(data)] as const;
-  const vals = [oid, ...Object.values(data).map((v) => (v === null ? null : typeof v === 'number' ? v : String(v)))];
+  const vals = [
+    oid,
+    ...Object.values(data).map((v) => (v === null ? null : typeof v === 'number' ? v : String(v))),
+  ];
   const placeholders = cols.map(() => '?').join(',');
   await tx.$executeRawUnsafe(
     `INSERT INTO dg_order (${cols.map((c) => `\`${c}\``).join(',')}) VALUES (${placeholders})`,
@@ -145,14 +174,20 @@ describe('cancelOrders 守卫（旧 OrderCancelService::ensureCancelable 顺序 
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('ORDER_NOT_ALLOWED_CANCEL');
       // 事务回滚兜底断言：状态未变
-      const after = await tx.dg_order.findUnique({ where: { oid: order.oid }, select: { state: true, bargainprice: true, sendprice: true, uptime: true } });
+      const after = await tx.dg_order.findUnique({
+        where: { oid: order.oid },
+        select: { state: true, bargainprice: true, sendprice: true, uptime: true },
+      });
       expect(after?.state).toBe(2);
     });
   });
 
   it('非会员 Principal → NO_PERMISSIONS（不触库）', async () => {
     await withRollback(async (tx) => {
-      const result = await makeService(tx).cancelOrders({ kind: 'admin', subject: '1' } as Principal, [1]);
+      const result = await makeService(tx).cancelOrders(
+        { kind: 'admin', subject: '1' } as Principal,
+        [1],
+      );
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('NO_PERMISSIONS');
     });
@@ -162,7 +197,10 @@ describe('cancelOrders 守卫（旧 OrderCancelService::ensureCancelable 顺序 
     await withRollback(async (tx) => {
       const user = await seedUser(tx);
       const order = await seedOrder(tx, { uid: user.uid });
-      const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [order.oid, order.oid]);
+      const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [
+        order.oid,
+        order.oid,
+      ]);
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value).toEqual([order.oid]);
       const records = await tx.dg_record.findMany({ where: { uid: user.uid, action: 4 } });
@@ -180,7 +218,12 @@ describe('返金计算（旧 calculateRefundAmount 三分支 1:1）', () => {
     await withRollback(async (tx) => {
       const user = await seedUser(tx);
       // goodsTotal = (100 + 20) * 2 = 240 → 服务费 ceil(240*0.05*100)/100 = 12 → 252
-      const order = await seedOrder(tx, { uid: user.uid, goodsprice: 100, inspection: 20, goodsnum: 2 });
+      const order = await seedOrder(tx, {
+        uid: user.uid,
+        goodsprice: 100,
+        inspection: 20,
+        goodsnum: 2,
+      });
       const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [order.oid]);
       expect(result.ok).toBe(true);
 
@@ -194,7 +237,10 @@ describe('返金计算（旧 calculateRefundAmount 三分支 1:1）', () => {
       expect(record?.remark).toContain('オーダーID:');
       expect(record?.remark).not.toContain('直送');
 
-      const after = await tx.dg_users.findUnique({ where: { uid: user.uid }, select: { money: true } });
+      const after = await tx.dg_users.findUnique({
+        where: { uid: user.uid },
+        select: { money: true },
+      });
       expect(after?.money.toString()).toBe('352');
     });
   });
@@ -203,7 +249,12 @@ describe('返金计算（旧 calculateRefundAmount 三分支 1:1）', () => {
     await withRollback(async (tx) => {
       const validity = Math.floor(new Date('2027-01-01T00:00:00+08:00').getTime() / 1000);
       const user = await seedUser(tx, { utype: 1, validity });
-      const order = await seedOrder(tx, { uid: user.uid, goodsprice: 100, inspection: 20, goodsnum: 2 });
+      const order = await seedOrder(tx, {
+        uid: user.uid,
+        goodsprice: 100,
+        inspection: 20,
+        goodsnum: 2,
+      });
       const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [order.oid]);
       expect(result.ok).toBe(true);
 
@@ -266,7 +317,10 @@ describe('返金计算（旧 calculateRefundAmount 三分支 1:1）', () => {
       const records = await tx.dg_record.findMany({ where: { uid: user.uid, action: 4 } });
       expect(records).toHaveLength(0);
 
-      const after = await tx.dg_order.findUnique({ where: { oid: order.oid }, select: { state: true, bargainprice: true, sendprice: true, uptime: true } });
+      const after = await tx.dg_order.findUnique({
+        where: { oid: order.oid },
+        select: { state: true, bargainprice: true, sendprice: true, uptime: true },
+      });
       expect(after?.state).toBe(10);
       expect(Number(after?.bargainprice)).toBe(0);
       expect(after?.uptime).toBeGreaterThan(0);
@@ -295,7 +349,10 @@ describe('状态收尾 + 组内 sendprice 转移 + 金额同步', () => {
       const order = await seedOrder(tx, { uid: user.uid, state: 6, goodsprice: 50 });
       const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [order.oid]);
       expect(result.ok).toBe(true);
-      const after = await tx.dg_order.findUnique({ where: { oid: order.oid }, select: { state: true, bargainprice: true, sendprice: true, uptime: true } });
+      const after = await tx.dg_order.findUnique({
+        where: { oid: order.oid },
+        select: { state: true, bargainprice: true, sendprice: true, uptime: true },
+      });
       expect(after?.state).toBe(10);
     });
   });
@@ -308,8 +365,14 @@ describe('状态收尾 + 组内 sendprice 转移 + 金额同步', () => {
       const b = await seedOrder(tx, { uid: user.uid, tid, sendprice: 0 }); // 接收单
       await makeService(tx).cancelOrders(memberPrincipal(user.uid), [a.oid]);
 
-      const afterA = await tx.dg_order.findUnique({ where: { oid: a.oid }, select: { state: true, bargainprice: true, sendprice: true } });
-      const afterB = await tx.dg_order.findUnique({ where: { oid: b.oid }, select: { state: true, bargainprice: true, sendprice: true } });
+      const afterA = await tx.dg_order.findUnique({
+        where: { oid: a.oid },
+        select: { state: true, bargainprice: true, sendprice: true },
+      });
+      const afterB = await tx.dg_order.findUnique({
+        where: { oid: b.oid },
+        select: { state: true, bargainprice: true, sendprice: true },
+      });
       expect(Number(afterA?.sendprice)).toBe(0);
       expect(Number(afterB?.sendprice)).toBe(10);
     });
@@ -320,7 +383,10 @@ describe('状态收尾 + 组内 sendprice 转移 + 金额同步', () => {
       const user = await seedUser(tx);
       const a = await seedOrder(tx, { uid: user.uid, tid: 'solo-tid', sendprice: 10 });
       await makeService(tx).cancelOrders(memberPrincipal(user.uid), [a.oid]);
-      const after = await tx.dg_order.findUnique({ where: { oid: a.oid }, select: { state: true, bargainprice: true, sendprice: true, uptime: true } });
+      const after = await tx.dg_order.findUnique({
+        where: { oid: a.oid },
+        select: { state: true, bargainprice: true, sendprice: true, uptime: true },
+      });
       // 转移步：receiver 无 → return（不清零）；但 flush 的金额归一化里 carrier=null
       // → 全组 sendprice 归零（旧 syncByOids normalizeOrderSendprice 同行为）——两层叠加后 = 0
       expect(Number(after?.sendprice)).toBe(0);
@@ -336,18 +402,31 @@ describe('状态收尾 + 组内 sendprice 转移 + 金额同步', () => {
       const b = await seedOrder(tx, { uid: user.uid, tid, sid: '55001', bargainprice: 8 });
       // raw INSERT 同因（dump 缺 schema 新列）：只写取消链路读的列 + dump 必填列
       await tx.$executeRawUnsafe(
-        'INSERT INTO dg_sendorder (sid, uid, uname, memberid, bargainprice, xiwgfei, xwdj, consignee) VALUES (?, ?, ?, ?, ?, 0, \'\', \'\')',
-        55001, user.uid, user.uname, user.memberid, 11,
+        "INSERT INTO dg_sendorder (sid, uid, uname, memberid, bargainprice, xiwgfei, xwdj, consignee) VALUES (?, ?, ?, ?, ?, 0, '', '')",
+        55001,
+        user.uid,
+        user.uname,
+        user.memberid,
+        11,
       );
 
       await makeService(tx).cancelOrders(memberPrincipal(user.uid), [a.oid]);
 
-      const afterSend = await tx.dg_sendorder.findUnique({ where: { sid: 55001 }, select: { bargainprice: true } });
+      const afterSend = await tx.dg_sendorder.findUnique({
+        where: { sid: 55001 },
+        select: { bargainprice: true },
+      });
       // syncSendOrders 按 sid 汇总**活跃**单（b 仍活跃）→ 8
       expect(Number(afterSend?.bargainprice)).toBe(8);
-      const afterB = await tx.dg_order.findUnique({ where: { oid: b.oid }, select: { state: true, bargainprice: true, sendprice: true } });
+      const afterB = await tx.dg_order.findUnique({
+        where: { oid: b.oid },
+        select: { state: true, bargainprice: true, sendprice: true },
+      });
       expect(Number(afterB?.bargainprice)).toBe(8);
-      const afterA = await tx.dg_order.findUnique({ where: { oid: a.oid }, select: { state: true, bargainprice: true, sendprice: true } });
+      const afterA = await tx.dg_order.findUnique({
+        where: { oid: a.oid },
+        select: { state: true, bargainprice: true, sendprice: true },
+      });
       expect(Number(afterA?.bargainprice)).toBe(0);
     });
   });
@@ -357,13 +436,19 @@ describe('状态收尾 + 组内 sendprice 转移 + 金额同步', () => {
       const user = await seedUser(tx);
       const okOrder = await seedOrder(tx, { uid: user.uid, goodsprice: 100 });
       const badOrder = await seedOrder(tx, { uid: user.uid, state: 3 });
-      const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [okOrder.oid, badOrder.oid]);
+      const result = await makeService(tx).cancelOrders(memberPrincipal(user.uid), [
+        okOrder.oid,
+        badOrder.oid,
+      ]);
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('ORDER_NOT_ALLOWED_CANCEL');
       // 注：测试注入 runTx=fn(tx) 无嵌套 savepoint，okOrder 的返金中间态在**本外层事务**
       // 里可见——生产 runTx=$transaction 抛错整体回滚（旧 Laravel 嵌套事务 savepoint 同义），
       // 这里只验证「失败信号 + 不再继续处理」语义本身。
-      const still = await tx.dg_order.findUnique({ where: { oid: badOrder.oid }, select: { state: true } });
+      const still = await tx.dg_order.findUnique({
+        where: { oid: badOrder.oid },
+        select: { state: true },
+      });
       expect(still?.state).toBe(3); // 非法单未被触碰
     });
   });

@@ -26,8 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PRISMA_DIR = path.resolve(HERE, '..', 'prisma');
-const schemaPath =
-  process.argv[2] ?? path.resolve(PRISMA_DIR, 'schema.prisma');
+const schemaPath = process.argv[2] ?? path.resolve(PRISMA_DIR, 'schema.prisma');
 const headerPath = path.resolve(PRISMA_DIR, 'legacy-header.txt');
 
 const HEADER_MARKER = 'Prisma schema —— ★ R1 活跃 schema = 旧库 introspect';

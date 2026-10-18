@@ -61,9 +61,9 @@ export class PurchaseRepository {
         seller_mix_setting:
           input.sellerMixSetting === null || input.sellerMixSetting === undefined
             ? null
-            : (typeof input.sellerMixSetting === 'string'
-                ? input.sellerMixSetting
-                : JSON.stringify(input.sellerMixSetting)),
+            : typeof input.sellerMixSetting === 'string'
+              ? input.sellerMixSetting
+              : JSON.stringify(input.sellerMixSetting),
         // 旧 defaultInsertAttributes()
         cached_detail: [],
         inspect_result: [],
@@ -80,7 +80,10 @@ export class PurchaseRepository {
   }
 
   /** 旧 `PlatformShop::where('appid', ...)->where('openid', ...)->first()` */
-  async findSupplierShopByOpenId(appid: number, openid: string): Promise<{ id: number; title: string; nickname: string | null } | null> {
+  async findSupplierShopByOpenId(
+    appid: number,
+    openid: string,
+  ): Promise<{ id: number; title: string; nickname: string | null } | null> {
     return this.db.v2_supplier_shop.findFirst({
       where: { appid, openid },
       select: { id: true, title: true, nickname: true },
@@ -88,16 +91,28 @@ export class PurchaseRepository {
   }
 
   /** 旧 `PlatformShop::create(['appid','openid','title'])` */
-  async createSupplierShop(input: { appid: number; openid: string; title: string }): Promise<{ id: number; title: string; nickname: string | null }> {
+  async createSupplierShop(input: {
+    appid: number;
+    openid: string;
+    title: string;
+  }): Promise<{ id: number; title: string; nickname: string | null }> {
     const row = await this.db.v2_supplier_shop.create({
-      data: { appid: input.appid, openid: input.openid, title: input.title, created_at: new Date() },
+      data: {
+        appid: input.appid,
+        openid: input.openid,
+        title: input.title,
+        created_at: new Date(),
+      },
       select: { id: true, title: true, nickname: true },
     });
     return row;
   }
 
   /** 旧 `$platformShop->save()`（title 与 nickname 都可能为空） */
-  async updateSupplierShop(id: number, patch: { title?: string; nickname?: string | null }): Promise<{ id: number; title: string; nickname: string | null }> {
+  async updateSupplierShop(
+    id: number,
+    patch: { title?: string; nickname?: string | null },
+  ): Promise<{ id: number; title: string; nickname: string | null }> {
     // updateMany：Prisma update 会回读全列（本地 dump 落后生产 schema → P2022 假故障，S21）
     await this.db.v2_supplier_shop.updateMany({ where: { id }, data: patch });
     const row = await this.db.v2_supplier_shop.findFirst({
@@ -111,9 +126,7 @@ export class PurchaseRepository {
    * 批量读供应商商品（只读；旧 with(['supplierProduct']) 的 R1 子集列）。
    * ⚠ 这是 order 域跨域读 purchase 属主表的**唯一**入口（表唯一属主铁律，TODO #17）。
    */
-  async findSupplierProductsByIds(
-    ids: number[],
-  ): Promise<
+  async findSupplierProductsByIds(ids: number[]): Promise<
     Array<{
       id: number;
       shop_id: number | null;

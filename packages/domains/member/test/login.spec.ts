@@ -61,7 +61,6 @@ function makeService(tx: typeof legacyPrisma) {
   );
 }
 
-
 describe('login（旧 PHPUnit LoginTest 翻译）', () => {
   it('成功：uname + 正确密码 → 登录并返回 profile', async () => {
     await withRollback(async (tx) => {
@@ -187,7 +186,10 @@ describe('login（旧 PHPUnit LoginTest 翻译）', () => {
         }),
         select: { uid: true },
       });
-      const res = await makeService(tx).login({ username: 'vitest-login-stop8d', password: 'test' });
+      const res = await makeService(tx).login({
+        username: 'vitest-login-stop8d',
+        password: 'test',
+      });
       expect(res.ok).toBe(false);
       if (res.ok) return;
       expect(res.error.code).toBe('MEMBER_LOGIN_RESTRICTED');
@@ -213,7 +215,10 @@ describe('login（旧 PHPUnit LoginTest 翻译）', () => {
         }),
         select: { uid: true },
       });
-      const res = await makeService(tx).login({ username: 'vitest-login-stop3d', password: 'test' });
+      const res = await makeService(tx).login({
+        username: 'vitest-login-stop3d',
+        password: 'test',
+      });
       expect(res.ok).toBe(true);
     });
   });
@@ -294,7 +299,9 @@ describe('login（旧 PHPUnit LoginTest 翻译）', () => {
    * （真泄漏了这条会红——事务隔离失效比测试失败更严重。）
    */
   it('回归：dump 库无 vitest- 残留用户（事务回滚生效）', async () => {
-    const leaked = await legacyPrisma.dg_users.count({ where: { uname: { startsWith: 'vitest-' } } });
+    const leaked = await legacyPrisma.dg_users.count({
+      where: { uname: { startsWith: 'vitest-' } },
+    });
     expect(leaked).toBe(0);
   });
 });

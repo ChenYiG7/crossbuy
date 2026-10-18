@@ -26,9 +26,7 @@ if (mode !== 'legacy' && mode !== 'redesign') {
 }
 
 const entry =
-  mode === 'legacy'
-    ? '../src/generated/legacy/index.js'
-    : '../src/generated/redesign/index.js';
+  mode === 'legacy' ? '../src/generated/legacy/index.js' : '../src/generated/redesign/index.js';
 
 const { PrismaClient } = await import(entry);
 const client = new PrismaClient();
@@ -39,8 +37,7 @@ try {
     counts.dg_users = await client.dg_users.count();
     // 注意：introspect 出的 snake_case 模型名，Prisma delegate 保留下划线原样
     //（不 camelCase）——client.dg_users / client.v2_worldfirst_trade_order
-    counts.v2_worldfirst_trade_order =
-      await client.v2_worldfirst_trade_order.count();
+    counts.v2_worldfirst_trade_order = await client.v2_worldfirst_trade_order.count();
   } else {
     counts.member = await client.member.count();
   }

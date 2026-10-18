@@ -1,0 +1,52 @@
+name: CI
+
+# 门禁范围（2026-10-18 #6-b 落地）：
+#   无基础设施依赖的四道门 + contract 冒烟（零依赖）。
+#   DB/Redis 依赖的测试套件**不进 CI**：域测试连真实 MySQL 且需要 legacy dump 库
+#   （dg_users/dg_cart 等 160+ 张旧表结构与存量数据，产物只在本机/staging，
+#   公司冷备存储见 TODO #1）；cache/worker 套件另需真 Redis。这些在本地按
+#   `.workbuddy/memory/MEMORY.md`「环境」段起服务后跑，或随 staging 就位后另行接入。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # 版本取自 package.json 的 packageManager（pnpm@9.15.0），不写死
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # db#generate（Prisma 引擎下载）在 ubuntu 正常；本机 Windows 的 EPERM 是环境问题（MEMORY 血泪坑 #12）
+      - name: Typecheck（全 27 包）
+        run: pnpm typecheck
+
+      - name: Lint（全 27 包，含 next/react-hooks 规则）
+        run: pnpm lint
+
+      - name: Prettier 格式门禁（#6-a 一次性重排后零欠账）
+        run: pnpm format:check
+
+      # 边界守卫：DB 仅 repository / 域间禁横向 import / contract 纯净（P1~P4 必须全「被拦」、P5 对照不误杀）
+      - name: 域边界探针（破坏验证 5/5）
+        run: node scripts/boundary-probe.mjs
+
+      # 零基础设施的契约冒烟（zod 契约 21 断言）
+      - name: contract 冒烟
+        run: pnpm --filter @crossbuy/contract test

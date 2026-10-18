@@ -169,7 +169,12 @@ async function call(
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
   });
   const setCookie = res.headers.get('set-cookie') ?? undefined;
-  return { status: res.status, text: await res.text(), location: res.headers.get('location') ?? undefined, setCookie };
+  return {
+    status: res.status,
+    text: await res.text(),
+    location: res.headers.get('location') ?? undefined,
+    setCookie,
+  };
 }
 
 async function main(): Promise<void> {
@@ -181,7 +186,11 @@ async function main(): Promise<void> {
 
     console.log('[2] 未登录 → /login');
     const anonUsers = await call('GET', '/users', { follow: false });
-    check('未登录 /users → 3xx 重定向 /login', anonUsers.status >= 300 && anonUsers.status < 400 && anonUsers.location?.startsWith('/login'), anonUsers);
+    check(
+      '未登录 /users → 3xx 重定向 /login',
+      anonUsers.status >= 300 && anonUsers.status < 400 && anonUsers.location?.startsWith('/login'),
+      anonUsers,
+    );
 
     console.log('[3] 登录（flags 业务员）');
     const bad = await call('POST', '/api/admin/v1/auth/login', {
@@ -211,14 +220,29 @@ async function main(): Promise<void> {
     });
     const session2 = ok2.setCookie?.split(';').find((c) => c.startsWith('cb_admin_session='));
     const users2 = await call('GET', '/users', { cookie: session2 });
-    check('view-all 渲染两个分组的客户', users2.status === 200 && users2.text.includes(MEMBER_G) && users2.text.includes(MEMBER_H), users2.status);
+    check(
+      'view-all 渲染两个分组的客户',
+      users2.status === 200 && users2.text.includes(MEMBER_G) && users2.text.includes(MEMBER_H),
+      users2.status,
+    );
     check('范围徽标显示全部客户', users2.text.includes('全部客户'));
 
     console.log('[6] 登出 + 篡改 cookie');
     const logout = await call('POST', '/api/admin/v1/auth/logout', { cookie: session1 });
-    check('登出 → 200 + 清 cookie', logout.status === 200 && /cb_admin_session=;/.test(logout.setCookie ?? ''), logout.setCookie);
-    const tampered = await call('GET', '/users', { cookie: 'cb_admin_session=evil.token.here', follow: false });
-    check('篡改 cookie → 重定向 /login', tampered.status >= 300 && tampered.status < 400, tampered.status);
+    check(
+      '登出 → 200 + 清 cookie',
+      logout.status === 200 && /cb_admin_session=;/.test(logout.setCookie ?? ''),
+      logout.setCookie,
+    );
+    const tampered = await call('GET', '/users', {
+      cookie: 'cb_admin_session=evil.token.here',
+      follow: false,
+    });
+    check(
+      '篡改 cookie → 重定向 /login',
+      tampered.status >= 300 && tampered.status < 400,
+      tampered.status,
+    );
   } finally {
     server.kill();
     // Windows 下 shell 包装进程 kill 不彻底——落库级清理足够（scratch 是一次性库）

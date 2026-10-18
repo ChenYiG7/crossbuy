@@ -49,24 +49,19 @@ export async function processOrderCreated(
     return;
   }
   const key = idempotencyKeyForOrderCreated(data);
-  await runIdempotent(
-    deps.idempotency,
-    key,
-    ORDER_CREATED_IDEMPOTENCY_TTL_MS,
-    async () => {
-      const result = await deps.notify.send(
-        buildOrderCreatedEmail({
-          uid: data.uid,
-          orderIds: data.orderIds,
-          totalJpy: data.totalJpy,
-          email: data.email,
-        }),
-      );
-      if (!result.ok) {
-        // 让 runIdempotent 的「已处理」判定失效，BullMQ 才能重试
-        await deps.idempotency.forget(key);
-        throw new Error(`order-created 邮件发送失败：${result.code} ${result.message}`);
-      }
-    },
-  );
+  await runIdempotent(deps.idempotency, key, ORDER_CREATED_IDEMPOTENCY_TTL_MS, async () => {
+    const result = await deps.notify.send(
+      buildOrderCreatedEmail({
+        uid: data.uid,
+        orderIds: data.orderIds,
+        totalJpy: data.totalJpy,
+        email: data.email,
+      }),
+    );
+    if (!result.ok) {
+      // 让 runIdempotent 的「已处理」判定失效，BullMQ 才能重试
+      await deps.idempotency.forget(key);
+      throw new Error(`order-created 邮件发送失败：${result.code} ${result.message}`);
+    }
+  });
 }

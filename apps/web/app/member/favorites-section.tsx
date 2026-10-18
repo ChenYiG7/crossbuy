@@ -63,7 +63,9 @@ export function FavoritesSection({
       <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
         <div className="grid gap-1.5">
           <CardTitle>我的收藏</CardTitle>
-          <CardDescription>共 {total} 条（当前页签 {items.length} 条）</CardDescription>
+          <CardDescription>
+            共 {total} 条（当前页签 {items.length} 条）
+          </CardDescription>
         </div>
         <div className="flex items-center gap-1">
           <Button
@@ -90,7 +92,10 @@ export function FavoritesSection({
         ) : (
           <ul className="grid gap-2">
             {items.map((f) => (
-              <li key={f.fid} className="flex items-center justify-between gap-3 rounded-md border p-3">
+              <li
+                key={f.fid}
+                className="flex items-center justify-between gap-3 rounded-md border p-3"
+              >
                 <div className="grid gap-0.5 min-w-0">
                   <a
                     href={f.goodsUrl}

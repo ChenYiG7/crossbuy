@@ -21,7 +21,11 @@ export interface Notification {
 /** 发送结果：可预期失败（渠道不可达等）走 Result，禁抛异常承载分支 */
 export type NotifyResult =
   | { ok: true; providerMessageId?: string }
-  | { ok: false; code: 'CHANNEL_UNAVAILABLE' | 'REJECTED' | 'RATE_LIMITED' | 'INTERNAL'; message: string };
+  | {
+      ok: false;
+      code: 'CHANNEL_UNAVAILABLE' | 'REJECTED' | 'RATE_LIMITED' | 'INTERNAL';
+      message: string;
+    };
 
 /** 渠道实现接口（email / dingtalk / mns 各自实现） */
 export interface NotifyChannel {

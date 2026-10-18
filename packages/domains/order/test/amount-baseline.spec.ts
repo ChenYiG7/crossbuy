@@ -35,7 +35,12 @@ describe('金额计算过滤（旧 isAmountCalculationExcludedState / filterOrde
   });
 
   it('过滤后保持原顺序，只剔除无效态', () => {
-    const orders = [row({ oid: 1, state: 1 }), row({ oid: 2, state: 6 }), row({ oid: 3, state: 11 }), row({ oid: 4, state: null })];
+    const orders = [
+      row({ oid: 1, state: 1 }),
+      row({ oid: 2, state: 6 }),
+      row({ oid: 3, state: 11 }),
+      row({ oid: 4, state: null }),
+    ];
     expect(filterOrdersForAmountCalculation(orders).map((o) => o.oid)).toEqual([1, 4]);
   });
 });
@@ -56,12 +61,18 @@ describe('summarizeAmountCalculationOrders（旧 1:1）', () => {
   it('空集合 → 全 0；缺列按 0 计（旧 `(float)($x ?? 0)`）', () => {
     const empty = summarizeAmountCalculationOrders([]);
     expect(empty).toMatchObject({ goodsTotal: 0, sendpriceTotal: 0, total: 0 });
-    const sparse = summarizeAmountCalculationOrders([row({ goodsnum: null, goodsprice: null, sendprice: null })]);
+    const sparse = summarizeAmountCalculationOrders([
+      row({ goodsnum: null, goodsprice: null, sendprice: null }),
+    ]);
     expect(sparse.total).toBe(0);
   });
 
   it('浮点噪声不进结果（0.1×3 + 0.2 = 0.5 精确）', () => {
-    const summary = summarizeAmountCalculationOrders([row({ goodsnum: 1, goodsprice: 0.1, sendprice: 0.1 }), row({ goodsnum: 1, goodsprice: 0.1, sendprice: 0.1 }), row({ goodsnum: 1, goodsprice: 0.1 })]);
+    const summary = summarizeAmountCalculationOrders([
+      row({ goodsnum: 1, goodsprice: 0.1, sendprice: 0.1 }),
+      row({ goodsnum: 1, goodsprice: 0.1, sendprice: 0.1 }),
+      row({ goodsnum: 1, goodsprice: 0.1 }),
+    ]);
     expect(summary.goodsTotal).toBe(0.3);
     expect(summary.sendpriceTotal).toBe(0.2);
     expect(summary.total).toBe(0.5);
@@ -117,13 +128,29 @@ describe('平台实付抽取（旧 validateOrderByOidAndTradeId 两族）', () =
     const noCoupon = extractAlibabaAmounts({ totalAmount: 90, shippingFee: 10, couponFee: 0 });
     expect(noCoupon.totalAmount).toBe(90);
     expect(noCoupon.couponAdded).toBe(false);
-    expect(extractAlibabaAmounts(null)).toMatchObject({ totalAmount: 0, shippingFee: 0, couponFee: 0 });
+    expect(extractAlibabaAmounts(null)).toMatchObject({
+      totalAmount: 0,
+      shippingFee: 0,
+      couponFee: 0,
+    });
   });
 
   it('淘宝：分转元；pay_amount 覆盖 purchase_amount；红包加回', () => {
-    expect(extractTaobaoGlobalAmounts({ purchase_amount: 12500, domestic_post_fee: 800 }).totalAmount).toBe(125);
-    expect(extractTaobaoGlobalAmounts({ purchase_amount: 12500, pay_amount: 12000, domestic_post_fee: 800 }).totalAmount).toBe(120);
-    const hongbao = extractTaobaoGlobalAmounts({ pay_amount: 12000, hongbao_deduction_amount: 300, domestic_post_fee: 800 });
+    expect(
+      extractTaobaoGlobalAmounts({ purchase_amount: 12500, domestic_post_fee: 800 }).totalAmount,
+    ).toBe(125);
+    expect(
+      extractTaobaoGlobalAmounts({
+        purchase_amount: 12500,
+        pay_amount: 12000,
+        domestic_post_fee: 800,
+      }).totalAmount,
+    ).toBe(120);
+    const hongbao = extractTaobaoGlobalAmounts({
+      pay_amount: 12000,
+      hongbao_deduction_amount: 300,
+      domestic_post_fee: 800,
+    });
     expect(hongbao.couponFee).toBe(3);
     expect(hongbao.totalAmount).toBe(123); // 120 + 3
     expect(hongbao.couponAdded).toBe(true);

@@ -27,12 +27,36 @@ function makeService(tx: Tx, displayFromSec = 0): OrderServiceImpl {
 }
 
 /** raw INSERT dg_users（dump 落后 schema，Prisma create 会引用缺列 → S21 同款处理） */
-async function seedUser(tx: Tx, overrides: Record<string, unknown> = {}): Promise<{ uid: number; uname: string; memberid: string }> {
+async function seedUser(
+  tx: Tx,
+  overrides: Record<string, unknown> = {},
+): Promise<{ uid: number; uname: string; memberid: string }> {
   const uname = `olist_${Math.random().toString(36).slice(2, 10)}`;
-  const cols = ['uname', 'password', 'card', 'memberid', 'email', 'money', 'dfflag', 'utype', 'validity', 'dffee', 'state'];
+  const cols = [
+    'uname',
+    'password',
+    'card',
+    'memberid',
+    'email',
+    'money',
+    'dfflag',
+    'utype',
+    'validity',
+    'dffee',
+    'state',
+  ];
   const vals = [
-    uname, 'x', 'test', uname, null, 100,
-    overrides.dfflag ?? 0, overrides.utype ?? 0, 0, 10, 1,
+    uname,
+    'x',
+    'test',
+    uname,
+    null,
+    100,
+    overrides.dfflag ?? 0,
+    overrides.utype ?? 0,
+    0,
+    10,
+    1,
   ];
   await tx.$executeRawUnsafe(
     `INSERT INTO dg_users (${cols.map((c) => `\`${c}\``).join(',')}) VALUES (${cols.map(() => '?').join(',')})`,
@@ -62,18 +86,46 @@ async function seedOrder(
              ?, ?, ?, ?, ?, ?, ?, ?,
              ?, ?, ?, ?, ?, ?, ?, ?,
              ?, ?, ?)`,
-    oid, user.uid, user.uname, user.memberid, overrides.tid ?? '', overrides.sid ?? null,
-    overrides.type ?? 1, overrides.state ?? 1, overrides.goodsprice ?? 100, overrides.goodsprice1 ?? 0,
-    overrides.goodsnum ?? 1, overrides.bargainprice ?? 0, overrides.sendprice ?? 0, overrides.inspection ?? 0,
-    overrides.goodsurl ?? 'https://e.com/x', overrides.goodsname ?? 'テスト商品', overrides.extend ?? null,
-    overrides.addtime ?? now, overrides.uptime ?? now, overrides.sku_name ?? '',
-    overrides.expressno ?? null, overrides.item_location ?? null, overrides.ship ?? 0,
-    overrides.goodsremark ?? null, overrides.orderremark ?? null, overrides.yanhuofba ?? '',
-    overrides.yanhuoasin ?? '', overrides.FNSKU ?? '', overrides.outid ?? null,
-    overrides.dfstoremode ?? 0, overrides.mark_flag ?? 0, overrides.arrivetime ?? null,
-    overrides.goodssize ?? '', overrides.goodscolor ?? '', overrides.goodsseller ?? null,
-    overrides.goodssite ?? null, overrides.goodsid ?? null, overrides.supplier_shop_id ?? 0,
-    overrides.supplier_product_id ?? 0, overrides.goodsimg ?? null,
+    oid,
+    user.uid,
+    user.uname,
+    user.memberid,
+    overrides.tid ?? '',
+    overrides.sid ?? null,
+    overrides.type ?? 1,
+    overrides.state ?? 1,
+    overrides.goodsprice ?? 100,
+    overrides.goodsprice1 ?? 0,
+    overrides.goodsnum ?? 1,
+    overrides.bargainprice ?? 0,
+    overrides.sendprice ?? 0,
+    overrides.inspection ?? 0,
+    overrides.goodsurl ?? 'https://e.com/x',
+    overrides.goodsname ?? 'テスト商品',
+    overrides.extend ?? null,
+    overrides.addtime ?? now,
+    overrides.uptime ?? now,
+    overrides.sku_name ?? '',
+    overrides.expressno ?? null,
+    overrides.item_location ?? null,
+    overrides.ship ?? 0,
+    overrides.goodsremark ?? null,
+    overrides.orderremark ?? null,
+    overrides.yanhuofba ?? '',
+    overrides.yanhuoasin ?? '',
+    overrides.FNSKU ?? '',
+    overrides.outid ?? null,
+    overrides.dfstoremode ?? 0,
+    overrides.mark_flag ?? 0,
+    overrides.arrivetime ?? null,
+    overrides.goodssize ?? '',
+    overrides.goodscolor ?? '',
+    overrides.goodsseller ?? null,
+    overrides.goodssite ?? null,
+    overrides.goodsid ?? null,
+    overrides.supplier_shop_id ?? 0,
+    overrides.supplier_product_id ?? 0,
+    overrides.goodsimg ?? null,
   );
   return { oid };
 }
@@ -86,7 +138,10 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { type: 1 });
       await seedOrder(tx, user, { type: 3 });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.total).toBe(1);
@@ -102,7 +157,10 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { type: 1 });
       await seedOrder(tx, user, { type: 3 });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.total).toBe(1);
@@ -118,7 +176,11 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { state: 3 });
       const hidden = await seedOrder(tx, user, { state: 12 });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20, state: 3 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+        state: 3,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.total).toBe(2);
@@ -133,7 +195,9 @@ describe('订单列表（listOrderV2 复现）', () => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx);
       const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
-        page: 1, limit: 20, keyword: 'a b c d',
+        page: 1,
+        limit: 20,
+        keyword: 'a b c d',
       });
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.error.code).toBe('ORDER_KEYWORD_TOO_MANY');
@@ -148,7 +212,9 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { goodsname: '無印良品' });
 
       const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
-        page: 1, limit: 20, keyword: 'エアリズム',
+        page: 1,
+        limit: 20,
+        keyword: 'エアリズム',
       });
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.total).toBe(1);
@@ -164,7 +230,9 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { state: 5, item_location: '磁石' }); // state≥5 不算
 
       const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
-        page: 1, limit: 20, queryType: 'refuse',
+        page: 1,
+        limit: 20,
+        queryType: 'refuse',
       });
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -179,9 +247,15 @@ describe('订单列表（listOrderV2 复现）', () => {
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx);
-      const o = await seedOrder(tx, user, { state: 2, item_location: '磁石 MADE_IN_CHINAあり 電池' });
+      const o = await seedOrder(tx, user, {
+        state: 2,
+        item_location: '磁石 MADE_IN_CHINAあり 電池',
+      });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         const row = result.value.rows.find((r) => r.oid === o.oid);
@@ -196,10 +270,25 @@ describe('订单列表（listOrderV2 复现）', () => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx);
       const displayFrom = Math.floor(new Date('2026-11-01T00:00:00+09:00').getTime() / 1000);
-      await seedOrder(tx, user, { state: 2, goodsprice: 100, goodsprice1: 80, goodsnum: 3, addtime: displayFrom + 100 });
-      await seedOrder(tx, user, { state: 2, goodsprice: 100, goodsprice1: 80, goodsnum: 3, addtime: displayFrom - 100 });
+      await seedOrder(tx, user, {
+        state: 2,
+        goodsprice: 100,
+        goodsprice1: 80,
+        goodsnum: 3,
+        addtime: displayFrom + 100,
+      });
+      await seedOrder(tx, user, {
+        state: 2,
+        goodsprice: 100,
+        goodsprice1: 80,
+        goodsnum: 3,
+        addtime: displayFrom - 100,
+      });
 
-      const result = await makeService(tx, displayFrom).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx, displayFrom).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         const byAmount = result.value.rows.map((r) => r.bargainStatus);
@@ -220,7 +309,9 @@ describe('订单列表（listOrderV2 复现）', () => {
       await seedOrder(tx, user, { mark_flag: 0b00 });
 
       const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
-        page: 1, limit: 20, markFavorite: 1,
+        page: 1,
+        limit: 20,
+        markFavorite: 1,
       });
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.total).toBe(1);
@@ -253,7 +344,10 @@ describe('订单列表（listOrderV2 复现）', () => {
       const o = await seedOrder(tx, user, { type: 1 });
       await tx.$executeRawUnsafe('UPDATE dg_order SET deleted_at = NOW() WHERE oid = ?', o.oid);
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.total).toBe(0);
     });
@@ -264,11 +358,19 @@ describe('订单列表（listOrderV2 复现）', () => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx);
       const tagged = await seedOrder(tx, user, {
-        sku_name: '<font color=red>サイズ:</font><font color=green> M </font><font color=red>色:</font><font color=green>黒</font>',
+        sku_name:
+          '<font color=red>サイズ:</font><font color=green> M </font><font color=red>色:</font><font color=green>黒</font>',
       });
-      const fallback = await seedOrder(tx, user, { sku_name: '', goodssize: 'L', goodscolor: '白' });
+      const fallback = await seedOrder(tx, user, {
+        sku_name: '',
+        goodssize: 'L',
+        goodscolor: '白',
+      });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         const a = result.value.rows.find((r) => r.oid === tagged.oid);
@@ -289,9 +391,14 @@ describe('订单列表（listOrderV2 复现）', () => {
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx);
-      const o = await seedOrder(tx, user, { extend: JSON.stringify({ platform_order_no: 'PO-123' }) });
+      const o = await seedOrder(tx, user, {
+        extend: JSON.stringify({ platform_order_no: 'PO-123' }),
+      });
 
-      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), { page: 1, limit: 20 });
+      const result = await makeService(tx).listOrders(memberPrincipal(user.uid), {
+        page: 1,
+        limit: 20,
+      });
       expect(result.ok).toBe(true);
       if (result.ok) {
         expect(result.value.rows.find((r) => r.oid === o.oid)?.platformOrderNo).toBe('PO-123');

@@ -167,7 +167,10 @@ function resolveRedis(): RedisClient | null {
     redisResolved = true;
     redisClient = createRedis(url);
     redisClient.on('error', (e: Error) => {
-      console.error('[redis] 连接错误：下单/目录闸门可能不可用（fail-closed，请求会被拒）', e.message);
+      console.error(
+        '[redis] 连接错误：下单/目录闸门可能不可用（fail-closed，请求会被拒）',
+        e.message,
+      );
     });
   }
   return redisClient;
@@ -194,7 +197,11 @@ function createInMemoryCatalogLock(): CatalogLockPort {
   const lock = createInMemoryLock();
   return {
     async withLock(key, ttlSeconds, waitSeconds, fn) {
-      const r = await lock.withLock(key, { ttlMs: ttlSeconds * 1000, waitMs: waitSeconds * 1000 }, fn);
+      const r = await lock.withLock(
+        key,
+        { ttlMs: ttlSeconds * 1000, waitMs: waitSeconds * 1000 },
+        fn,
+      );
       return r.acquired ? { acquired: true, value: r.value } : { acquired: false };
     },
   };
@@ -372,7 +379,10 @@ export function getPlaceOrderService(): PlaceOrderService {
           );
         } catch (e) {
           // 入队失败不阻断已提交的下单：邮件是 best-effort，记日志可补
-          console.error('[order] enqueueOrderCreated 入队失败（邮件可能漏发，可补偿）：', (e as Error).message);
+          console.error(
+            '[order] enqueueOrderCreated 入队失败（邮件可能漏发，可补偿）：',
+            (e as Error).message,
+          );
         }
       },
       enqueueCompletionGoodsInfo: async () => undefined,

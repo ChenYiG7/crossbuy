@@ -28,10 +28,12 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 ```
 
 ### T0 建新表（additive，旧表不动）
+
 - 按 `schema.prisma` 建 `member_*` 全套新表。
 - 新表 AUTO_INCREMENT 起始值先留空，等 T1 回填后再顶高。
 
 ### T1 回填 + 读新写双
+
 - **回填**：`dg_users` → `member`（**显式带 id**，保证 `member.id == dg_users.uid`），分批 + 幂等 upsert。
 - 同理回填 `dg_address`→`member_address`、`v2_member_webhook*`、`v2_oauth_*`、`v2_open_api_idempotency`、`v2_favorite*`、`v2_user_browse_history`、`user_benefit*`、`user_operation_log`、`v2_area`→`area`。
 - ★ **带 member 必需关系的一律 `JOIN member` 过滤孤儿**（`member_address` 于 2026-10-15 补上，此前会落悬空 `member_id`）。旧库允许子记录挂已删会员，新表若继承悬空，Prisma 必需关系 `include` 直接报错。代价：这些行不进新表 → 校验脚本用 INFO 项报告数量（`0003` B13），T3 旧表降级前按源 id 补录。
@@ -42,11 +44,14 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 - 旧系统此阶段仍全量读写旧表（含登录/注册/资料）→ 需要**反向同步**（见 §四）。
 
 ### T2 切写入口
+
 逐个把旧系统里「会写 member 数据」的入口迁到新系统（登录、注册、改资料、改地址、充值入口的会员侧、webhook 配置…）。**每迁一个，该入口在旧系统变为只读**。
+
 - 出口条件：旧系统对 `dg_users` 的写入口归零（用审计/慢日志确认）。
 - 此时反向同步可下线；双写开始向「只写 member + 单向投影」演进。
 
 ### T3 旧表降级为只读投影
+
 - `dg_users` 等旧表改为**从 `member_*` 单向同步**（触发器或定时 Job），供**尚未切换的域**（order/finance…）继续 JOIN。
 - 随各域逐步切换，旧投影表逐个退休。
 
@@ -58,28 +63,28 @@ T0 建表 ──► T1 回填 + 读新写双 ──► T2 切写入口 ──►
 >
 > ⚠️ **2026-10-13 修订**：`dg_users` 实际为 **75 列**（此前依据的 `taotaro.sql` dump 是旧版，只有约 55 列）。已按线上 `information_schema` 全量核对；`biz_code` / `belong_company` / `tag` / `shopname` / `shopurl` / `prebuyfeq` / `prebuyamt` / `enname` / `monpayamt` / `origin_package_choice` / `stores_*` / `cc_emails` / `email_subscribe_status` **均确实存在**（`shopname`→`shop_name` 等为命名差异）。回填实现见 `packages/db/sql/0002-member-backfill-t1.sql`。
 
-| `member` 列（新） | `dg_users` 列（旧） | 转换 / 坑 |
-|---|---|---|
-| `id` | `uid` | 恒等，主键对齐 |
-| `username` | `uname` | 旧仅普通索引（可重名）→ 新加 UNIQUE，**上线前须查重**（Q4 ✅ 已完成：8 组/16 账号）。**新列排序规则必须显式定为 `utf8mb4_general_ci`**（否则表级默认 `unicode_ci` 会把重名扩到 24 组，见 `docs/plans/03` §五） |
-| `password_hash` | `password` | 旧 CHAR(32)=MD5 无盐。**过渡期双写**：新存 argon2 时，旧列写不下 → 旧列写 `!upgraded!`+短标记占位，并置 `password_algo` 标记；登录时若旧列仍是 MD5 可回退校验 |
-| `email` | `email` | 旧 CHAR(50)，无唯一 |
-| `balance` | `money` | `Decimal(14,2)` ← 旧 `decimal(10,2)`，**原值直迁不做换算**；★ 旧库面值本身就是 CNY（2026-10-15 Q1 改判），故 `balance_currency` 默认 **CNY** |
-| `float_rate` | `floatrate` | 一致 |
-| `scores` | `scores` | 一致 |
-| `created_at` | `regtime` | **DateTime ↔ INT unix 秒**：写旧表要 `Math.floor(t/1000)` |
-| `last_login_at` | `logintime` | 同上 |
-| `last_order_at` | `lastordertime` | 同上 |
-| `stop_time` | `stoptime` | 同上 |
-| `validity` | `validity` | 旧 INT（语义待确认，可能也是时间戳） |
-| `df_flag` / `df_fee` | `dfflag` / `dffee` | 一致 |
-| `biz_code` | `biz_code` | 一致（MZK / PROXY_PURCHASE）；✔ 实测该列**确实存在**（曾存疑） |
-| `mon_pay_amt` | `monpayamt` | ⚠ 旧为 **DOUBLE 浮点** → 回填先 `ROUND(...,2)` 再落 `DECIMAL(12,2)`（又一个「float 存金额」实例） |
-| `password_algo` | —— | **新列**：回填旧数据置 `md5`，升级后置 `argon2id`；用于双读判据 |
-| `balance_currency` | —— | **新列，旧表无**（双写时忽略） |
-| `remember_token` | `remember_token` | **不迁移**：旧系统会话自用；新系统用 Auth.js 会话 |
-| 法人信息 | `com*` 组 | 拆到 `member_company`（1:1）。⚠ **修正**：不能只按 `regType=1` —— 实测 `regtype=1` 仅 **2,246** 人，而 `comname` 非空者 **7,409** 人。回填条件改为「`regType=1` **或任一 com\* 字段非空**」 |
-| `legacy_api_token` | `apitoken` | **不迁移**：由 `personal_access_token` 取代；旧 token 在 T2 一次性重签 |
+| `member` 列（新）    | `dg_users` 列（旧） | 转换 / 坑                                                                                                                                                                                                      |
+| -------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | `uid`               | 恒等，主键对齐                                                                                                                                                                                                 |
+| `username`           | `uname`             | 旧仅普通索引（可重名）→ 新加 UNIQUE，**上线前须查重**（Q4 ✅ 已完成：8 组/16 账号）。**新列排序规则必须显式定为 `utf8mb4_general_ci`**（否则表级默认 `unicode_ci` 会把重名扩到 24 组，见 `docs/plans/03` §五） |
+| `password_hash`      | `password`          | 旧 CHAR(32)=MD5 无盐。**过渡期双写**：新存 argon2 时，旧列写不下 → 旧列写 `!upgraded!`+短标记占位，并置 `password_algo` 标记；登录时若旧列仍是 MD5 可回退校验                                                  |
+| `email`              | `email`             | 旧 CHAR(50)，无唯一                                                                                                                                                                                            |
+| `balance`            | `money`             | `Decimal(14,2)` ← 旧 `decimal(10,2)`，**原值直迁不做换算**；★ 旧库面值本身就是 CNY（2026-10-15 Q1 改判），故 `balance_currency` 默认 **CNY**                                                                   |
+| `float_rate`         | `floatrate`         | 一致                                                                                                                                                                                                           |
+| `scores`             | `scores`            | 一致                                                                                                                                                                                                           |
+| `created_at`         | `regtime`           | **DateTime ↔ INT unix 秒**：写旧表要 `Math.floor(t/1000)`                                                                                                                                                      |
+| `last_login_at`      | `logintime`         | 同上                                                                                                                                                                                                           |
+| `last_order_at`      | `lastordertime`     | 同上                                                                                                                                                                                                           |
+| `stop_time`          | `stoptime`          | 同上                                                                                                                                                                                                           |
+| `validity`           | `validity`          | 旧 INT（语义待确认，可能也是时间戳）                                                                                                                                                                           |
+| `df_flag` / `df_fee` | `dfflag` / `dffee`  | 一致                                                                                                                                                                                                           |
+| `biz_code`           | `biz_code`          | 一致（MZK / PROXY_PURCHASE）；✔ 实测该列**确实存在**（曾存疑）                                                                                                                                                 |
+| `mon_pay_amt`        | `monpayamt`         | ⚠ 旧为 **DOUBLE 浮点** → 回填先 `ROUND(...,2)` 再落 `DECIMAL(12,2)`（又一个「float 存金额」实例）                                                                                                              |
+| `password_algo`      | ——                  | **新列**：回填旧数据置 `md5`，升级后置 `argon2id`；用于双读判据                                                                                                                                                |
+| `balance_currency`   | ——                  | **新列，旧表无**（双写时忽略）                                                                                                                                                                                 |
+| `remember_token`     | `remember_token`    | **不迁移**：旧系统会话自用；新系统用 Auth.js 会话                                                                                                                                                              |
+| 法人信息             | `com*` 组           | 拆到 `member_company`（1:1）。⚠ **修正**：不能只按 `regType=1` —— 实测 `regtype=1` 仅 **2,246** 人，而 `comname` 非空者 **7,409** 人。回填条件改为「`regType=1` **或任一 com\* 字段非空**」                    |
+| `legacy_api_token`   | `apitoken`          | **不迁移**：由 `personal_access_token` 取代；旧 token 在 T2 一次性重签                                                                                                                                         |
 
 **多态外键**（`favorite.favoriteable_type/id`、`personal_access_token.tokenable_type/id`）：DB 层照原样写（旧数据能读），**契约层收口为枚举**。
 
@@ -99,11 +104,11 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 
 ## 五、回退方案
 
-| 触发 | 动作 |
-|---|---|
+| 触发                     | 动作                                                                         |
+| ------------------------ | ---------------------------------------------------------------------------- |
 | 新系统 member 出严重 bug | 关掉新系统 member 写入口与路由，流量回旧系统；旧表因一直同事务同步，数据完整 |
-| 双写事务失败 | 事务整体回滚（原子），旧表不受影响 |
-| 回填出错 | `member_*` 清空重跑（回填幂等），旧表不动 |
+| 双写事务失败             | 事务整体回滚（原子），旧表不受影响                                           |
+| 回填出错                 | `member_*` 清空重跑（回填幂等），旧表不动                                    |
 
 ---
 
@@ -119,14 +124,14 @@ T2 之前旧系统仍在写 `dg_users`（老登录/注册/后台改资料）。�
 
 ## 七、风险与对策
 
-| 风险 | 对策 |
-|---|---|
-| 双写代码散落 | 强制收口在 `packages/db` repository；ESLint 禁止 service/route 直连旧表 |
-| 字段语义漂移 | 映射表 + 单测钉住每个转换（尤其 INT 时间戳、金额精度） |
-| 大表回填锁表 | 分批（按 uid 区间）+ 低峰执行 + 幂等 upsert |
-| 忘记顶 AUTO_INCREMENT | 回填脚本内置校验（断言 AUTO_INCREMENT > max(id)） |
-| T2 有漏网的旧写入口 | 用 MySQL 审计/慢查询日志核验 `dg_users` 无写 |
-| 忘记下线反向同步 | 作为 T2 出口检查项，写进切换 checklist |
+| 风险                  | 对策                                                                    |
+| --------------------- | ----------------------------------------------------------------------- |
+| 双写代码散落          | 强制收口在 `packages/db` repository；ESLint 禁止 service/route 直连旧表 |
+| 字段语义漂移          | 映射表 + 单测钉住每个转换（尤其 INT 时间戳、金额精度）                  |
+| 大表回填锁表          | 分批（按 uid 区间）+ 低峰执行 + 幂等 upsert                             |
+| 忘记顶 AUTO_INCREMENT | 回填脚本内置校验（断言 AUTO_INCREMENT > max(id)）                       |
+| T2 有漏网的旧写入口   | 用 MySQL 审计/慢查询日志核验 `dg_users` 无写                            |
+| 忘记下线反向同步      | 作为 T2 出口检查项，写进切换 checklist                                  |
 
 ---
 

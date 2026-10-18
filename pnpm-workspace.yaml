@@ -1,18 +1,18 @@
 packages:
-  - "apps/*"
-  - "packages/*"
-  - "packages/domains/*"
+  - 'apps/*'
+  - 'packages/*'
+  - 'packages/domains/*'
 
 catalog:
   typescript: ^5.6.3
-  "@types/node": ^22.10.2
+  '@types/node': ^22.10.2
   react: ^19.0.0
   react-dom: ^19.0.0
-  "@types/react": ^19.0.0
-  "@types/react-dom": ^19.0.0
+  '@types/react': ^19.0.0
+  '@types/react-dom': ^19.0.0
   next: ^15.1.3
   zod: ^3.24.1
-  "@prisma/client": ^6.2.1
+  '@prisma/client': ^6.2.1
   prisma: ^6.2.1
   bullmq: ^5.34.0
   ioredis: ^5.4.2
@@ -21,19 +21,22 @@ catalog:
   turbo: ^2.3.3
   prettier: ^3.4.2
   eslint: ^9.17.0
-  "@eslint/js": ^9.17.0
+  '@eslint/js': ^9.17.0
   typescript-eslint: ^8.18.2
+  # ---- ESLint React/Next 规则（#6-b：flat config 直引，Next 15 官方 flat 导出）----
+  'eslint-plugin-react-hooks': ^5.2.0
+  '@next/eslint-plugin-next': ^15.5.0
   tsx: ^4.19.2
   # ---- UI（M0.6：Tailwind 4 + shadcn/ui，packages/ui 为三 app 共用组件源）----
   tailwindcss: ^4.3.2
-  "@tailwindcss/postcss": ^4.3.3
+  '@tailwindcss/postcss': ^4.3.3
   tw-animate-css: ^1.4.0
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
   tailwind-merge: ^3.7.0
-  "@radix-ui/react-slot": ^1.5.0
-  "@radix-ui/react-label": ^2.1.17
-  "@radix-ui/react-separator": ^1.2.0
+  '@radix-ui/react-slot': ^1.5.0
+  '@radix-ui/react-label': ^2.1.17
+  '@radix-ui/react-separator': ^1.2.0
   # ---- 认证（M1：web 会员端 JWT 会话，jose；admin 端 bcrypt 校验，bcryptjs）----
   jose: ^6.2.12
   bcryptjs: ^3.0.2

@@ -35,7 +35,10 @@ export type SupplierProductEntity = SupplierProductRead;
 /** 权益预览端口（旧 UserBenefitService::previewFeeDeduct——member 域属主；null = 无可用权益） */
 export interface BenefitPort {
   /** 开关开启且存在可用权益时返回 { canDeduct, maxDeduct }；否则 null */
-  previewFeeDeduct(uid: number, originalServerMoney: number): Promise<{ canDeduct: number; maxDeduct: number } | null>;
+  previewFeeDeduct(
+    uid: number,
+    originalServerMoney: number,
+  ): Promise<{ canDeduct: number; maxDeduct: number } | null>;
 }
 
 /** 汇率端口（旧 Currency::convert CNY→JPY，缓存语义在端口内） */
@@ -62,7 +65,9 @@ export interface SupplierCatalogPort {
  */
 export interface MemberFactorsPort {
   /** 旧 $user 的 dfflag/dffee/utype（不存在 = null） */
-  getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null>;
+  getMoneyFactors(
+    uid: number,
+  ): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null>;
 }
 
 /** round2（PHP round；金额恒正） */
@@ -84,7 +89,10 @@ function storedRetailPrice(cart: CartEntity): number | null {
 
 /** 旧 filterMixSettingShops：混批金额/件数达标的店铺 id 集 */
 export function filterMixSettingShops(
-  shopQuantities: Map<number, { num: number; money: number; rule: { mixAmount?: number; mixNumber?: number } | null }>,
+  shopQuantities: Map<
+    number,
+    { num: number; money: number; rule: { mixAmount?: number; mixNumber?: number } | null }
+  >,
 ): number[] {
   if (shopQuantities.size === 0) return [];
   const shopIds: number[] = [];
@@ -124,8 +132,15 @@ export function calculateUnitPriceByQuantity(
   const minOrderQuantity = product.min_order_quantity;
 
   // 不满足最小起批且支持混批的商品：店铺混批达标 → 原价
-  const mixSetting = product.seller_mix_setting ? (JSON.parse(product.seller_mix_setting) as { mixAmount?: number; mixNumber?: number }) : null;
-  if (totalQuantity < startQuantity && mixSetting && product.shop_id !== null && mixShopIds.includes(product.shop_id)) {
+  const mixSetting = product.seller_mix_setting
+    ? (JSON.parse(product.seller_mix_setting) as { mixAmount?: number; mixNumber?: number })
+    : null;
+  if (
+    totalQuantity < startQuantity &&
+    mixSetting &&
+    product.shop_id !== null &&
+    mixShopIds.includes(product.shop_id)
+  ) {
     return cart.goodsprice;
   }
   // 一件包邮
@@ -159,7 +174,10 @@ export function calculateTierPrices(
   const tierPrices = new Map<number, number>();
   const productQuantities = new Map<number, number>();
   const productCarts: CartEntity[] = [];
-  const shopQuantities = new Map<number, { num: number; money: number; rule: { mixAmount?: number; mixNumber?: number } | null }>();
+  const shopQuantities = new Map<
+    number,
+    { num: number; money: number; rule: { mixAmount?: number; mixNumber?: number } | null }
+  >();
 
   for (const cart of carts) {
     if (cart.goodssite !== CART_TYPE_1688) continue;
@@ -174,7 +192,10 @@ export function calculateTierPrices(
       let rule: { mixAmount?: number; mixNumber?: number } | null = entry.rule;
       if (!rule) {
         try {
-          rule = JSON.parse(product.seller_mix_setting) as { mixAmount?: number; mixNumber?: number };
+          rule = JSON.parse(product.seller_mix_setting) as {
+            mixAmount?: number;
+            mixNumber?: number;
+          };
         } catch {
           rule = null;
         }
@@ -189,7 +210,15 @@ export function calculateTierPrices(
   const mixShopIds = filterMixSettingShops(shopQuantities);
   for (const cart of productCarts) {
     const totalQuantity = productQuantities.get(cart.supplier_product_id!) ?? 0;
-    tierPrices.set(cart.gid, calculateUnitPriceByQuantity(cart, products.get(cart.supplier_product_id!), totalQuantity, mixShopIds));
+    tierPrices.set(
+      cart.gid,
+      calculateUnitPriceByQuantity(
+        cart,
+        products.get(cart.supplier_product_id!),
+        totalQuantity,
+        mixShopIds,
+      ),
+    );
   }
   return tierPrices;
 }
@@ -306,15 +335,20 @@ export function countMoney(
 function toProductSummary(row: SupplierProductEntity): SupplierProductSummary {
   let priceRange: SupplierProductSummary['priceRange'] = null;
   if (Array.isArray(row.price_range)) {
-    priceRange = (row.price_range as Array<{ startQuantity?: unknown; price?: unknown }>).map((r) => ({
-      startQuantity: Number(r.startQuantity ?? 0),
-      price: Number(r.price ?? 0),
-    }));
+    priceRange = (row.price_range as Array<{ startQuantity?: unknown; price?: unknown }>).map(
+      (r) => ({
+        startQuantity: Number(r.startQuantity ?? 0),
+        price: Number(r.price ?? 0),
+      }),
+    );
   }
   let sellerMixSetting: SupplierProductSummary['sellerMixSetting'] = null;
   if (row.seller_mix_setting) {
     try {
-      const parsed = JSON.parse(row.seller_mix_setting) as { mixAmount?: unknown; mixNumber?: unknown };
+      const parsed = JSON.parse(row.seller_mix_setting) as {
+        mixAmount?: unknown;
+        mixNumber?: unknown;
+      };
       sellerMixSetting = {
         ...(parsed.mixAmount !== undefined ? { mixAmount: Number(parsed.mixAmount) } : {}),
         ...(parsed.mixNumber !== undefined ? { mixNumber: Number(parsed.mixNumber) } : {}),
@@ -362,7 +396,8 @@ function toCartRow(cart: CartEntity, product: SupplierProductEntity | undefined)
     goodsPrice: String(cart.goodsprice),
     onePiecePrice: String(cart.one_piece_price || cart.goodsprice),
     offerPrice: String(cart.offer_price || cart.goodsprice),
-    retailPrice: cart.retail_price === null || cart.retail_price === 0 ? null : String(cart.retail_price),
+    retailPrice:
+      cart.retail_price === null || cart.retail_price === 0 ? null : String(cart.retail_price),
     goodsNum: cart.goodsnum,
     minOrderQuantity: cart.min_order_quantity,
     var1: name(cart.var1),
@@ -458,7 +493,12 @@ export class CartService {
         goodsSeller: cart.goodsseller,
         carts: [],
       };
-      group.carts.push(toCartRow(cart, cart.supplier_product_id ? products.get(cart.supplier_product_id) : undefined));
+      group.carts.push(
+        toCartRow(
+          cart,
+          cart.supplier_product_id ? products.get(cart.supplier_product_id) : undefined,
+        ),
+      );
       groups.set(key, group);
     }
     return ok([...groups.values()]);

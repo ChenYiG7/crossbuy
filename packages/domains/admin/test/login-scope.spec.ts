@@ -64,7 +64,10 @@ describe('admin login', () => {
   it('错误密码 → ADMIN_INVALID_CREDENTIALS', async () => {
     await withRollback(async (tx) => {
       await insertAdmin(tx, 'vitest-admin-badpw');
-      const res = await makeService(tx).login({ username: 'vitest-admin-badpw', password: 'wrong' });
+      const res = await makeService(tx).login({
+        username: 'vitest-admin-badpw',
+        password: 'wrong',
+      });
       expect(res.ok).toBe(false);
       if (res.ok) return;
       expect(res.error.code).toBe('ADMIN_INVALID_CREDENTIALS');
@@ -96,11 +99,19 @@ describe('admin scope 三分支', () => {
     await withRollback(async (tx) => {
       const uid = await insertAdmin(tx, 'vitest-admin-all');
       const [perm, role] = await Promise.all([
-        tx.admin_permissions.findFirst({ where: { slug: 'ability-view-all-users' }, select: { id: true } }),
-        tx.admin_roles.create({ data: { name: 'vitest-view-all-role', slug: 'vitest_view_all_role' }, select: { id: true } }),
+        tx.admin_permissions.findFirst({
+          where: { slug: 'ability-view-all-users' },
+          select: { id: true },
+        }),
+        tx.admin_roles.create({
+          data: { name: 'vitest-view-all-role', slug: 'vitest_view_all_role' },
+          select: { id: true },
+        }),
       ]);
       expect(perm).not.toBeNull();
-      await tx.admin_role_permissions.create({ data: { role_id: role.id, permission_id: perm!.id } });
+      await tx.admin_role_permissions.create({
+        data: { role_id: role.id, permission_id: perm!.id },
+      });
       await tx.admin_role_users.create({ data: { role_id: role.id, user_id: BigInt(uid) } });
 
       const res = await makeService(tx).resolveScope(uid);

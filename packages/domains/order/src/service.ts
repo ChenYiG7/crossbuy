@@ -9,7 +9,17 @@ import { DF_CONFIGS, ORDER_FLAGS, ORDER_TYPE, RECORD, UTYPE } from './legacy-con
 import { DeferredAmountSync } from './amount-sync';
 import type { LegacyWhere, ListOrderRow, OrderRepository, Tx } from './repository';
 import { unixToIso } from '@crossbuy/utils';
-import { parseSkuName, splitItemLocation, bargainDisplayOf, bargainDisplayFromSec, readExtendField, MADE_IN_CHINA_YES, MADE_IN_CHINA_NO, MARK_FLAG_FAVORITE_POSITION, MARK_FLAG_ARRIVAL_POSITION } from './list-helpers';
+import {
+  parseSkuName,
+  splitItemLocation,
+  bargainDisplayOf,
+  bargainDisplayFromSec,
+  readExtendField,
+  MADE_IN_CHINA_YES,
+  MADE_IN_CHINA_NO,
+  MARK_FLAG_FAVORITE_POSITION,
+  MARK_FLAG_ARRIVAL_POSITION,
+} from './list-helpers';
 
 /**
  * order 域服务（docs/04 §3.2：域间唯一调用面，R3 拆分的搬运单元）。
@@ -29,14 +39,22 @@ export interface OrderService {
    * 行锁（user → orders）→ 守卫（1/6 态 + 归属）→ sendprice 组内转移 → 返金入账 →
    * state=10 + bargainprice=0 → 组金额同步（deferred flush，同事务）。
    */
-  cancelOrders(principal: Principal, rawOids: Array<number | string>): Promise<Result<number[], OrderError>>;
+  cancelOrders(
+    principal: Principal,
+    rawOids: Array<number | string>,
+  ): Promise<Result<number[], OrderError>>;
 
   /**
    * 会员订单列表（旧 listOrderV2 + OrderListInput::buildQuery 1:1）。
    * 状态显示合并（3 并 12）/ dfflag type 分流 / keyword 三词上限在此落；
    * displayFrom = 「安くなった額」展示窗口起点（旧 config('bargain.display_from')，注入）。
    */
-  listOrders(principal: Principal, query: OrderListQuery): Promise<Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>>;
+  listOrders(
+    principal: Principal,
+    query: OrderListQuery,
+  ): Promise<
+    Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>
+  >;
 }
 
 /** 旧 lang('order_id')（custom-trans.php:157） */
@@ -58,7 +76,9 @@ function nowSec(): number {
 
 /** 旧 CancelMemberOrderService::normalizeOrderIds：int 化 → 正数过滤 → 去重 */
 function normalizeOids(raw: Array<number | string>): number[] {
-  return [...new Set(raw.map((v) => Math.trunc(Number(v))).filter((n) => Number.isFinite(n) && n > 0))];
+  return [
+    ...new Set(raw.map((v) => Math.trunc(Number(v))).filter((n) => Number.isFinite(n) && n > 0)),
+  ];
 }
 
 /** 取消链路的订单行（lockOrdersForCancel 列集） */
@@ -84,7 +104,10 @@ export class OrderServiceImpl implements OrderService {
     protected readonly displayFromSec: number = bargainDisplayFromSec('2026-11-01'),
   ) {}
 
-  async cancelOrders(principal: Principal, rawOids: Array<number | string>): Promise<Result<number[], OrderError>> {
+  async cancelOrders(
+    principal: Principal,
+    rawOids: Array<number | string>,
+  ): Promise<Result<number[], OrderError>> {
     if (principal.kind !== 'member') {
       return err(orderError('NO_PERMISSIONS'));
     }
@@ -136,7 +159,9 @@ export class OrderServiceImpl implements OrderService {
   async listOrders(
     principal: Principal,
     query: OrderListQuery,
-  ): Promise<Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>> {
+  ): Promise<
+    Result<{ rows: MemberOrderRow[]; total: number; page: number; pageSize: number }, OrderError>
+  > {
     if (principal.kind !== 'member') {
       return err({ code: 'NO_PERMISSIONS', message: '非会员主体' });
     }
@@ -159,8 +184,14 @@ export class OrderServiceImpl implements OrderService {
     // ---- 状态过滤：3 并 12（不良待确认对客户显示为在途，旧 resolveStateField 对偶逻辑在过滤面）----
     let states: number[] = [];
     if (query.states) {
-      states = query.states.split(',').map((v) => Number(v.trim())).filter(Number.isInteger);
-      if (states.includes(OrderStatus.SEND) && !states.includes(OrderStatus.AFTER_SALE_WAIT_CHECK)) {
+      states = query.states
+        .split(',')
+        .map((v) => Number(v.trim()))
+        .filter(Number.isInteger);
+      if (
+        states.includes(OrderStatus.SEND) &&
+        !states.includes(OrderStatus.AFTER_SALE_WAIT_CHECK)
+      ) {
         states.push(OrderStatus.AFTER_SALE_WAIT_CHECK);
       }
       AND.push({ state: { in: states } });
@@ -255,11 +286,21 @@ export class OrderServiceImpl implements OrderService {
 
     // ---- mark_flag 位过滤（Prisma 无位运算 → raw 预筛 oid 集）----
     if (query.markFavorite !== undefined) {
-      const oids = await this.repository.listOidsByMarkFlag(db, uid, MARK_FLAG_FAVORITE_POSITION, query.markFavorite);
+      const oids = await this.repository.listOidsByMarkFlag(
+        db,
+        uid,
+        MARK_FLAG_FAVORITE_POSITION,
+        query.markFavorite,
+      );
       AND.push({ oid: { in: oids } });
     }
     if (query.markArrival !== undefined) {
-      const oids = await this.repository.listOidsByMarkFlag(db, uid, MARK_FLAG_ARRIVAL_POSITION, query.markArrival);
+      const oids = await this.repository.listOidsByMarkFlag(
+        db,
+        uid,
+        MARK_FLAG_ARRIVAL_POSITION,
+        query.markArrival,
+      );
       AND.push({ oid: { in: oids } });
     }
 
@@ -267,10 +308,18 @@ export class OrderServiceImpl implements OrderService {
     if (query.productId) AND.push({ supplier_product_id: query.productId });
     if (query.updatedAfter) AND.push({ uptime: { gte: query.updatedAfter } });
 
-    const { rows, total } = await this.repository.listMemberOrders(db, where, query.page, query.limit);
+    const { rows, total } = await this.repository.listMemberOrders(
+      db,
+      where,
+      query.page,
+      query.limit,
+    );
 
     // ---- detail 投影（goodsNameTrans / goodSkuTrans）----
-    const details = await this.repository.findOrderDetails(db, rows.map((r) => r.oid));
+    const details = await this.repository.findOrderDetails(
+      db,
+      rows.map((r) => r.oid),
+    );
 
     const projected = rows.map((r) => this.projectListRow(r, details.get(r.oid)));
     return ok({ rows: projected, total, page: query.page, pageSize: query.limit });
@@ -279,11 +328,15 @@ export class OrderServiceImpl implements OrderService {
   /** 行投影（旧 Member/OrderType resolve* 系列 1:1） */
   protected projectListRow(
     r: ListOrderRow,
-    detail: { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null } | undefined,
+    detail:
+      | { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null }
+      | undefined,
   ): MemberOrderRow {
     const goodsNum = r.goodsnum ?? 0;
     const skuDetail = parseSkuName(r.sku_name, r.goodssize, r.goodscolor);
-    const skuTrans = Array.isArray(detail?.sku_trans) ? (detail?.sku_trans as Array<{ name: string; value: string }>) : skuDetail;
+    const skuTrans = Array.isArray(detail?.sku_trans)
+      ? (detail?.sku_trans as Array<{ name: string; value: string }>)
+      : skuDetail;
     const bargain = bargainDisplayOf(
       r.addtime ?? 0,
       r.state ?? 0,
@@ -300,7 +353,9 @@ export class OrderServiceImpl implements OrderService {
       sid: r.sid,
       type: (r.type ?? 0) as MemberOrderRow['type'],
       // 显示态：12 → 3（旧 resolveStateField）
-      state: (r.state === OrderStatus.AFTER_SALE_WAIT_CHECK ? OrderStatus.SEND : r.state ?? 0) as MemberOrderRow['state'],
+      state: (r.state === OrderStatus.AFTER_SALE_WAIT_CHECK
+        ? OrderStatus.SEND
+        : (r.state ?? 0)) as MemberOrderRow['state'],
       expressNo: r.expressno,
       goodsId: r.goodsid,
       goodsName: r.goodsname,
@@ -339,7 +394,11 @@ export class OrderServiceImpl implements OrderService {
     };
   }
 
-  protected async cancelSingleOrder(tx: Tx, user: CancelUserRow, order: CancelOrderRow | undefined): Promise<void> {
+  protected async cancelSingleOrder(
+    tx: Tx,
+    user: CancelUserRow,
+    order: CancelOrderRow | undefined,
+  ): Promise<void> {
     // 守卫第一分支：空单 = not_found（旧 ensureCancelable 首判；TS 收窄在此显式化）
     if (!order) throw orderError('ORDER_NOT_FOUND');
     this.ensureCancelable(user, order);
@@ -392,7 +451,9 @@ export class OrderServiceImpl implements OrderService {
       groupOrders = [order];
     }
     // 旧 filterOrdersForAmountCalculation（再过滤一遍；getAmountCalculationGroupOrders 已滤，幂等）
-    const activeOrders = groupOrders.filter((o) => o.state !== 6 && o.state !== 10 && o.state !== 11);
+    const activeOrders = groupOrders.filter(
+      (o) => o.state !== 6 && o.state !== 10 && o.state !== 11,
+    );
     const receiver = activeOrders
       .filter((o) => o.oid !== order.oid)
       .sort((a, b) => b.oid - a.oid)[0];
@@ -436,19 +497,33 @@ export class OrderServiceImpl implements OrderService {
     if (userCharged) return goodsTotal;
 
     const serviceCharge = Math.ceil(goodsTotal * DG_SERVICE_FEE_RATE * 100) / 100;
-    const actualServiceCharge = Math.max(0, Math.round((serviceCharge - this.getDeductedServiceFee(order)) * 100) / 100);
+    const actualServiceCharge = Math.max(
+      0,
+      Math.round((serviceCharge - this.getDeductedServiceFee(order)) * 100) / 100,
+    );
     return round2(goodsTotal + actualServiceCharge);
   }
 
   /** 旧 calculateDfRefundAmount（charged 全额 / AMTLIMIT 系数 / 基础价 + dffee） */
-  protected calculateDfRefundAmount(user: CancelUserRow, order: CancelOrderRow, userCharged: boolean): number {
+  protected calculateDfRefundAmount(
+    user: CancelUserRow,
+    order: CancelOrderRow,
+    userCharged: boolean,
+  ): number {
     if (userCharged) {
       return (order.goodsprice + (order.inspection ?? 0)) * (order.goodsnum ?? 0);
     }
     if (DF_CONFIGS.ISAMTLIMIT === 1 && order.goodsprice > DF_CONFIGS.AMTLIMIT) {
-      return (order.goodsprice + (order.inspection ?? 0)) * (order.goodsnum ?? 0) * DF_CONFIGS.AMTLIMITFEE;
+      return (
+        (order.goodsprice + (order.inspection ?? 0)) *
+        (order.goodsnum ?? 0) *
+        DF_CONFIGS.AMTLIMITFEE
+      );
     }
-    return (order.goodsprice + (order.inspection ?? 0) + moneyOf(user.dffee ?? 0)) * (order.goodsnum ?? 0);
+    return (
+      (order.goodsprice + (order.inspection ?? 0) + moneyOf(user.dffee ?? 0)) *
+      (order.goodsnum ?? 0)
+    );
   }
 
   /** 旧 buildRefundNote（HTML 备注串 1:1——含转义反斜杠，dg_record.remark 原样存） */
@@ -493,5 +568,10 @@ function round2(v: number): number {
 
 /** 旧 extend 建构（ deduct 读取容错） */
 function isOrderError(e: unknown): e is OrderError {
-  return typeof e === 'object' && e !== null && typeof (e as { code?: unknown }).code === 'string' && typeof (e as { message?: unknown }).message === 'string';
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    typeof (e as { code?: unknown }).code === 'string' &&
+    typeof (e as { message?: unknown }).message === 'string'
+  );
 }

@@ -18,7 +18,12 @@ import { err, ok, type Result } from '@crossbuy/utils';
 import { money, unixToIso } from '@crossbuy/utils';
 import { resolveAvatarUrl, stripOssFullHost } from './avatar';
 import type { MemberError } from './errors';
-import type { FavoriteRow, MemberAuthRecord, MemberProfileRow, MemberRepository } from './repository';
+import type {
+  FavoriteRow,
+  MemberAuthRecord,
+  MemberProfileRow,
+  MemberRepository,
+} from './repository';
 import type { LoginRateLimiter } from './login-rate-limiter';
 import type { PasswordVerifier } from './password-verifier';
 
@@ -50,10 +55,7 @@ export interface MemberService {
    * 入参先过 zod 契约：越界枚举（regType=3 / sex=2 / useType=9 / originPackageChoice=2）
    * 属**可预期失败** ⇒ 返回 Result 错误，不抛异常（docs/07）。
    */
-  updateProfile(
-    principal: Principal,
-    patch: unknown,
-  ): Promise<Result<void, MemberError>>;
+  updateProfile(principal: Principal, patch: unknown): Promise<Result<void, MemberError>>;
 
   /**
    * 登录（旧 `LoginMutation` 的规则复现，REST 入参）：
@@ -77,7 +79,9 @@ export interface MemberService {
   listFavorites(
     principal: Principal,
     query: unknown,
-  ): Promise<Result<{ items: Favorite[]; total: number; page: number; limit: number }, MemberError>>;
+  ): Promise<
+    Result<{ items: Favorite[]; total: number; page: number; limit: number }, MemberError>
+  >;
 
   /** 删除收藏（旧 DeleteFavoriteMutation：按 uid 收敛，删不到 = not_found） */
   deleteFavorite(principal: Principal, fid: number): Promise<Result<void, MemberError>>;
@@ -93,13 +97,22 @@ export interface MemberService {
     openid: string;
     username: string;
     phone: string | null;
-  }): Promise<Result<{ uid: number; uname: string; memberid: string | null; email: string | null }, MemberError>>;
+  }): Promise<
+    Result<
+      { uid: number; uname: string; memberid: string | null; email: string | null },
+      MemberError
+    >
+  >;
 
   /**
    * 会员金额因子（dfflag/dffee/utype——购物车金额计算窄投影；null = 会员不存在）。
    * webhook/跨域面（无 Principal）——调用方是 order 域组合根。
    */
-  getMoneyFactors(uid: number): Promise<Result<{ isDf: boolean; dffee: number; utype: number; uname: string | null }, MemberError>>;
+  getMoneyFactors(
+    uid: number,
+  ): Promise<
+    Result<{ isDf: boolean; dffee: number; utype: number; uname: string | null }, MemberError>
+  >;
 
   /**
    * 后台只读用户列表（docs/06 §四-4 admin「用户管理」只读起步；admin app 经本接口
@@ -128,10 +141,7 @@ export class MemberServiceImpl implements MemberService {
     protected readonly oss: { ossFullHost?: string; ossCdnUrl?: string } = {},
   ) {}
 
-  async updateProfile(
-    principal: Principal,
-    patch: unknown,
-  ): Promise<Result<void, MemberError>> {
+  async updateProfile(principal: Principal, patch: unknown): Promise<Result<void, MemberError>> {
     const parsed = memberProfileUpdateSchema.safeParse(patch);
     if (!parsed.success) {
       // 首个 issue 的 path 就是违规字段名（旧系统按字段返回 validation key）
@@ -151,7 +161,10 @@ export class MemberServiceImpl implements MemberService {
     // 1:1 复现；空配置 = 不剥离，禁把「没配 env」静默变成「改数据」）
     const data =
       parsed.data.avatar !== undefined
-        ? { ...parsed.data, avatar: stripOssFullHost(parsed.data.avatar, this.oss.ossFullHost ?? '') }
+        ? {
+            ...parsed.data,
+            avatar: stripOssFullHost(parsed.data.avatar, this.oss.ossFullHost ?? ''),
+          }
         : parsed.data;
 
     await this.repository.updateProfile(uid, data);
@@ -298,7 +311,11 @@ export class MemberServiceImpl implements MemberService {
     return ok({ items: rows.map((row) => this.toFavorite(row)), total, page, limit });
   }
 
-  async getMoneyFactors(uid: number): Promise<Result<{ isDf: boolean; dffee: number; utype: number; uname: string | null }, MemberError>> {
+  async getMoneyFactors(
+    uid: number,
+  ): Promise<
+    Result<{ isDf: boolean; dffee: number; utype: number; uname: string | null }, MemberError>
+  > {
     const factors = await this.repository.getMoneyFactors(uid);
     if (!factors) return err({ code: 'MEMBER_NOT_FOUND', message: '会员不存在' });
     return ok(factors);
@@ -309,7 +326,12 @@ export class MemberServiceImpl implements MemberService {
     openid: string;
     username: string;
     phone: string | null;
-  }): Promise<Result<{ uid: number; uname: string; memberid: string | null; email: string | null }, MemberError>> {
+  }): Promise<
+    Result<
+      { uid: number; uname: string; memberid: string | null; email: string | null },
+      MemberError
+    >
+  > {
     const existing = await this.repository.findOauthLogin(input.appid, input.openid);
     if (existing) return ok(existing);
 

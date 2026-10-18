@@ -17,8 +17,12 @@ export default defineConfig({
     // 无扩展名 import → 直接 alias 到源码（走 Vite 转译链）
     alias: {
       '@crossbuy/domain-member': fileURLToPath(new URL('../member/src/index.ts', import.meta.url)),
-      '@crossbuy/domain-purchase': fileURLToPath(new URL('../purchase/src/index.ts', import.meta.url)),
-      '@crossbuy/domain-send-order': fileURLToPath(new URL('../send-order/src/index.ts', import.meta.url)),
+      '@crossbuy/domain-purchase': fileURLToPath(
+        new URL('../purchase/src/index.ts', import.meta.url),
+      ),
+      '@crossbuy/domain-send-order': fileURLToPath(
+        new URL('../send-order/src/index.ts', import.meta.url),
+      ),
     },
   },
   test: {
@@ -28,9 +32,7 @@ export default defineConfig({
     // 单例/并发：DB 测试串行，避免同库互相踩
     fileParallelism: false,
     env: {
-      DATABASE_URL:
-        process.env.TEST_DATABASE_URL ??
-        'mysql://root:root@127.0.0.1:3306/taotaro',
+      DATABASE_URL: process.env.TEST_DATABASE_URL ?? 'mysql://root:root@127.0.0.1:3306/taotaro',
     },
   },
 });

@@ -29,18 +29,48 @@ const FORCE = process.argv.includes('--force');
 
 /** 12 域清单（docs/04 §3.1 + 2026-10-17 增补 admin；R3 归属列 = 拆分时的搬运目标） */
 const DOMAINS = [
-  { name: 'member', label: '会员', legacy: 'Services/Member、Models/User*', r3: 'CRM（+认证中心的用户资料）' },
-  { name: 'admin', label: '后台管理员/RBAC/操作日志', legacy: 'app/Admin、Models/AdminUser、dcat-admin 权限表族（R1 零新表唯一例外）', r3: '独立后台基座' },
+  {
+    name: 'member',
+    label: '会员',
+    legacy: 'Services/Member、Models/User*',
+    r3: 'CRM（+认证中心的用户资料）',
+  },
+  {
+    name: 'admin',
+    label: '后台管理员/RBAC/操作日志',
+    legacy: 'app/Admin、Models/AdminUser、dcat-admin 权限表族（R1 零新表唯一例外）',
+    r3: '独立后台基座',
+  },
   { name: 'order', label: '购物车/下单/订单', legacy: 'Services/Order', r3: 'oms' },
-  { name: 'purchase', label: '采购/1688/淘宝代购/砍价', legacy: 'Services/Order 内采购逻辑', r3: 'oms' },
+  {
+    name: 'purchase',
+    label: '采购/1688/淘宝代购/砍价',
+    legacy: 'Services/Order 内采购逻辑',
+    r3: 'oms',
+  },
   { name: 'send-order', label: '运单/合包/发货/发票', legacy: 'Services/SendOrder*', r3: 'oms' },
   { name: 'logistics', label: '物流轨迹/承运商', legacy: 'Services/Logistics', r3: 'oms' },
-  { name: 'platform', label: '外部平台对接（1688/淘宝全球购/Shopify/Rakuten/TheBase/Amazon）', legacy: 'Services/Platform*', r3: 'oms 对接层' },
-  { name: 'finance', label: '余额写/充值/支付/汇率', legacy: 'Services/Finance', r3: '财务系统（R3 落账本/对账）' },
+  {
+    name: 'platform',
+    label: '外部平台对接（1688/淘宝全球购/Shopify/Rakuten/TheBase/Amazon）',
+    legacy: 'Services/Platform*',
+    r3: 'oms 对接层',
+  },
+  {
+    name: 'finance',
+    label: '余额写/充值/支付/汇率',
+    legacy: 'Services/Finance',
+    r3: '财务系统（R3 落账本/对账）',
+  },
   { name: 'ticket', label: '工单/询价/留言', legacy: 'Services/Ticket', r3: 'CRM' },
   { name: 'content', label: 'CMS/博客/文章', legacy: 'Services/Cms', r3: 'CRM/官网站点' },
   { name: 'openapi', label: '会员开放 API', legacy: 'routes/api open 段', r3: '独立开放平台' },
-  { name: 'wms-gateway', label: '库存查询/到货同步接口面', legacy: 'Models/Wms', r3: 'wms（独立项目 own/wms，不并入）' },
+  {
+    name: 'wms-gateway',
+    label: '库存查询/到货同步接口面',
+    legacy: 'Models/Wms',
+    r3: 'wms（独立项目 own/wms，不并入）',
+  },
 ];
 
 const pascal = (name) =>
@@ -174,9 +204,13 @@ for (const d of DOMAINS) {
     mkdirSync(path.dirname(filePath), { recursive: true });
     writeFileSync(filePath, content);
   }
-  console.log(`[gen ] @crossbuy/domain-${d.name}（${pascal(d.name)}Repository / ${pascal(d.name)}ServiceImpl）`);
+  console.log(
+    `[gen ] @crossbuy/domain-${d.name}（${pascal(d.name)}Repository / ${pascal(d.name)}ServiceImpl）`,
+  );
   created += 1;
 }
 
 console.log(`\n完成：生成 ${created} 个域包，跳过 ${skipped} 个。`);
-console.log('下一步：pnpm install（链接 workspace 依赖）→ pnpm typecheck → node scripts/boundary-probe.mjs（守卫破坏验证）');
+console.log(
+  '下一步：pnpm install（链接 workspace 依赖）→ pnpm typecheck → node scripts/boundary-probe.mjs（守卫破坏验证）',
+);

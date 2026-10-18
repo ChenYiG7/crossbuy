@@ -21,9 +21,7 @@ export async function webhook1688Routes(app: ZodApp): Promise<void> {
       schema: {
         tags: ['webhook'],
         summary: '1688 订单事件回调（支付面；建单事件 S24 后置）',
-        body: z
-          .object({ message: z.string().optional() })
-          .passthrough(),
+        body: z.object({ message: z.string().optional() }).passthrough(),
         response: {
           200: webhook1688AckSchema,
           503: webhook1688AckSchema,

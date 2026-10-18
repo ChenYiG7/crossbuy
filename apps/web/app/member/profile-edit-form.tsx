@@ -135,8 +135,17 @@ export function ProfileEditForm({
         <TextField name="line" label="LINE" defaultValue={profile.line} />
         <TextField name="wechat" label="微信" defaultValue={profile.wechat} />
         <TextField name="address" label="地址" defaultValue={profile.address} />
-        <SelectField name="useType" label="会员类型" value={profile.useType} options={USE_TYPE_OPTIONS} />
-        <TextField name="preBuyFrequency" label="预计购买频率" defaultValue={profile.preBuyFrequency} />
+        <SelectField
+          name="useType"
+          label="会员类型"
+          value={profile.useType}
+          options={USE_TYPE_OPTIONS}
+        />
+        <TextField
+          name="preBuyFrequency"
+          label="预计购买频率"
+          defaultValue={profile.preBuyFrequency}
+        />
         <TextField name="preBuyAmount" label="预计采购金额" defaultValue={profile.preBuyAmount} />
         <TextField name="avatar" label="头像 URL" defaultValue={profile.avatar} />
         <SelectField
@@ -163,16 +172,32 @@ export function ProfileEditForm({
         />
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField name="companyName" label="公司名（汉字）" defaultValue={profile.companyName} />
-          <TextField name="companyNameEng" label="公司名（字母）" defaultValue={profile.companyNameEng} />
-          <TextField name="companyManager" label="负责人（汉字）" defaultValue={profile.companyManager} />
+          <TextField
+            name="companyNameEng"
+            label="公司名（字母）"
+            defaultValue={profile.companyNameEng}
+          />
+          <TextField
+            name="companyManager"
+            label="负责人（汉字）"
+            defaultValue={profile.companyManager}
+          />
           <TextField
             name="companyManagerEng"
             label="负责人（字母）"
             defaultValue={profile.companyManagerEng}
           />
-          <TextField name="companyCode" label="公司编号 JASTPRO" defaultValue={profile.companyCode} />
+          <TextField
+            name="companyCode"
+            label="公司编号 JASTPRO"
+            defaultValue={profile.companyCode}
+          />
           <TextField name="companyTel" label="公司电话" defaultValue={profile.companyTel} />
-          <TextField name="companyAddress" label="公司地址（汉字）" defaultValue={profile.companyAddress} />
+          <TextField
+            name="companyAddress"
+            label="公司地址（汉字）"
+            defaultValue={profile.companyAddress}
+          />
           <TextField
             name="companyAddressEng"
             label="公司地址（字母）"

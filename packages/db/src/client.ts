@@ -18,11 +18,9 @@ const globalForPrisma = globalThis as unknown as {
   redesignPrisma?: RedesignPrismaClient;
 };
 
-export const legacyPrisma =
-  globalForPrisma.legacyPrisma ?? new LegacyPrismaClient();
+export const legacyPrisma = globalForPrisma.legacyPrisma ?? new LegacyPrismaClient();
 
-export const redesignPrisma =
-  globalForPrisma.redesignPrisma ?? new RedesignPrismaClient();
+export const redesignPrisma = globalForPrisma.redesignPrisma ?? new RedesignPrismaClient();
 
 if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.legacyPrisma = legacyPrisma;

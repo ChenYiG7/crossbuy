@@ -9,7 +9,11 @@ const adminConfigSchema = z.object({
   /** 后台会话 JWT 签名密钥；**production 必填** */
   AUTH_SESSION_SECRET: z.string().min(16).optional(),
   /** 后台会话 TTL（秒）；旧 dcat session 2 小时空闲过期——先取同量级保守值 */
-  AUTH_SESSION_TTL_SEC: z.coerce.number().int().positive().default(8 * 60 * 60),
+  AUTH_SESSION_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(8 * 60 * 60),
 });
 
 export type AdminConfig = z.infer<typeof adminConfigSchema>;
@@ -29,7 +33,9 @@ export function getAdminConfig(): AdminConfig {
     throw new Error(`apps/admin 环境变量校验失败：\n${detail}`);
   }
   if (parsed.data.NODE_ENV === 'production' && !parsed.data.AUTH_SESSION_SECRET) {
-    throw new Error('AUTH_SESSION_SECRET 未设置：生产环境必须配置后台会话签名密钥（见 .env.example）');
+    throw new Error(
+      'AUTH_SESSION_SECRET 未设置：生产环境必须配置后台会话签名密钥（见 .env.example）',
+    );
   }
   cached = parsed.data;
   return cached;

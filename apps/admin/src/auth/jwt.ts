@@ -15,8 +15,7 @@ export interface AdminTokenPayload {
 }
 
 export type TokenVerifyOutcome =
-  | { ok: true; payload: AdminTokenPayload }
-  | { ok: false; code: 'MALFORMED_TOKEN' | 'EXPIRED' };
+  { ok: true; payload: AdminTokenPayload } | { ok: false; code: 'MALFORMED_TOKEN' | 'EXPIRED' };
 
 export async function signAdminToken(adminId: number, ttlSeconds: number): Promise<string> {
   return new SignJWT({ kind: 'admin' })

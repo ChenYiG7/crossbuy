@@ -33,9 +33,13 @@ process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
 // ping 连通性探针（部署健康检查用，保留；真实 Job 走下面的 orderCreated）
-new Worker(QUEUES.ping, async (job) => {
-  logger.info({ jobId: job.id, data: job.data }, 'ping job consumed');
-}, { connection });
+new Worker(
+  QUEUES.ping,
+  async (job) => {
+    logger.info({ jobId: job.id, data: job.data }, 'ping job consumed');
+  },
+  { connection },
+);
 
 // 下单成功邮件（#16② 真实 Job：enqueueOrderCreated → 此处消费 → 发邮件）
 const orderCreatedWorker = new Worker<OrderCreatedJobData>(
@@ -55,7 +59,12 @@ workers.push(orderCreatedWorker);
 
 // 启动前先连上 Redis（lazyConnect：不主动连，第一笔命令前才连，但 worker 要尽早暴露连接问题）
 void waitForRedis(redis)
-  .then(() => logger.info({ queues: Object.values(QUEUES), defaultJobOptions: DEFAULT_JOB_OPTIONS }, 'worker up'))
+  .then(() =>
+    logger.info(
+      { queues: Object.values(QUEUES), defaultJobOptions: DEFAULT_JOB_OPTIONS },
+      'worker up',
+    ),
+  )
   .catch((e) => {
     logger.error({ err: (e as Error).message }, 'worker 启动失败：Redis 不可达');
     process.exit(1);

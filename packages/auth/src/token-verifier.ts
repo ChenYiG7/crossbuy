@@ -13,7 +13,8 @@ import type { Principal } from './principal';
  */
 
 /** 鉴权失败原因（可预期分支，走 Result 不抛异常） */
-export type AuthErrorCode = 'MISSING_TOKEN' | 'MALFORMED_TOKEN' | 'EXPIRED' | 'REVOKED' | 'UNTRUSTED_ISSUER' | 'INTERNAL';
+export type AuthErrorCode =
+  'MISSING_TOKEN' | 'MALFORMED_TOKEN' | 'EXPIRED' | 'REVOKED' | 'UNTRUSTED_ISSUER' | 'INTERNAL';
 
 export interface AuthError {
   readonly code: AuthErrorCode;

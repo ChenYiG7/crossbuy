@@ -1,4 +1,9 @@
-import { shipmentChromeSchema, type ShipmentBatchItem, type ShipmentBatchResult, type ShipmentChromeInput } from '@crossbuy/contract';
+import {
+  shipmentChromeSchema,
+  type ShipmentBatchItem,
+  type ShipmentBatchResult,
+  type ShipmentChromeInput,
+} from '@crossbuy/contract';
 import type { Db, OrderRepository } from './repository';
 
 /**
@@ -40,12 +45,24 @@ export class ShipmentService {
 
     try {
       await this.deps.runTx(async (tx) => {
-        await this.deps.repository.applyShipment(tx, oids, { state: 3, waytime: nowSec, expressno: expressNo });
-        await this.attachArrivalRecords(tx, expressNo.split(' ').map((no) => ({ expressNo: no, companyNo: '' })), oids, nowSec);
+        await this.deps.repository.applyShipment(tx, oids, {
+          state: 3,
+          waytime: nowSec,
+          expressno: expressNo,
+        });
+        await this.attachArrivalRecords(
+          tx,
+          expressNo.split(' ').map((no) => ({ expressNo: no, companyNo: '' })),
+          oids,
+          nowSec,
+        );
       });
     } catch (e) {
       // 旧 rollback → 40000 + error message（1:1）
-      return { code: 40000, msg: `更新物流单号失败：${e instanceof Error ? e.message : String(e)}` };
+      return {
+        code: 40000,
+        msg: `更新物流单号失败：${e instanceof Error ? e.message : String(e)}`,
+      };
     }
     return { code: 200 };
   }
@@ -73,11 +90,15 @@ export class ShipmentService {
       const expressStr = expressNos.map((e) => e.expressNo).join(' ');
 
       // 已付款 + 单号为空 → 发货推进（state 2→3 + waytime）
-      let oids = (await this.deps.repository.listPaidWithoutExpressno(db, tid, platform)).map((o) => o.oid);
+      let oids = (await this.deps.repository.listPaidWithoutExpressno(db, tid, platform)).map(
+        (o) => o.oid,
+      );
       let updateData: { state?: number; waytime?: number; expressno: string };
       if (oids.length === 0) {
         // 已发货 + 单号不一致 → 只改单号（isDelayedFix 日志差异 R1 略——S27）
-        oids = (await this.deps.repository.listSentWithDifferentExpressno(db, tid, platform, expressStr)).map((o) => o.oid);
+        oids = (
+          await this.deps.repository.listSentWithDifferentExpressno(db, tid, platform, expressStr)
+        ).map((o) => o.oid);
         updateData = { expressno: expressStr };
       } else {
         updateData = { state: 3, waytime: nowSec, expressno: expressStr };
@@ -85,8 +106,17 @@ export class ShipmentService {
 
       if (oids.length === 0) {
         // 幂等判定：tid+平台全部订单单号归一化后逐单一致
-        const existing = await this.deps.repository.listExpressnoByTidAndPlatform(db, tid, platform);
-        const alreadySynced = existing.length > 0 && existing.every((no) => normalizeExpressNoString(`${no ?? ''}`) === normalizeExpressNoString(expressStr));
+        const existing = await this.deps.repository.listExpressnoByTidAndPlatform(
+          db,
+          tid,
+          platform,
+        );
+        const alreadySynced =
+          existing.length > 0 &&
+          existing.every(
+            (no) =>
+              normalizeExpressNoString(`${no ?? ''}`) === normalizeExpressNoString(expressStr),
+          );
         if (alreadySynced) {
           idempotentTids.push(tid);
         } else {
@@ -139,6 +169,9 @@ export class ShipmentService {
 
 /** 旧 normalizeExpressNoString：trim → 去空 → 去重 → 排序 → 空格拼接 */
 export function normalizeExpressNoString(expressNo: string): string {
-  const parts = expressNo.split(' ').map((p) => p.trim()).filter((p) => p !== '');
+  const parts = expressNo
+    .split(' ')
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
   return [...new Set(parts)].sort().join(' ');
 }

@@ -21,7 +21,10 @@ export function money(value: number | string | null | undefined): number {
 }
 
 /** 旧 moneyEquals：按分比较（int(round(l*100)) === int(round(r*100))） */
-export function moneyEquals(left: number | string | null | undefined, right: number | string | null | undefined): boolean {
+export function moneyEquals(
+  left: number | string | null | undefined,
+  right: number | string | null | undefined,
+): boolean {
   const l = new Decimal(left ?? 0).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   const r = new Decimal(right ?? 0).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
   return l.equals(r);

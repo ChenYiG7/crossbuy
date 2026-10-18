@@ -13,9 +13,17 @@ const webConfigSchema = z.object({
   /** 会话 JWT 签名密钥；**production 必填**（缺失 = 无法签发/校验会话） */
   AUTH_SESSION_SECRET: z.string().min(16).optional(),
   /** 普通会话 TTL（秒） */
-  AUTH_SESSION_TTL_SEC: z.coerce.number().int().positive().default(7 * 24 * 60 * 60),
+  AUTH_SESSION_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60),
   /** 「记住我」会话 TTL（秒） */
-  AUTH_SESSION_REMEMBER_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
+  AUTH_SESSION_REMEMBER_TTL_SEC: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(30 * 24 * 60 * 60),
   /**
    * 头像存储怪癖三件套（旧 EditUserInfoMutation / UserInfoType::resolveAvatarField，
    * 1:1 复现，见 domains/member/src/avatar.ts + docs/plans/08 S10）：
@@ -58,7 +66,9 @@ export function sessionSecret(): Uint8Array {
   if (!config.AUTH_SESSION_SECRET) {
     if (!devWarned) {
       devWarned = true;
-      console.warn('[auth] AUTH_SESSION_SECRET 未设置，使用开发期固定密钥——仅限本地开发，禁止上生产');
+      console.warn(
+        '[auth] AUTH_SESSION_SECRET 未设置，使用开发期固定密钥——仅限本地开发，禁止上生产',
+      );
     }
     return new TextEncoder().encode(DEV_FALLBACK_SECRET);
   }

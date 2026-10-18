@@ -1,7 +1,15 @@
 'use client';
 
 import type { MemberProfile } from '@crossbuy/contract';
-import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crossbuy/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@crossbuy/ui';
 import { LogoutButton } from './logout-button';
 
 /** useType 词表（旧 App\Models\User：usetype 1..5） */
@@ -51,9 +59,7 @@ export function ProfileView({ profile, onEdit }: { profile: MemberProfile; onEdi
           <Field label="余额（CNY）" value={`¥ ${profile.money}`} />
           <Field
             label="会员类型"
-            value={
-              profile.useType != null ? (USE_TYPE_LABEL[profile.useType] ?? null) : null
-            }
+            value={profile.useType != null ? (USE_TYPE_LABEL[profile.useType] ?? null) : null}
           />
           <Field label="账号类型" value={profile.regType === 1 ? '公司' : '个人'} />
           <Field label="姓名" value={profile.trueName} />

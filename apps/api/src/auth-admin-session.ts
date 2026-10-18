@@ -23,7 +23,8 @@ export function adminSessionSecret(configured: string | undefined): Uint8Array {
 
 function readToken(req: FastifyRequest): string | null {
   const auth = req.headers.authorization;
-  if (typeof auth === 'string' && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, '').trim();
+  if (typeof auth === 'string' && /^Bearer\s+/i.test(auth))
+    return auth.replace(/^Bearer\s+/i, '').trim();
   const cookieHeader = req.headers.cookie;
   if (typeof cookieHeader === 'string') {
     for (const part of cookieHeader.split(';')) {
@@ -35,7 +36,10 @@ function readToken(req: FastifyRequest): string | null {
 }
 
 /** 校验后台会话 → adminId；无效/过期/形态不对一律 null（上层统一 401） */
-export async function resolveAdminId(req: FastifyRequest, secret: string | undefined): Promise<number | null> {
+export async function resolveAdminId(
+  req: FastifyRequest,
+  secret: string | undefined,
+): Promise<number | null> {
   const token = readToken(req);
   if (!token) return null;
   try {

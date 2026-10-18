@@ -12,7 +12,12 @@ import {
 import type { OrderError } from './errors';
 import { orderError } from './errors';
 import { DF_CONFIGS, DF_FLAG_1, ORDER_FLAGS, ORDER_TYPE, RECORD, UTYPE } from './legacy-constants';
-import { calculateTierPrices, countMoneyWithDeductions, type CartMoneyBreakdown, type SupplierCatalogPort } from './cart';
+import {
+  calculateTierPrices,
+  countMoneyWithDeductions,
+  type CartMoneyBreakdown,
+  type SupplierCatalogPort,
+} from './cart';
 import { parseSkuName } from './list-helpers';
 import type { CartForOrderRow, CreateOrderData, OrderRepository, Tx } from './repository';
 
@@ -48,7 +53,10 @@ export interface GoodsPriceRefreshPort {
  * R1 SDK 未迁移 → 恒 null（= 旧「获取失败」分支，跳过归一化，不阻断下单）。
  */
 export interface SkuTranslationPort {
-  attributesFor(goodsId: string, skuId: string): Promise<Array<{ name: string; value: string }> | null>;
+  attributesFor(
+    goodsId: string,
+    skuId: string,
+  ): Promise<Array<{ name: string; value: string }> | null>;
 }
 
 /** 旧 UserBenefitService::previewFeeDeduct 出参（benefit_id 非空才核销） */
@@ -80,9 +88,17 @@ export interface ProcessLockPort {
 /** 事务后副作用端口（Job / 邮件 / MNS；旧 dispatch 在事务内，本域改为 AFTER_COMMIT） */
 export interface PlaceOrderSideEffectPort {
   /** 旧 ProcessCreateEmail::dispatch（MAIL_TYPE_CART_TO_ORDER） */
-  enqueueCartToOrderEmail(input: { uid: number; flag: number | null; total: number }): Promise<void>;
+  enqueueCartToOrderEmail(input: {
+    uid: number;
+    flag: number | null;
+    total: number;
+  }): Promise<void>;
   /** 旧 MnsMessageService::enqueueOrderCreated */
-  enqueueOrderCreated(input: { uid: number; orderIds: number[]; money: CartMoneyBreakdown }): Promise<void>;
+  enqueueOrderCreated(input: {
+    uid: number;
+    orderIds: number[];
+    money: CartMoneyBreakdown;
+  }): Promise<void>;
   /** 旧 ProcessCompletionGoodsInfo::dispatch（1688/淘宝 且 缺图或缺店铺名） */
   enqueueCompletionGoodsInfo(oid: number): Promise<void>;
   /** 旧 ProcessTranslateOrderGoodsInfo::dispatch（每单必投） */
@@ -94,24 +110,27 @@ export interface PlaceOrderSideEffectPort {
  * 与旧 `SendOrder::create` 同事务语义；R3 拆库时改为跨域端口 + 事务消息）。
  */
 export interface DaifaSendOrderPort {
-  createForDaifa(input: {
-    uid: number;
-    uname: string;
-    memberid: string | null;
-    email: string | null;
-    dfsendaddress: string;
-    dfsendname: string;
-    dfsendtel: string;
-    receiver: {
-      consignee: string | null;
-      address: string | null;
-      tel: string | null;
-      zip: string | null;
-      remark: string | null;
-      country: string | null;
-      deliveryname: string | null;
-    };
-  }, tx?: Tx): Promise<{ sid: number }>;
+  createForDaifa(
+    input: {
+      uid: number;
+      uname: string;
+      memberid: string | null;
+      email: string | null;
+      dfsendaddress: string;
+      dfsendname: string;
+      dfsendtel: string;
+      receiver: {
+        consignee: string | null;
+        address: string | null;
+        tel: string | null;
+        zip: string | null;
+        remark: string | null;
+        country: string | null;
+        deliveryname: string | null;
+      };
+    },
+    tx?: Tx,
+  ): Promise<{ sid: number }>;
   updateSendOrderOids(sid: number, oids: number[], tx?: Tx): Promise<void>;
 }
 
@@ -227,7 +246,10 @@ function buildSkuNameFromProps(props: Array<{ name: string; value: string }>): s
  * 旧 skuLockSuffix：`shangpin_sku` 优先，空则 md5(去空白的 sku_name)；
  * 最终 `uid_md5(goodsid|skuId)`。
  */
-export function skuLockSuffix(uid: number, cart: Pick<CartForOrderRow, 'goodsid' | 'shangpin_sku' | 'sku_name'>): string {
+export function skuLockSuffix(
+  uid: number,
+  cart: Pick<CartForOrderRow, 'goodsid' | 'shangpin_sku' | 'sku_name'>,
+): string {
   let skuId = (cart.shangpin_sku ?? '').trim();
   if (skuId === '') {
     const normalized = (cart.sku_name ?? '').replace(/\s|&nbsp;/g, '');
@@ -268,7 +290,10 @@ export class PlaceOrderService {
    * 阶梯价回写 → sku 归一化 →（事务内）行锁重读 → 权益预览 → 金额 → 余额守卫 →
    * 一件代发运单 → 逐行建单扣款删车 →（事务后）Job/邮件/MNS。
    */
-  async placeOrders(principal: Principal, raw: unknown): Promise<Result<PlaceOrderResult, OrderError>> {
+  async placeOrders(
+    principal: Principal,
+    raw: unknown,
+  ): Promise<Result<PlaceOrderResult, OrderError>> {
     if (principal.kind !== 'member') return err(orderError('NO_PERMISSIONS'));
     const uid = Number(principal.subject);
     if (!Number.isInteger(uid) || uid <= 0) return err(orderError('NO_PERMISSIONS'));
@@ -282,7 +307,14 @@ export class PlaceOrderService {
 
     // ① 装载（旧 `explode(',', $args['ids'])`；非数字 gid 旧 MySQL 隐式转 0 匹配不到行——
     //    这里直接过滤，等价且不让 Prisma 抛类型错）
-    const gids = [...new Set(input.ids.split(',').map((v) => Number(v.trim())).filter((v) => Number.isInteger(v) && v > 0))];
+    const gids = [
+      ...new Set(
+        input.ids
+          .split(',')
+          .map((v) => Number(v.trim()))
+          .filter((v) => Number.isInteger(v) && v > 0),
+      ),
+    ];
     const carts = await this.deps.repository.listCartsForOrder(db, gids);
     if (carts.length === 0) return err(orderError('CART_NOT_FOUND'));
 
@@ -300,8 +332,13 @@ export class PlaceOrderService {
       }
     }
     const lockKeys = [
-      batchProcessLockKey(uid, carts.map((c) => c.gid)),
-      ...[...new Set(carts.map((c) => `create_order_process_${skuLockSuffix(uid, cartKeyOf(c))}`))].sort(),
+      batchProcessLockKey(
+        uid,
+        carts.map((c) => c.gid),
+      ),
+      ...[
+        ...new Set(carts.map((c) => `create_order_process_${skuLockSuffix(uid, cartKeyOf(c))}`)),
+      ].sort(),
     ];
     const held: string[] = [];
     for (const key of lockKeys) {
@@ -318,7 +355,10 @@ export class PlaceOrderService {
 
       // 旧 putSkuCooldowns（成功后落冷却，30s 内同规格禁止再下单）
       for (const cart of carts) {
-        await this.deps.lockPort.put(`create_order_cooldown_${skuLockSuffix(uid, cart)}`, this.deps.skuCooldownSeconds);
+        await this.deps.lockPort.put(
+          `create_order_cooldown_${skuLockSuffix(uid, cart)}`,
+          this.deps.skuCooldownSeconds,
+        );
       }
 
       // 事务后副作用（旧 dispatch 在事务内——回滚仍会投递；本域按铁律 7 移出事务，见 S33）
@@ -328,8 +368,10 @@ export class PlaceOrderService {
         orderIds: placed.orderIds,
         money: placed.money,
       });
-      for (const oid of placed.completionOids) await this.deps.sideEffects.enqueueCompletionGoodsInfo(oid);
-      for (const oid of placed.orderIds) await this.deps.sideEffects.enqueueTranslateOrderGoodsInfo(oid);
+      for (const oid of placed.completionOids)
+        await this.deps.sideEffects.enqueueCompletionGoodsInfo(oid);
+      for (const oid of placed.orderIds)
+        await this.deps.sideEffects.enqueueTranslateOrderGoodsInfo(oid);
 
       return ok({
         orderIds: placed.orderIds,
@@ -396,7 +438,11 @@ export class PlaceOrderService {
 
     const placed = await this.deps.runTx(async (tx) => {
       // ⑧ 事务内行锁重读（旧 lockCartsForUpdate：数量不符 = cart.not_found）
-      const locked = await this.deps.repository.lockCartsForUpdate(tx, uid, carts.map((c) => c.gid));
+      const locked = await this.deps.repository.lockCartsForUpdate(
+        tx,
+        uid,
+        carts.map((c) => c.gid),
+      );
       if (locked.length !== new Set(carts.map((c) => c.gid)).size) {
         throw orderError('CART_NOT_FOUND');
       }
@@ -438,7 +484,11 @@ export class PlaceOrderService {
         const dfsendaddress = input.sendAddress ?? '';
         const dfsendtel = input.sendTel ?? '';
         const dfsendname = input.sendName ?? '';
-        await this.deps.repository.updateDfSendInfo(tx, uid, { dfsendaddress, dfsendtel, dfsendname });
+        await this.deps.repository.updateDfSendInfo(tx, uid, {
+          dfsendaddress,
+          dfsendtel,
+          dfsendname,
+        });
 
         if (input.consignee) {
           const sendOrder = await this.deps.sendOrderPort.createForDaifa(
@@ -493,7 +543,11 @@ export class PlaceOrderService {
         }
 
         // 旧 updateLogisticDomesticForTransshipment（转运 + 有单号）
-        if (order.type === ORDER_TYPE.ZHUANYUN && order.expressno && order.expressno.trim() !== '') {
+        if (
+          order.type === ORDER_TYPE.ZHUANYUN &&
+          order.expressno &&
+          order.expressno.trim() !== ''
+        ) {
           await this.syncArrivalForTransshipment(tx, order.oid, order.expressno, clock);
         }
 
@@ -534,7 +588,9 @@ export class PlaceOrderService {
   ): Promise<CreateOrderData> {
     const type = cart.type ?? 0;
     // 卖家名：事务外经 purchase 端口取的店铺 title ?: nickname，回退购物车原 goodsseller（TODO #17 方案①）
-    const shopId = cart.supplier_product_id ? (ctx.products.get(cart.supplier_product_id)?.shop_id ?? null) : null;
+    const shopId = cart.supplier_product_id
+      ? (ctx.products.get(cart.supplier_product_id)?.shop_id ?? null)
+      : null;
     const shop = shopId !== null ? ctx.shopMap.get(shopId) : undefined;
     const goodsSeller = (shop?.title || shop?.nickname || cart.goodsseller) ?? '';
 
@@ -543,7 +599,11 @@ export class PlaceOrderService {
     let agobginfo: string | null | undefined;
     if (cart.goodsid && cart.goodsid !== '') {
       const goodsType = cart.goodssite === GOODS_SITE_1688 ? 1 : 0;
-      const bargain = await this.deps.repository.findBargain(tx, toolsRemoveBlank(cart.goodsid), goodsType);
+      const bargain = await this.deps.repository.findBargain(
+        tx,
+        toolsRemoveBlank(cart.goodsid),
+        goodsType,
+      );
       if (bargain) {
         agobgflag = 1;
         agobginfo = bargain.bgprice === null ? null : String(bargain.bgprice);
@@ -556,7 +616,10 @@ export class PlaceOrderService {
       state = cart.expressno && cart.expressno.trim() !== '' ? OrderStatus.SEND : OrderStatus.PAID;
     }
 
-    const extendJson = ctx.deductedServiceFee === null ? undefined : JSON.stringify({ deducted_service_fee: ctx.deductedServiceFee });
+    const extendJson =
+      ctx.deductedServiceFee === null
+        ? undefined
+        : JSON.stringify({ deducted_service_fee: ctx.deductedServiceFee });
 
     return {
       uid: cart.uid,
@@ -637,8 +700,16 @@ export class PlaceOrderService {
   }
 
   /** 旧 updateLogisticDomesticForTransshipment（DgArrival firstOrCreate + pivot 关联） */
-  private async syncArrivalForTransshipment(tx: Tx, oid: number, expressno: string, clock: () => Date): Promise<void> {
-    const expressNos = expressno.trim().split(' ').filter((v) => v !== '');
+  private async syncArrivalForTransshipment(
+    tx: Tx,
+    oid: number,
+    expressno: string,
+    clock: () => Date,
+  ): Promise<void> {
+    const expressNos = expressno
+      .trim()
+      .split(' ')
+      .filter((v) => v !== '');
     for (const no of expressNos) {
       const arrival = await this.deps.repository.firstOrCreateArrival(tx, {
         expressno: no,
@@ -657,15 +728,32 @@ export class PlaceOrderService {
    */
   private async payOrder(
     tx: Tx,
-    order: { oid: number; goodsurl: string | null; goodsname: string; goodssite: string | null; type: number | null; goodsprice: number; goodsnum: number | null; extend: string | null },
-    user: { uid: number; uname: string; dfflag: number | null; utype: number | null; validity: number; dffee: number | null },
+    order: {
+      oid: number;
+      goodsurl: string | null;
+      goodsname: string;
+      goodssite: string | null;
+      type: number | null;
+      goodsprice: number;
+      goodsnum: number | null;
+      extend: string | null;
+    },
+    user: {
+      uid: number;
+      uname: string;
+      dfflag: number | null;
+      utype: number | null;
+      validity: number;
+      dffee: number | null;
+    },
     balance: number,
     clock: () => Date,
   ): Promise<number> {
     const type = order.type ?? 0;
     const goodsNum = order.goodsnum ?? 0;
     const goodsprice = Number(order.goodsprice);
-    const userCharged = user.validity >= todayStartSec(clock()) && user.utype === this.deps.utypeCharged;
+    const userCharged =
+      user.validity >= todayStartSec(clock()) && user.utype === this.deps.utypeCharged;
 
     let tempmoney: number;
     let ordflag: number;
@@ -732,7 +820,10 @@ export class PlaceOrderService {
       if (props.length === 0) continue;
       if (!props.some((p) => containsJapanese(p.name) || containsJapanese(p.value))) continue;
 
-      const normalized = await this.deps.skuTranslationPort.attributesFor(cart.goodsid, cart.shangpin_sku ?? '');
+      const normalized = await this.deps.skuTranslationPort.attributesFor(
+        cart.goodsid,
+        cart.shangpin_sku ?? '',
+      );
       if (!normalized || normalized.length === 0) continue;
       const skuName = buildSkuNameFromProps(normalized);
       if (skuName === '') continue;
@@ -745,7 +836,9 @@ export class PlaceOrderService {
 type LockedCartRow = Awaited<ReturnType<OrderRepository['lockCartsForUpdate']>>[number];
 
 /** 锁键用购物车行（结构化取子集，避免把整行传进纯函数） */
-function cartKeyOf(c: CartForOrderRow): Pick<CartForOrderRow, 'goodsid' | 'shangpin_sku' | 'sku_name'> {
+function cartKeyOf(
+  c: CartForOrderRow,
+): Pick<CartForOrderRow, 'goodsid' | 'shangpin_sku' | 'sku_name'> {
   return { goodsid: c.goodsid, shangpin_sku: c.shangpin_sku, sku_name: c.sku_name };
 }
 

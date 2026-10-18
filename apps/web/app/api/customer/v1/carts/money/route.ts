@@ -17,7 +17,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const parsed = cartMoneyQuerySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams));
   if (!parsed.success) {
-    return NextResponse.json(envelopeFail(400, parsed.error.issues[0]?.message ?? '参数错误', traceId), { status: 400 });
+    return NextResponse.json(
+      envelopeFail(400, parsed.error.issues[0]?.message ?? '参数错误', traceId),
+      { status: 400 },
+    );
   }
 
   const result = await getCartService().getCartMoney(principal, parsed.data);

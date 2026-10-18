@@ -1,4 +1,9 @@
-import { LegacyPrismaRuntime, legacyPrisma, type LegacyPrisma, type LegacyPrismaClient } from '@crossbuy/db';
+import {
+  LegacyPrismaRuntime,
+  legacyPrisma,
+  type LegacyPrisma,
+  type LegacyPrismaClient,
+} from '@crossbuy/db';
 
 /**
  * order 域 repository 防腐层（docs/04 §5 / docs/07）。
@@ -39,10 +44,30 @@ export type CreateCartData = Partial<LegacyPrisma.dg_cartCreateInput>;
  * 旧系统靠 MySQL 非严格模式落 `''`，此处显式等价复现（见 createCart 注释）。
  */
 const CART_NO_DEFAULT_EMPTY_COLS = {
-  yanhuofba: '', yanhuojinyun: '', yanhuozengzhi: '', yanhuoasin: '', yanhuofnsku: '',
-  baozhuang: '', hbbaozhuang: '', baonum: '', SKU: '', FNSKU: '', name: '', amazon: '',
-  putong: '', fuzhuang: '', tiebiao: '', huanbaoz: '', qita: '',
-  var1: '', var2: '', var3: '', var4: '', var5: '', var6: '', var7: '',
+  yanhuofba: '',
+  yanhuojinyun: '',
+  yanhuozengzhi: '',
+  yanhuoasin: '',
+  yanhuofnsku: '',
+  baozhuang: '',
+  hbbaozhuang: '',
+  baonum: '',
+  SKU: '',
+  FNSKU: '',
+  name: '',
+  amazon: '',
+  putong: '',
+  fuzhuang: '',
+  tiebiao: '',
+  huanbaoz: '',
+  qita: '',
+  var1: '',
+  var2: '',
+  var3: '',
+  var4: '',
+  var5: '',
+  var6: '',
+  var7: '',
 } as const;
 
 /**
@@ -52,17 +77,77 @@ const CART_NO_DEFAULT_EMPTY_COLS = {
  *   改列名必须同步改这里，否则 R1 与旧系统会静默分叉。
  */
 export const CART_FILLABLE: ReadonlySet<string> = new Set([
-  'tid', 'anonymous', 'uid', 'uname', 'supplier_product_id', 'goodsurl', 'goodsname',
-  'goodsprice', 'one_piece_price', 'offer_price', 'retail_price', 'sendprice', 'goodsnum',
-  'goodsimg', 'goodssize', 'goodscolor', 'goodsseller', 'min_order_quantity', 'sellerurl',
-  'goodssite', 'siteurl', 'expressno', 'type', 'goodsremark', 'addtime', 'goodsid',
-  'proprice', 'TermQty', 'TermPrice', 'TermShipping', 'inspection', 'ship', 'sku_name',
-  'yanhuofba', 'yanhuojinyun', 'yanhuozengzhi', 'yanhuoasin', 'yanhuofnsku',
-  'baozhuang', 'hbbaozhuang', 'baonum', 'SKU', 'FNSKU', 'shangpin_fnsku', 'shangpin_sku',
-  'name', 'shangpin_name', 'shangpin_amazon', 'amazon', 'putong', 'fuzhuang', 'tiebiao',
-  'huanbaoz', 'qita', 'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7', 'var8',
-  'var9', 'var10', 'var11', 'var12', 'outid', 'goods_name_trans', 'sku_trans',
-  'add_from', 'add_from_memo',
+  'tid',
+  'anonymous',
+  'uid',
+  'uname',
+  'supplier_product_id',
+  'goodsurl',
+  'goodsname',
+  'goodsprice',
+  'one_piece_price',
+  'offer_price',
+  'retail_price',
+  'sendprice',
+  'goodsnum',
+  'goodsimg',
+  'goodssize',
+  'goodscolor',
+  'goodsseller',
+  'min_order_quantity',
+  'sellerurl',
+  'goodssite',
+  'siteurl',
+  'expressno',
+  'type',
+  'goodsremark',
+  'addtime',
+  'goodsid',
+  'proprice',
+  'TermQty',
+  'TermPrice',
+  'TermShipping',
+  'inspection',
+  'ship',
+  'sku_name',
+  'yanhuofba',
+  'yanhuojinyun',
+  'yanhuozengzhi',
+  'yanhuoasin',
+  'yanhuofnsku',
+  'baozhuang',
+  'hbbaozhuang',
+  'baonum',
+  'SKU',
+  'FNSKU',
+  'shangpin_fnsku',
+  'shangpin_sku',
+  'name',
+  'shangpin_name',
+  'shangpin_amazon',
+  'amazon',
+  'putong',
+  'fuzhuang',
+  'tiebiao',
+  'huanbaoz',
+  'qita',
+  'var1',
+  'var2',
+  'var3',
+  'var4',
+  'var5',
+  'var6',
+  'var7',
+  'var8',
+  'var9',
+  'var10',
+  'var11',
+  'var12',
+  'outid',
+  'goods_name_trans',
+  'sku_trans',
+  'add_from',
+  'add_from_memo',
 ]);
 
 export class OrderRepository {
@@ -144,7 +229,11 @@ export class OrderRepository {
   }
 
   /** 单独给接收者回写总额（旧 `where(oid)->update(['sendprice' => total])`）。**含软删**。 */
-  async setSendprice(tx: LegacyPrisma.TransactionClient, oid: number, sendprice: number): Promise<void> {
+  async setSendprice(
+    tx: LegacyPrisma.TransactionClient,
+    oid: number,
+    sendprice: number,
+  ): Promise<void> {
     await tx.dg_order.updateMany({ where: { oid }, data: { sendprice } });
   }
 
@@ -152,7 +241,11 @@ export class OrderRepository {
    * 取消收尾更新（旧 `$order->update(['bargainprice' => 0, 'state' => 10, 'uptime' => time()])`）。
    * 金额字段变更会触发旧模型的同步事件——新系统由 service 显式调 amount-sync（deferred flush）。
    */
-  async finalizeCancel(tx: LegacyPrisma.TransactionClient, oid: number, uptimeSec: number): Promise<void> {
+  async finalizeCancel(
+    tx: LegacyPrisma.TransactionClient,
+    oid: number,
+    uptimeSec: number,
+  ): Promise<void> {
     // updateMany：Prisma update 会回读全列（含本地 dump 缺失的生产新列 → P2022），返回值无人消费
     await tx.dg_order.updateMany({
       where: { oid },
@@ -229,7 +322,12 @@ export class OrderRepository {
    * uptime=now、extend JSON_SET payTime。**幂等性 = 条件本身**（已推进行不再匹配）。
    * 返回 affected 行数（旧 $affected；无行命中不是错误——事件先于建单到达是常态）。
    */
-  async update1688PaidOrders(db: Db, tid: string, payTimeSec: number, nowSec: number): Promise<number> {
+  async update1688PaidOrders(
+    db: Db,
+    tid: string,
+    payTimeSec: number,
+    nowSec: number,
+  ): Promise<number> {
     const affected = await db.$executeRawUnsafe(
       `UPDATE dg_order SET
          state = 2,
@@ -237,7 +335,10 @@ export class OrderRepository {
          uptime = ?,
          extend = JSON_SET(COALESCE(\`extend\`, '{}'), '$.payTime', ?)
        WHERE tid = ? AND state IN (1, 2) AND goodssite = '1688' AND type = 1`,
-      nowSec, nowSec, payTimeSec, tid,
+      nowSec,
+      nowSec,
+      payTimeSec,
+      tid,
     );
     return affected;
   }
@@ -267,7 +368,13 @@ export class OrderRepository {
       tid: string;
       uid: number;
       uname: string;
-      items: Array<{ auctionUrl?: string; auctionTitle?: string; pictureUrl?: string; quantity?: number; skuName?: string }>;
+      items: Array<{
+        auctionUrl?: string;
+        auctionTitle?: string;
+        pictureUrl?: string;
+        quantity?: number;
+        skuName?: string;
+      }>;
       expressno: string;
     },
   ): Promise<Array<{ oid: number; expressno: string | null }>> {
@@ -292,10 +399,27 @@ export class OrderRepository {
           addtime: nowSec,
           expressno: input.expressno,
           // NOT NULL 无默认列（information_schema 核实）——非严格模式空串等价
-          yanhuofba: '', yanhuojinyun: '', yanhuozengzhi: '', yanhuoasin: '', yanhuofnsku: '',
-          baozhuang: '', hbbaozhuang: '', baonum: '', SKU: '', shangpin_sku: '', FNSKU: '',
-          shangpin_fnsku: '', name: '', shangpin_name: '', amazon: '', putong: '',
-          shangpin_amazon: '', fuzhuang: '', tiebiao: '', huanbaoz: '', qita: '',
+          yanhuofba: '',
+          yanhuojinyun: '',
+          yanhuozengzhi: '',
+          yanhuoasin: '',
+          yanhuofnsku: '',
+          baozhuang: '',
+          hbbaozhuang: '',
+          baonum: '',
+          SKU: '',
+          shangpin_sku: '',
+          FNSKU: '',
+          shangpin_fnsku: '',
+          name: '',
+          shangpin_name: '',
+          amazon: '',
+          putong: '',
+          shangpin_amazon: '',
+          fuzhuang: '',
+          tiebiao: '',
+          huanbaoz: '',
+          qita: '',
         },
         select: { oid: true },
       });
@@ -343,12 +467,19 @@ export class OrderRepository {
   }
 
   /** pivot syncWithoutDetaching（旧 $record->orders()->syncWithoutDetaching；唯一键撞键忽略） */
-  async attachArrivalOrder(db: Db, arrivalId: number, oid: number, createdAtSec: number): Promise<void> {
+  async attachArrivalOrder(
+    db: Db,
+    arrivalId: number,
+    oid: number,
+    createdAtSec: number,
+  ): Promise<void> {
     await db.$executeRawUnsafe(
       `INSERT INTO v2_relation_order_and_logistic_domestic (logistic_domestic_id, oid, created_at)
        VALUES (?, ?, FROM_UNIXTIME(?))
        ON DUPLICATE KEY UPDATE logistic_domestic_id = logistic_domestic_id`,
-      BigInt(arrivalId), BigInt(oid), createdAtSec,
+      BigInt(arrivalId),
+      BigInt(oid),
+      createdAtSec,
     );
   }
 
@@ -361,19 +492,55 @@ export class OrderRepository {
   async listCarts(
     db: Db,
     where: { uid: number; gids?: number[]; types: number[] },
-  ): Promise<Array<{
-    gid: number; uid: number; uname: string | null; type: number | null;
-    supplier_product_id: number | null; goodsurl: string; goodsname: string; goodsprice: number;
-    offer_price: number; retail_price: number | null; one_piece_price: number; sendprice: number;
-    goodsnum: number; min_order_quantity: number; goodsimg: string | null; goodssize: string | null;
-    goodscolor: string | null; goodsseller: string | null; goodssite: string | null;
-    expressno: string | null; goodsremark: string | null; goodsid: string | null;
-    ship: number | null; sku_name: string; goods_name_trans: string | null; sku_trans: unknown;
-    yanhuofba: string; yanhuoasin: string; yanhuofnsku: string; yanhuozengzhi: string; outid: string | null;
-    add_from: number | null; addtime: number | null;
-    var1: string; var2: string; var3: string; var4: string; var5: string; var6: string;
-    var7: string; var8: string | null; var9: string | null; var10: string | null; var11: string | null; var12: string | null;
-  }>> {
+  ): Promise<
+    Array<{
+      gid: number;
+      uid: number;
+      uname: string | null;
+      type: number | null;
+      supplier_product_id: number | null;
+      goodsurl: string;
+      goodsname: string;
+      goodsprice: number;
+      offer_price: number;
+      retail_price: number | null;
+      one_piece_price: number;
+      sendprice: number;
+      goodsnum: number;
+      min_order_quantity: number;
+      goodsimg: string | null;
+      goodssize: string | null;
+      goodscolor: string | null;
+      goodsseller: string | null;
+      goodssite: string | null;
+      expressno: string | null;
+      goodsremark: string | null;
+      goodsid: string | null;
+      ship: number | null;
+      sku_name: string;
+      goods_name_trans: string | null;
+      sku_trans: unknown;
+      yanhuofba: string;
+      yanhuoasin: string;
+      yanhuofnsku: string;
+      yanhuozengzhi: string;
+      outid: string | null;
+      add_from: number | null;
+      addtime: number | null;
+      var1: string;
+      var2: string;
+      var3: string;
+      var4: string;
+      var5: string;
+      var6: string;
+      var7: string;
+      var8: string | null;
+      var9: string | null;
+      var10: string | null;
+      var11: string | null;
+      var12: string | null;
+    }>
+  > {
     const rows = await db.dg_cart.findMany({
       where: {
         uid: where.uid,
@@ -381,17 +548,51 @@ export class OrderRepository {
         type: { in: where.types },
       },
       select: {
-        gid: true, uid: true, uname: true, type: true,
-        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
-        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
-        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
-        goodscolor: true, goodsseller: true, goodssite: true,
-        expressno: true, goodsremark: true, goodsid: true,
-        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
-        yanhuofba: true, yanhuoasin: true, yanhuofnsku: true, yanhuozengzhi: true, outid: true,
-        add_from: true, addtime: true,
-        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
-        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+        gid: true,
+        uid: true,
+        uname: true,
+        type: true,
+        supplier_product_id: true,
+        goodsurl: true,
+        goodsname: true,
+        goodsprice: true,
+        offer_price: true,
+        retail_price: true,
+        one_piece_price: true,
+        sendprice: true,
+        goodsnum: true,
+        min_order_quantity: true,
+        goodsimg: true,
+        goodssize: true,
+        goodscolor: true,
+        goodsseller: true,
+        goodssite: true,
+        expressno: true,
+        goodsremark: true,
+        goodsid: true,
+        ship: true,
+        sku_name: true,
+        goods_name_trans: true,
+        sku_trans: true,
+        yanhuofba: true,
+        yanhuoasin: true,
+        yanhuofnsku: true,
+        yanhuozengzhi: true,
+        outid: true,
+        add_from: true,
+        addtime: true,
+        var1: true,
+        var2: true,
+        var3: true,
+        var4: true,
+        var5: true,
+        var6: true,
+        var7: true,
+        var8: true,
+        var9: true,
+        var10: true,
+        var11: true,
+        var12: true,
       },
       orderBy: { addtime: 'desc' },
     });
@@ -411,21 +612,77 @@ export class OrderRepository {
     return db.dg_cart.findMany({
       where: { gid: { in: gids } },
       select: {
-        gid: true, uid: true, uname: true, type: true, tid: true,
-        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
-        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
-        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
-        goodscolor: true, goodsseller: true, sellerurl: true, goodssite: true, siteurl: true,
-        expressno: true, goodsremark: true, goodsid: true, proprice: true,
-        TermQty: true, TermPrice: true, TermShipping: true, inspection: true,
-        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
-        yanhuofba: true, yanhuojinyun: true, yanhuozengzhi: true, yanhuoasin: true, yanhuofnsku: true,
-        baozhuang: true, hbbaozhuang: true, baonum: true, SKU: true, FNSKU: true,
-        shangpin_fnsku: true, shangpin_sku: true, name: true, shangpin_name: true,
-        shangpin_amazon: true, amazon: true, putong: true, fuzhuang: true, tiebiao: true,
-        huanbaoz: true, qita: true, outid: true, add_from: true, add_from_memo: true, addtime: true,
-        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
-        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+        gid: true,
+        uid: true,
+        uname: true,
+        type: true,
+        tid: true,
+        supplier_product_id: true,
+        goodsurl: true,
+        goodsname: true,
+        goodsprice: true,
+        offer_price: true,
+        retail_price: true,
+        one_piece_price: true,
+        sendprice: true,
+        goodsnum: true,
+        min_order_quantity: true,
+        goodsimg: true,
+        goodssize: true,
+        goodscolor: true,
+        goodsseller: true,
+        sellerurl: true,
+        goodssite: true,
+        siteurl: true,
+        expressno: true,
+        goodsremark: true,
+        goodsid: true,
+        proprice: true,
+        TermQty: true,
+        TermPrice: true,
+        TermShipping: true,
+        inspection: true,
+        ship: true,
+        sku_name: true,
+        goods_name_trans: true,
+        sku_trans: true,
+        yanhuofba: true,
+        yanhuojinyun: true,
+        yanhuozengzhi: true,
+        yanhuoasin: true,
+        yanhuofnsku: true,
+        baozhuang: true,
+        hbbaozhuang: true,
+        baonum: true,
+        SKU: true,
+        FNSKU: true,
+        shangpin_fnsku: true,
+        shangpin_sku: true,
+        name: true,
+        shangpin_name: true,
+        shangpin_amazon: true,
+        amazon: true,
+        putong: true,
+        fuzhuang: true,
+        tiebiao: true,
+        huanbaoz: true,
+        qita: true,
+        outid: true,
+        add_from: true,
+        add_from_memo: true,
+        addtime: true,
+        var1: true,
+        var2: true,
+        var3: true,
+        var4: true,
+        var5: true,
+        var6: true,
+        var7: true,
+        var8: true,
+        var9: true,
+        var10: true,
+        var11: true,
+        var12: true,
       },
       orderBy: { gid: 'asc' },
     });
@@ -448,21 +705,77 @@ export class OrderRepository {
     const rows = await tx.dg_cart.findMany({
       where: { uid, gid: { in: gids } },
       select: {
-        gid: true, uid: true, uname: true, type: true, tid: true,
-        supplier_product_id: true, goodsurl: true, goodsname: true, goodsprice: true,
-        offer_price: true, retail_price: true, one_piece_price: true, sendprice: true,
-        goodsnum: true, min_order_quantity: true, goodsimg: true, goodssize: true,
-        goodscolor: true, goodsseller: true, sellerurl: true, goodssite: true, siteurl: true,
-        expressno: true, goodsremark: true, goodsid: true, proprice: true,
-        TermQty: true, TermPrice: true, TermShipping: true, inspection: true,
-        ship: true, sku_name: true, goods_name_trans: true, sku_trans: true,
-        yanhuofba: true, yanhuojinyun: true, yanhuozengzhi: true, yanhuoasin: true, yanhuofnsku: true,
-        baozhuang: true, hbbaozhuang: true, baonum: true, SKU: true, FNSKU: true,
-        shangpin_fnsku: true, shangpin_sku: true, name: true, shangpin_name: true,
-        shangpin_amazon: true, amazon: true, putong: true, fuzhuang: true, tiebiao: true,
-        huanbaoz: true, qita: true, outid: true, add_from: true, add_from_memo: true, addtime: true,
-        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
-        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+        gid: true,
+        uid: true,
+        uname: true,
+        type: true,
+        tid: true,
+        supplier_product_id: true,
+        goodsurl: true,
+        goodsname: true,
+        goodsprice: true,
+        offer_price: true,
+        retail_price: true,
+        one_piece_price: true,
+        sendprice: true,
+        goodsnum: true,
+        min_order_quantity: true,
+        goodsimg: true,
+        goodssize: true,
+        goodscolor: true,
+        goodsseller: true,
+        sellerurl: true,
+        goodssite: true,
+        siteurl: true,
+        expressno: true,
+        goodsremark: true,
+        goodsid: true,
+        proprice: true,
+        TermQty: true,
+        TermPrice: true,
+        TermShipping: true,
+        inspection: true,
+        ship: true,
+        sku_name: true,
+        goods_name_trans: true,
+        sku_trans: true,
+        yanhuofba: true,
+        yanhuojinyun: true,
+        yanhuozengzhi: true,
+        yanhuoasin: true,
+        yanhuofnsku: true,
+        baozhuang: true,
+        hbbaozhuang: true,
+        baonum: true,
+        SKU: true,
+        FNSKU: true,
+        shangpin_fnsku: true,
+        shangpin_sku: true,
+        name: true,
+        shangpin_name: true,
+        shangpin_amazon: true,
+        amazon: true,
+        putong: true,
+        fuzhuang: true,
+        tiebiao: true,
+        huanbaoz: true,
+        qita: true,
+        outid: true,
+        add_from: true,
+        add_from_memo: true,
+        addtime: true,
+        var1: true,
+        var2: true,
+        var3: true,
+        var4: true,
+        var5: true,
+        var6: true,
+        var7: true,
+        var8: true,
+        var9: true,
+        var10: true,
+        var11: true,
+        var12: true,
       },
       orderBy: { gid: 'asc' },
     });
@@ -483,7 +796,11 @@ export class OrderRepository {
    * ⚠ `dg_bargain_record.goodid` 是 **BigInt**（Prisma 映射）→ 非数字 goodsid 直接判无砍价
    * （旧 MySQL 隐式转 0 会命中 goodid=0 的行，实际不存在——等价）。
    */
-  async findBargain(db: Db, goodsId: string, goodsType: number): Promise<{ bgprice: number | null } | null> {
+  async findBargain(
+    db: Db,
+    goodsId: string,
+    goodsType: number,
+  ): Promise<{ bgprice: number | null } | null> {
     const numeric = /^\d+$/.test(goodsId) ? BigInt(goodsId) : null;
     if (numeric === null) return null;
     const row = await db.dg_bargain_record.findFirst({
@@ -503,9 +820,19 @@ export class OrderRepository {
     return db.dg_order.create({
       data,
       select: {
-        oid: true, type: true, state: true, uid: true, uname: true,
-        goodsurl: true, goodsname: true, goodsprice: true, goodsnum: true,
-        goodsimg: true, goodsseller: true, goodssite: true, expressno: true,
+        oid: true,
+        type: true,
+        state: true,
+        uid: true,
+        uname: true,
+        goodsurl: true,
+        goodsname: true,
+        goodsprice: true,
+        goodsnum: true,
+        goodsimg: true,
+        goodsseller: true,
+        goodssite: true,
+        expressno: true,
         extend: true,
       },
     });
@@ -536,9 +863,16 @@ export class OrderRepository {
   async lockUserForOrder(tx: LegacyPrisma.TransactionClient, uid: number) {
     const rows = await tx.$queryRaw<
       Array<{
-        uid: number; uname: string; memberid: string | null; email: string | null;
-        money: number; dfflag: number | null; utype: number | null; validity: number;
-        dffee: number | null; belong_company: string | null;
+        uid: number;
+        uname: string;
+        memberid: string | null;
+        email: string | null;
+        money: number;
+        dfflag: number | null;
+        utype: number | null;
+        validity: number;
+        dffee: number | null;
+        belong_company: string | null;
       }>
     >`SELECT uid, uname, memberid, email, money, dfflag, utype, validity, dffee, belong_company
        FROM dg_users WHERE uid = ${uid} FOR UPDATE`;
@@ -550,21 +884,58 @@ export class OrderRepository {
   // -----------------------------------------------------------------------
 
   /** 运单侧订单摘要（旧 with(['orders']) 需要的列：mark_flag/yanhuofba/type/sendprice） */
-  async listBriefBySids(db: Db, sids: number[]): Promise<Map<number, Array<{
-    oid: number; sid: string | null; markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number;
-  }>>> {
+  async listBriefBySids(
+    db: Db,
+    sids: number[],
+  ): Promise<
+    Map<
+      number,
+      Array<{
+        oid: number;
+        sid: string | null;
+        markFlag: number | null;
+        yanhuofba: string;
+        type: number | null;
+        sendprice: number;
+      }>
+    >
+  > {
     if (sids.length === 0) return new Map();
     const rows = await db.dg_order.findMany({
       where: { sid: { in: sids.map(String) } },
-      select: { oid: true, sid: true, mark_flag: true, yanhuofba: true, type: true, sendprice: true },
+      select: {
+        oid: true,
+        sid: true,
+        mark_flag: true,
+        yanhuofba: true,
+        type: true,
+        sendprice: true,
+      },
     });
-    const map = new Map<number, Array<{ oid: number; sid: string | null; markFlag: number | null; yanhuofba: string; type: number | null; sendprice: number }>>();
+    const map = new Map<
+      number,
+      Array<{
+        oid: number;
+        sid: string | null;
+        markFlag: number | null;
+        yanhuofba: string;
+        type: number | null;
+        sendprice: number;
+      }>
+    >();
     for (const r of rows) {
       if (r.sid === null) continue;
       const key = Number(r.sid);
       if (!Number.isInteger(key)) continue;
       const list = map.get(key) ?? [];
-      list.push({ oid: r.oid, sid: r.sid, markFlag: r.mark_flag, yanhuofba: r.yanhuofba, type: r.type, sendprice: Number(r.sendprice) });
+      list.push({
+        oid: r.oid,
+        sid: r.sid,
+        markFlag: r.mark_flag,
+        yanhuofba: r.yanhuofba,
+        type: r.type,
+        sendprice: Number(r.sendprice),
+      });
       map.set(key, list);
     }
     return map;
@@ -575,11 +946,18 @@ export class OrderRepository {
    * uid + sid>0 + 六列 like + dfflag type 分流（DF 加 storeMode——**该条件为死代码**，
    * GraphQL 未声明字段永不传入，此处端口入参不含 storeMode）→ pluck sid unique。
    */
-  async listSidsByShipmentKeyword(db: Db, uid: number, keyword: string, isDf: boolean): Promise<number[]> {
+  async listSidsByShipmentKeyword(
+    db: Db,
+    uid: number,
+    keyword: string,
+    isDf: boolean,
+  ): Promise<number[]> {
     const kw = { contains: keyword };
     // ⚠ 旧 `oid LIKE '%kw%'` 对 Int 列做隐式转换匹配——Prisma 无法 LIKE 整数列，
     // 收敛为「纯数字 → 精确等值；否则跳过 oid 条件」（S28 同族，双跑 diff 会显示子串场景差异）
-    const oidFilter: { oid: { equals: number } } | null = /^\d+$/.test(keyword) ? { oid: { equals: Number(keyword) } } : null;
+    const oidFilter: { oid: { equals: number } } | null = /^\d+$/.test(keyword)
+      ? { oid: { equals: Number(keyword) } }
+      : null;
     const where: LegacyPrisma.dg_orderWhereInput = {
       uid,
       sid: { gt: '0' },
@@ -617,7 +995,11 @@ export class OrderRepository {
   }
 
   /** 批量面：已付款且**单号为空**的订单（旧 :683-688 filter 语义） */
-  async listPaidWithoutExpressno(db: Db, tid: string, platform: string): Promise<Array<{ oid: number }>> {
+  async listPaidWithoutExpressno(
+    db: Db,
+    tid: string,
+    platform: string,
+  ): Promise<Array<{ oid: number }>> {
     const rows = await db.dg_order.findMany({
       where: { tid, goodssite: platform, state: 2 },
       select: { oid: true, expressno: true },
@@ -627,17 +1009,28 @@ export class OrderRepository {
   }
 
   /** 批量面：已发货但**单号与目标串不一致**的订单（旧 :690-697；isDelayedFix 日志差异 R1 略） */
-  async listSentWithDifferentExpressno(db: Db, tid: string, platform: string, expressStr: string): Promise<Array<{ oid: number }>> {
+  async listSentWithDifferentExpressno(
+    db: Db,
+    tid: string,
+    platform: string,
+    expressStr: string,
+  ): Promise<Array<{ oid: number }>> {
     const rows = await db.dg_order.findMany({
       where: { tid, goodssite: platform, state: 3 },
       select: { oid: true, expressno: true },
       orderBy: { oid: 'desc' },
     });
-    return rows.filter((r) => `${r.expressno ?? ''}` !== `${expressStr}`).map((r) => ({ oid: r.oid }));
+    return rows
+      .filter((r) => `${r.expressno ?? ''}` !== `${expressStr}`)
+      .map((r) => ({ oid: r.oid }));
   }
 
   /** 幂等判定集：tid+平台全部订单的单号（旧 :712-720 every(normalized)） */
-  async listExpressnoByTidAndPlatform(db: Db, tid: string, platform: string): Promise<Array<string | null>> {
+  async listExpressnoByTidAndPlatform(
+    db: Db,
+    tid: string,
+    platform: string,
+  ): Promise<Array<string | null>> {
     const rows = await db.dg_order.findMany({
       where: { tid, goodssite: platform },
       select: { expressno: true },
@@ -670,20 +1063,38 @@ export class OrderRepository {
     return db.dg_order.findMany({
       where: { oid: { in: oids } },
       select: {
-        oid: true, tid: true, sid: true, state: true, type: true,
-        goodsid: true, goodsname: true, goodssite: true,
-        goodsprice: true, goodsprice1: true, goodsnum: true,
-        sendprice: true, bargainprice: true,
-        sku_name: true, goodscolor: true, goodssize: true,
-        goodsseller: true, payid: true,
+        oid: true,
+        tid: true,
+        sid: true,
+        state: true,
+        type: true,
+        goodsid: true,
+        goodsname: true,
+        goodssite: true,
+        goodsprice: true,
+        goodsprice1: true,
+        goodsnum: true,
+        sendprice: true,
+        bargainprice: true,
+        sku_name: true,
+        goodscolor: true,
+        goodssize: true,
+        goodsseller: true,
+        payid: true,
       },
       orderBy: { oid: 'desc' },
     });
   }
 
   /** 金额字段可改性守卫的读集（旧 `Order::whereIn('oid',$keys)->get(['oid','state'])`） */
-  async listOrderStates(db: Db, oids: number[]): Promise<Array<{ oid: number; state: number | null }>> {
-    return db.dg_order.findMany({ where: { oid: { in: oids } }, select: { oid: true, state: true } });
+  async listOrderStates(
+    db: Db,
+    oids: number[],
+  ): Promise<Array<{ oid: number; state: number | null }>> {
+    return db.dg_order.findMany({
+      where: { oid: { in: oids } },
+      select: { oid: true, state: true },
+    });
   }
 
   /** 旧 `Order::whereIn('oid',$ids)->update($data)`（query builder，不触发模型事件） */
@@ -717,10 +1128,21 @@ export class OrderRepository {
   }
 
   /** 旧 `V2OrderDetail::updateOrCreate(['id'=>$oid], ['coupon_fee'=>$couponFee])` */
-  async upsertOrderDetailCouponFee(db: Db, oid: number, couponFee: number, createdAt: Date): Promise<void> {
-    const existing = await db.v2_order_detail.findUnique({ where: { id: oid }, select: { id: true } });
+  async upsertOrderDetailCouponFee(
+    db: Db,
+    oid: number,
+    couponFee: number,
+    createdAt: Date,
+  ): Promise<void> {
+    const existing = await db.v2_order_detail.findUnique({
+      where: { id: oid },
+      select: { id: true },
+    });
     if (existing) {
-      await db.v2_order_detail.update({ where: { id: oid }, data: { coupon_fee: couponFee, updated_at: createdAt } });
+      await db.v2_order_detail.update({
+        where: { id: oid },
+        data: { coupon_fee: couponFee, updated_at: createdAt },
+      });
       return;
     }
     await db.v2_order_detail.create({
@@ -743,11 +1165,21 @@ export class OrderRepository {
     delete rest['updated_at'];
     // Prisma 的 Json 空值须用 Prisma.JsonNull；「读到的行原样回写」用 as never 收口（值域同构）
     const detailData = { ...rest, updated_at: createdAt } as never;
-    const existing = await db.v2_order_detail.findUnique({ where: { id: toOid }, select: { id: true } });
+    const existing = await db.v2_order_detail.findUnique({
+      where: { id: toOid },
+      select: { id: true },
+    });
     if (existing) {
       await db.v2_order_detail.update({ where: { id: toOid }, data: detailData });
     } else {
-      await db.v2_order_detail.create({ data: { ...(detailData as object), id: toOid, created_at: createdAt, updated_at: createdAt } as never });
+      await db.v2_order_detail.create({
+        data: {
+          ...(detailData as object),
+          id: toOid,
+          created_at: createdAt,
+          updated_at: createdAt,
+        } as never,
+      });
     }
     await db.v2_order_detail.delete({ where: { id: fromOid } });
   }
@@ -758,18 +1190,21 @@ export class OrderRepository {
    * 此处用「先查后 update/create」保持旧语义（旧代码本身就是 updateOrCreate 的查后写，
    * 并发下同 goodid 的两次回传会互相覆盖——旧系统同样如此，登记 S-new 不修）。
    */
-  async upsertBargainRecord(db: Db, record: {
-    goodid: string;
-    goodstype: number;
-    oid: number;
-    goodsnum: number;
-    goodsamt: number;
-    orgprice: number;
-    bgprice: number;
-    adminname: string;
-    adminid: number;
-    addtime: number;
-  }): Promise<void> {
+  async upsertBargainRecord(
+    db: Db,
+    record: {
+      goodid: string;
+      goodstype: number;
+      oid: number;
+      goodsnum: number;
+      goodsamt: number;
+      orgprice: number;
+      bgprice: number;
+      adminname: string;
+      adminid: number;
+      addtime: number;
+    },
+  ): Promise<void> {
     const goodid = BigInt(record.goodid || '0');
     const existing = await db.dg_bargain_record.findFirst({
       where: { goodid, goodstype: record.goodstype },
@@ -803,10 +1238,18 @@ export class OrderRepository {
   }
 
   /** mark_flag 位条件筛 oid（Prisma 无位运算 → raw 小查询；value∈{0,1}，position 0=favorite/2=arrival） */
-  async listOidsByMarkFlag(db: Db, uid: number, position: number, value: number): Promise<number[]> {
+  async listOidsByMarkFlag(
+    db: Db,
+    uid: number,
+    position: number,
+    value: number,
+  ): Promise<number[]> {
     const rows = await db.$queryRawUnsafe<{ oid: number }[]>(
       'SELECT oid FROM dg_order WHERE uid = ? AND deleted_at IS NULL AND ((mark_flag & (0b11 << ?)) >> ?) = ?',
-      uid, position, position, value,
+      uid,
+      position,
+      position,
+      value,
     );
     return rows.map((r) => Number(r.oid));
   }
@@ -822,7 +1265,11 @@ export class OrderRepository {
 
   /** detail 投影（id == oid）：goods_name_trans / sku_trans / instant_chat_tag */
   async findOrderDetails(db: Db, oids: number[]) {
-    if (oids.length === 0) return new Map<number, { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null }>();
+    if (oids.length === 0)
+      return new Map<
+        number,
+        { goods_name_trans: string | null; sku_trans: unknown; instant_chat_tag: string | null }
+      >();
     const rows = await db.v2_order_detail.findMany({
       where: { id: { in: oids } },
       select: { id: true, goods_name_trans: true, sku_trans: true, instant_chat_tag: true },
@@ -838,7 +1285,10 @@ export class OrderRepository {
 
   /** splitId 过滤：dg_order_split.oid = splitId → spoid 集（旧 OrderSplit::where('oid',..)->pluck('spoid')） */
   async listSpuIdsBySplitOid(db: Db, splitOid: number): Promise<number[]> {
-    const rows = await db.dg_order_split.findMany({ where: { oid: splitOid }, select: { spoid: true } });
+    const rows = await db.dg_order_split.findMany({
+      where: { oid: splitOid },
+      select: { spoid: true },
+    });
     return rows.map((r) => Number(r.spoid)).filter((v) => v > 0);
   }
 
@@ -867,23 +1317,60 @@ export class OrderRepository {
    * 旧 `handleSkuDuplication` 的 `Cart::where(uid)->whereIn(goodsid)->get()`。
    * 列集 = 判定所需：gid/goodsid/sku_name/goodsnum + compareExtraFields 的 17 列。
    */
-  async listCartsByGoodsIds(db: Db, uid: number, goodsIds: string[]): Promise<Array<{
-    gid: number; goodsid: string | null; sku_name: string; goodsnum: number;
-    yanhuofba: string; yanhuoasin: string; yanhuofnsku: string; outid: string | null;
-    goodsremark: string | null;
-    var1: string; var2: string; var3: string; var4: string; var5: string; var6: string;
-    var7: string; var8: string | null; var9: string | null; var10: string | null;
-    var11: string | null; var12: string | null;
-  }>> {
+  async listCartsByGoodsIds(
+    db: Db,
+    uid: number,
+    goodsIds: string[],
+  ): Promise<
+    Array<{
+      gid: number;
+      goodsid: string | null;
+      sku_name: string;
+      goodsnum: number;
+      yanhuofba: string;
+      yanhuoasin: string;
+      yanhuofnsku: string;
+      outid: string | null;
+      goodsremark: string | null;
+      var1: string;
+      var2: string;
+      var3: string;
+      var4: string;
+      var5: string;
+      var6: string;
+      var7: string;
+      var8: string | null;
+      var9: string | null;
+      var10: string | null;
+      var11: string | null;
+      var12: string | null;
+    }>
+  > {
     if (goodsIds.length === 0) return [];
     return db.dg_cart.findMany({
       where: { uid, goodsid: { in: goodsIds } },
       select: {
-        gid: true, goodsid: true, sku_name: true, goodsnum: true,
-        yanhuofba: true, yanhuoasin: true, yanhuofnsku: true, outid: true,
+        gid: true,
+        goodsid: true,
+        sku_name: true,
+        goodsnum: true,
+        yanhuofba: true,
+        yanhuoasin: true,
+        yanhuofnsku: true,
+        outid: true,
         goodsremark: true,
-        var1: true, var2: true, var3: true, var4: true, var5: true, var6: true,
-        var7: true, var8: true, var9: true, var10: true, var11: true, var12: true,
+        var1: true,
+        var2: true,
+        var3: true,
+        var4: true,
+        var5: true,
+        var6: true,
+        var7: true,
+        var8: true,
+        var9: true,
+        var10: true,
+        var11: true,
+        var12: true,
       },
     });
   }
@@ -933,13 +1420,39 @@ export class OrderRepository {
       db.dg_order.findMany({
         where: effectiveWhere,
         select: {
-          oid: true, uid: true, type: true, state: true, sid: true, expressno: true,
-          goodsid: true, goodsname: true, goodsurl: true, goodsimg: true,
-          goodssize: true, goodscolor: true, goodsseller: true, goodssite: true,
-          sku_name: true, ship: true, goodsprice: true, goodsprice1: true, goodsnum: true,
-          item_location: true, sendprice: true, goodsremark: true, orderremark: true,
-          yanhuofba: true, yanhuoasin: true, FNSKU: true, outid: true, tid: true,
-          addtime: true, arrivetime: true, dfstoremode: true, mark_flag: true, extend: true,
+          oid: true,
+          uid: true,
+          type: true,
+          state: true,
+          sid: true,
+          expressno: true,
+          goodsid: true,
+          goodsname: true,
+          goodsurl: true,
+          goodsimg: true,
+          goodssize: true,
+          goodscolor: true,
+          goodsseller: true,
+          goodssite: true,
+          sku_name: true,
+          ship: true,
+          goodsprice: true,
+          goodsprice1: true,
+          goodsnum: true,
+          item_location: true,
+          sendprice: true,
+          goodsremark: true,
+          orderremark: true,
+          yanhuofba: true,
+          yanhuoasin: true,
+          FNSKU: true,
+          outid: true,
+          tid: true,
+          addtime: true,
+          arrivetime: true,
+          dfstoremode: true,
+          mark_flag: true,
+          extend: true,
         },
         orderBy: { oid: 'desc' },
         skip: (page - 1) * limit,
@@ -957,14 +1470,39 @@ export type LegacyWhere = LegacyPrisma.dg_orderWhereInput;
 /** 列表行（select 子集；金额列 Prisma 回 number/Decimal，投影在 service 统一转字符串） */
 type Decimal = { toString(): string; toNumber(): number };
 export type ListOrderRow = {
-  oid: number; uid: number; type: number | null; state: number | null; sid: string | null;
-  expressno: string | null; goodsid: string | null; goodsname: string | null; goodsurl: string | null;
-  goodsimg: string | null; goodssize: string | null; goodscolor: string | null; goodsseller: string | null;
-  goodssite: string | null; sku_name: string; ship: number | null; goodsprice: number;
-  goodsprice1: number | Decimal; goodsnum: number | null; item_location: string | null; sendprice: number;
-  goodsremark: string | null; orderremark: string | null; yanhuofba: string; yanhuoasin: string;
-  FNSKU: string; outid: string | null; tid: string; addtime: number | null; arrivetime: number | null;
-  dfstoremode: number | null; mark_flag: number | null; extend: string | null;
+  oid: number;
+  uid: number;
+  type: number | null;
+  state: number | null;
+  sid: string | null;
+  expressno: string | null;
+  goodsid: string | null;
+  goodsname: string | null;
+  goodsurl: string | null;
+  goodsimg: string | null;
+  goodssize: string | null;
+  goodscolor: string | null;
+  goodsseller: string | null;
+  goodssite: string | null;
+  sku_name: string;
+  ship: number | null;
+  goodsprice: number;
+  goodsprice1: number | Decimal;
+  goodsnum: number | null;
+  item_location: string | null;
+  sendprice: number;
+  goodsremark: string | null;
+  orderremark: string | null;
+  yanhuofba: string;
+  yanhuoasin: string;
+  FNSKU: string;
+  outid: string | null;
+  tid: string;
+  addtime: number | null;
+  arrivetime: number | null;
+  dfstoremode: number | null;
+  mark_flag: number | null;
+  extend: string | null;
 };
 
 /** 生产事务运行器（组合根用；域内禁自带连接 → 由此出口提供真事务语义） */

@@ -6,15 +6,15 @@
 
 ## 关键决策摘要
 
-| 决策 | 结论 | 一句话理由 |
-|------|------|-----------|
-| 语言 | 全 TypeScript | 单语言 + 强类型，对 AI 写代码最友好 |
-| 前端 | Next.js + Tailwind + shadcn/ui | AI 语料最丰富、SSR/SEO 强、组件质感好 |
-| 后端 | Next.js 全栈（API Routes / Server Actions） | 与前端同仓同语言 |
-| 后台任务 | 独立 TS Worker（BullMQ + Redis） | 扛订单同步 / webhook / 结算等重活 |
-| 数据库 | MySQL 8 + Prisma | 沿用现有库，类型安全 ORM |
-| 仓库结构 | **Monorepo（pnpm workspace + Turborepo）** | 类型跨前后端共享 |
-| WMS | **独立项目（未来另建 `own/wms`）** | 独立业务系统 + 独立部署，非代码共享 |
+| 决策     | 结论                                        | 一句话理由                            |
+| -------- | ------------------------------------------- | ------------------------------------- |
+| 语言     | 全 TypeScript                               | 单语言 + 强类型，对 AI 写代码最友好   |
+| 前端     | Next.js + Tailwind + shadcn/ui              | AI 语料最丰富、SSR/SEO 强、组件质感好 |
+| 后端     | Next.js 全栈（API Routes / Server Actions） | 与前端同仓同语言                      |
+| 后台任务 | 独立 TS Worker（BullMQ + Redis）            | 扛订单同步 / webhook / 结算等重活     |
+| 数据库   | MySQL 8 + Prisma                            | 沿用现有库，类型安全 ORM              |
+| 仓库结构 | **Monorepo（pnpm workspace + Turborepo）**  | 类型跨前后端共享                      |
+| WMS      | **独立项目（未来另建 `own/wms`）**          | 独立业务系统 + 独立部署，非代码共享   |
 
 > 明确排除：若依（定制层 AI 不熟、双语言）、NestJS（比简洁不如 Next.js、比成熟不如 Java 的中间态）、Deno/Astro/Vue（原系统的冷门割裂栈）。
 
@@ -44,11 +44,11 @@ crossbuy/
 `.workbuddy/` 是 AI 工作目录，会不断产生会话产物（`.genie` 应用文件、临时脚本、会话快照等）。
 本仓库约定：**整个目录忽略，只放行两个子目录**。
 
-| 路径 | 入库 | 说明 |
-|---|---|---|
-| `.workbuddy/memory/` | ✅ | **项目记忆**——长期结论 `MEMORY.md` + 每日日志 `YYYY-MM-DD.md`。跨会话可复用的项目知识与血泪坑，是本仓库知识资产的一部分 |
-| `.workbuddy/skills/` | ✅ | **项目技能**——6 个外部引入技能 + 项目专属补丁（用法见 [AGENTS.md](./AGENTS.md) 的「技能」小节） |
-| 其余（`.genie`、临时脚本、会话快照……） | ❌ | 一律不入库 |
+| 路径                                   | 入库 | 说明                                                                                                                    |
+| -------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------- |
+| `.workbuddy/memory/`                   | ✅   | **项目记忆**——长期结论 `MEMORY.md` + 每日日志 `YYYY-MM-DD.md`。跨会话可复用的项目知识与血泪坑，是本仓库知识资产的一部分 |
+| `.workbuddy/skills/`                   | ✅   | **项目技能**——6 个外部引入技能 + 项目专属补丁（用法见 [AGENTS.md](./AGENTS.md) 的「技能」小节）                         |
+| 其余（`.genie`、临时脚本、会话快照……） | ❌   | 一律不入库                                                                                                              |
 
 这两个路径是**工具链固定**的（记忆写在 `.workbuddy/memory/YYYY-MM-DD.md`、项目级技能读
 `.workbuddy/skills/`），所以不能为了躲 `.gitignore` 把它们搬到别处——搬家等于让工具找不到。
@@ -61,12 +61,12 @@ crossbuy/
 
 三 app（web/mzk/admin）**唯一组件源**，Tailwind 4 CSS-first 配置（全仓无 `tailwind.config.js`）：
 
-| 位置 | 职责 |
-|---|---|
+| 位置                               | 职责                                                                                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/ui/src/styles/theme.css` | 主题**唯一正本**：`@import 'tailwindcss'` + `@theme inline` 变量映射 + `:root`/`.dark` 变量本体 + base 层。app 的 globals.css 只需 `@import '@crossbuy/ui/styles.css';` |
-| `packages/ui/src/components/ui/` | shadcn（new-york 风格）基础组件，源码取自官方 registry；改组件优先 `npx shadcn add` |
-| `packages/ui/src/lib/cn.ts` | className 合并（clsx + tailwind-merge），`@crossbuy/ui/lib` 导出 |
-| `packages/ui/src/tokens.ts` | CSS 变量的 **TS 镜像**（canvas/图表场景用）；改 theme.css 必须同步它 |
+| `packages/ui/src/components/ui/`   | shadcn（new-york 风格）基础组件，源码取自官方 registry；改组件优先 `npx shadcn add`                                                                                     |
+| `packages/ui/src/lib/cn.ts`        | className 合并（clsx + tailwind-merge），`@crossbuy/ui/lib` 导出                                                                                                        |
+| `packages/ui/src/tokens.ts`        | CSS 变量的 **TS 镜像**（canvas/图表场景用）；改 theme.css 必须同步它                                                                                                    |
 
 app 接入三件套（每个 app 都已就位）：`postcss.config.mjs`（`@tailwindcss/postcss`）、`globals.css` 两行（import + `@source './**/*.{ts,tsx}'`）、tsconfig `paths`。
 

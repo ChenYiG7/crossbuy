@@ -1,4 +1,7 @@
-import { webhook1688LogisticsMessageSchema, type Webhook1688LogisticsMessage } from '@crossbuy/contract';
+import {
+  webhook1688LogisticsMessageSchema,
+  type Webhook1688LogisticsMessage,
+} from '@crossbuy/contract';
 import type { OrderRepository, Tx } from './repository';
 
 /**
@@ -11,7 +14,13 @@ export interface OauthUserPort {
     openid: string;
     username: string;
     phone: string | null;
-  }): Promise<{ ok: true; value: { uid: number; uname: string; memberid: string | null; email: string | null } } | { ok: false; error: { code: string; message: string } }>;
+  }): Promise<
+    | {
+        ok: true;
+        value: { uid: number; uname: string; memberid: string | null; email: string | null };
+      }
+    | { ok: false; error: { code: string; message: string } }
+  >;
 }
 
 export interface SendOrderPort {
@@ -101,18 +110,28 @@ export class Webhook1688LogisticsService {
         oids: created.map((o) => o.oid),
         receiver: msg.receiverAddress,
       });
-      await this.deps.repository.attachSid(db, created.map((o) => o.oid), sendOrder.sid);
+      await this.deps.repository.attachSid(
+        db,
+        created.map((o) => o.oid),
+        sendOrder.sid,
+      );
       sid = sendOrder.sid;
     }
 
     // ③ expressno 多单号合并（旧：以**首单**现有单号集合为基准；已含 mailNo 则跳过）
     // 旧代码 itemList 空时 Order::insert([]) 直接抛错（Laravel 行为）——同语义 fail-fast
-    if (orders.length === 0) throw new Error('1688 logistics webhook: no orders after provisioning');
+    if (orders.length === 0)
+      throw new Error('1688 logistics webhook: no orders after provisioning');
     const first = orders[0]!;
-    const nos = first.expressno === null || first.expressno === '' ? [] : first.expressno.split(' ');
+    const nos =
+      first.expressno === null || first.expressno === '' ? [] : first.expressno.split(' ');
     if (!nos.includes(msg.mailNo)) {
       nos.push(msg.mailNo);
-      await this.deps.repository.updateExpressno(db, orders.map((o) => o.oid), nos.join(' '));
+      await this.deps.repository.updateExpressno(
+        db,
+        orders.map((o) => o.oid),
+        nos.join(' '),
+      );
     }
 
     // ④ 入库登记：DgArrival::firstOrCreateRecord（state=1 SEND；type 缺省 1 店铺发货）

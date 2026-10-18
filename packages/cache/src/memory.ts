@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import type { CooldownStore, DistributedLock, IdempotencyStore, WithLockOptions, WithLockResult } from './types';
+import type {
+  CooldownStore,
+  DistributedLock,
+  IdempotencyStore,
+  WithLockOptions,
+  WithLockResult,
+} from './types';
 
 /**
  * 进程内实现（**单实例正确，多实例无效**）。

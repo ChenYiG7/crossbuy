@@ -133,7 +133,11 @@ describe('chrome 回传纯函数（旧 sku 解析 / 文本归一化 1:1）', () 
 
   it('parseChromeSkuPairs：名字**保留冒号**（与 list-helpers.parseSkuName 不同），无匹配为 null', () => {
     expect(parseChromeSkuPairs(SKU_RED)).toEqual({ '颜色分类:': '红色' });
-    expect(parseChromeSkuPairs('<font color=red>尺码:</font><font color=green>L</font><font color=red>颜色:</font><font color=green>黑</font>')).toEqual({
+    expect(
+      parseChromeSkuPairs(
+        '<font color=red>尺码:</font><font color=green>L</font><font color=red>颜色:</font><font color=green>黑</font>',
+      ),
+    ).toEqual({
       '尺码:': 'L',
       '颜色:': '黑',
     });
@@ -178,34 +182,74 @@ describe('chrome 回传纯函数（旧 sku 解析 / 文本归一化 1:1）', () 
     expect(searchSkuDetail('1001', items, { '颜色分类:': '红色XL' }, 3).ok).toBe(true);
     // ⚠ 值里带空白时只试「空格换 +」形态，name+value 与 value-only 都用 '+' 比对（S51）：
     //    name 对不上 ⇒ 精确匹配失败，宽松匹配才命中
-    expect(searchSkuDetail('1001', items, { '颜色': '红色 (XL)' }, 1).ok).toBe(false);
-    expect(searchSkuDetail('1001', items, { '颜色': '红色 (XL)' }, 2).ok).toBe(true);
+    expect(searchSkuDetail('1001', items, { 颜色: '红色 (XL)' }, 1).ok).toBe(false);
+    expect(searchSkuDetail('1001', items, { 颜色: '红色 (XL)' }, 2).ok).toBe(true);
   });
 
   it('searchSkuDetail 五种失败形态（文案 1:1）', () => {
     const items: PlatformProductItem[] = [
-      { productID: '1001', skuInfos: [{ name: '颜色:', value: '红' }], quantity: 1, price: 1, itemAmount: 1 },
-      { productID: '1001', skuInfos: [{ name: '颜色:', value: '蓝' }], quantity: 1, price: 1, itemAmount: 1 },
+      {
+        productID: '1001',
+        skuInfos: [{ name: '颜色:', value: '红' }],
+        quantity: 1,
+        price: 1,
+        itemAmount: 1,
+      },
+      {
+        productID: '1001',
+        skuInfos: [{ name: '颜色:', value: '蓝' }],
+        quantity: 1,
+        price: 1,
+        itemAmount: 1,
+      },
       { productID: '2002', skuInfos: [], quantity: 1, price: 1, itemAmount: 1 },
-      { productID: '3003', skuInfos: [{ name: '颜色:', value: '红' }, { name: '尺码:', value: 'L' }], quantity: 1, price: 1, itemAmount: 1 },
+      {
+        productID: '3003',
+        skuInfos: [
+          { name: '颜色:', value: '红' },
+          { name: '尺码:', value: 'L' },
+        ],
+        quantity: 1,
+        price: 1,
+        itemAmount: 1,
+      },
       { productID: '4004', quantity: 1, price: 1, itemAmount: 1 },
     ];
     expect(searchSkuDetail('9999', items, { '颜色:': '红' }).ok).toBe(false);
-    expect(searchSkuDetail('1001', items, {})).toEqual({ ok: false, msg: 'sku 信息为空，请联系管理员处理。' });
+    expect(searchSkuDetail('1001', items, {})).toEqual({
+      ok: false,
+      msg: 'sku 信息为空，请联系管理员处理。',
+    });
     // 无 skuInfos → 直接报「无法识别」
     const noSku = searchSkuDetail('4004', items, { '颜色:': '红' });
     expect(noSku.ok).toBe(false);
     expect(noSku.ok === false && noSku.msg).toContain('无法识别以下 sku 信息');
     // 规格数量不一致
     const mismatch = searchSkuDetail('3003', items, { '颜色:': '红' });
-    expect(mismatch.ok === false && mismatch.msg).toContain('用户下单的 sku 数量和官方返回的不一致');
+    expect(mismatch.ok === false && mismatch.msg).toContain(
+      '用户下单的 sku 数量和官方返回的不一致',
+    );
     // 值都不对 → 缺少规格
     const missing = searchSkuDetail('1001', items, { '颜色:': '绿' });
     expect(missing.ok === false && missing.msg).toContain('下单信息中缺少以下规格商品');
     // 同一个期望值命中多行 dup —— 用两个同规格行构造
     const dupItems: PlatformProductItem[] = [
-      { productID: '5005', skuInfos: [{ name: '颜色:', value: '红' }], quantity: 1, price: 1, itemAmount: 1, specId: 'a' },
-      { productID: '5005', skuInfos: [{ name: '颜色:', value: '红' }], quantity: 1, price: 1, itemAmount: 1, specId: 'b' },
+      {
+        productID: '5005',
+        skuInfos: [{ name: '颜色:', value: '红' }],
+        quantity: 1,
+        price: 1,
+        itemAmount: 1,
+        specId: 'a',
+      },
+      {
+        productID: '5005',
+        skuInfos: [{ name: '颜色:', value: '红' }],
+        quantity: 1,
+        price: 1,
+        itemAmount: 1,
+        specId: 'b',
+      },
     ];
     const dup = searchSkuDetail('5005', dupItems, { '颜色:': '红' });
     expect(dup.ok === false && dup.msg).toContain('下单信息中存在重复规格的商品');
@@ -227,13 +271,29 @@ describe('chrome 回传纯函数（旧 sku 解析 / 文本归一化 1:1）', () 
       {
         id: 'sub-1',
         quantity: 2,
-        itemInfo: { title: '主商品', id: '9001', skuId: 456, skuText: [{ name: '尺寸', value: 'M' }] },
+        itemInfo: {
+          title: '主商品',
+          id: '9001',
+          skuId: 456,
+          skuText: [{ name: '尺寸', value: 'M' }],
+        },
         priceInfo: { realTotal: 12.345 },
       },
-      { id: 'sub-2', quantity: 1, itemInfo: { title: '无型号', id: '9002', skuId: -1 }, priceInfo: { realTotal: 5 } },
+      {
+        id: 'sub-2',
+        quantity: 1,
+        itemInfo: { title: '无型号', id: '9002', skuId: -1 },
+        priceInfo: { realTotal: 5 },
+      },
     ]);
     expect(items).toHaveLength(2);
-    expect(items[0]).toMatchObject({ productID: '9001', specId: '456', quantity: 2, price: 12.345, itemAmount: 24.69 });
+    expect(items[0]).toMatchObject({
+      productID: '9001',
+      specId: '456',
+      quantity: 2,
+      price: 12.345,
+      itemAmount: 24.69,
+    });
     expect(items[1]!.specId).toBeUndefined();
   });
 
@@ -261,7 +321,10 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
       const b = await seedOrder(tx, { state: 1, skuName: SKU_RED, goodsnum: 1 });
       const svc = makeService(tx, PLATFORM_1688);
 
-      const result = await svc.handle(inputOf({ oids: `${a},${b}`, tradeId: 'T-1', action: CHROME_ACTION.VALIDATE }), ADMIN);
+      const result = await svc.handle(
+        inputOf({ oids: `${a},${b}`, tradeId: 'T-1', action: CHROME_ACTION.VALIDATE }),
+        ADMIN,
+      );
       expect(result.code).toBe(200);
       const data = result.code === 200 ? result.data! : null;
       expect(data).toMatchObject({
@@ -273,7 +336,13 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
         coupon_fee: '4',
       });
       expect(data!.items).toHaveLength(1);
-      expect(data!.items[0]).toMatchObject({ offerId: '1001', specId: 'spec-1', quantity: 3, price: 10, real_price: 10 });
+      expect(data!.items[0]).toMatchObject({
+        offerId: '1001',
+        specId: 'spec-1',
+        quantity: 3,
+        price: 10,
+        real_price: 10,
+      });
       expect(data!.items[0]!.ids.sort()).toEqual([a, b].sort());
     });
   });
@@ -283,7 +352,10 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
       const tx = tx0 as unknown as Tx;
       const a = await seedOrder(tx, { state: 1 });
       const svc = makeService(tx, null);
-      expect(await svc.handle(inputOf({ oids: String(a) }), ADMIN)).toEqual({ code: 40000, msg: '获取订单信息失败。' });
+      expect(await svc.handle(inputOf({ oids: String(a) }), ADMIN)).toEqual({
+        code: 40000,
+        msg: '获取订单信息失败。',
+      });
     });
   });
 
@@ -292,7 +364,11 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
       const tx = tx0 as unknown as Tx;
       const svc = makeService(tx, PLATFORM_1688);
       const result = await svc.handle(inputOf({ oids: '9999991,9999992' }), ADMIN);
-      expect(result).toEqual({ code: 40000, oids: ['9999991', '9999992'], msg: '获取订单信息失败。' });
+      expect(result).toEqual({
+        code: 40000,
+        oids: ['9999991', '9999992'],
+        msg: '获取订单信息失败。',
+      });
     });
   });
 
@@ -315,7 +391,10 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
       expect(price.code === 40000 && price.msg).toContain('商品实际单价大于后台单价');
 
       // 后门旁路（旧 skip_price_check）
-      const bypass = await svcPrice.handle(inputOf({ oids: String(a), skipPriceCheck: true }), ADMIN);
+      const bypass = await svcPrice.handle(
+        inputOf({ oids: String(a), skipPriceCheck: true }),
+        ADMIN,
+      );
       expect(bypass.code).toBe(200);
     });
   });
@@ -338,9 +417,16 @@ describe('chrome 回传校验（validateOrderByOidAndTradeId 1:1）', () => {
       });
       const result = await svc.handle(inputOf({ oids: String(a) }), ADMIN);
       expect(result.code).toBe(40000);
-      expect(result.code === 40000 && result.msg).toContain('实际付款不能大于当前本地价格基线，已阻断自动改价。');
+      expect(result.code === 40000 && result.msg).toContain(
+        '实际付款不能大于当前本地价格基线，已阻断自动改价。',
+      );
       expect(risk).toHaveLength(1);
-      expect(risk[0]).toMatchObject({ localGoodsTotal: 30, platformSendprice: 10, platformRealPay: 999, localBaselineTotal: 40 });
+      expect(risk[0]).toMatchObject({
+        localGoodsTotal: 30,
+        platformSendprice: 10,
+        platformRealPay: 999,
+        localBaselineTotal: 40,
+      });
     });
   });
 });
@@ -366,12 +452,22 @@ describe('chrome 回传保存（saveOrderInfo + BatchUpdateOrder 子集）', () 
 
       const rows = await tx.dg_order.findMany({
         where: { oid: { in: [a, b] } },
-        select: { oid: true, tid: true, payid: true, paytime: true, purchase_type: true, sendprice: true, bargainprice: true },
+        select: {
+          oid: true,
+          tid: true,
+          payid: true,
+          paytime: true,
+          purchase_type: true,
+          sendprice: true,
+          bargainprice: true,
+        },
       });
       for (const row of rows) {
         expect(row.tid).toBe('T-save-1');
         expect(row.payid).toBe('P-01');
-        expect(row.paytime).toBe(Math.floor(new Date('2026-10-18T14:00:00+08:00').getTime() / 1000));
+        expect(row.paytime).toBe(
+          Math.floor(new Date('2026-10-18T14:00:00+08:00').getTime() / 1000),
+        );
         expect(row.purchase_type).toBe(1); // 手动下单
       }
       // 运费/砍价只挂在**一张**承载单上，另一张归零
@@ -385,7 +481,9 @@ describe('chrome 回传保存（saveOrderInfo + BatchUpdateOrder 子集）', () 
       expect(Number(detail?.coupon_fee)).toBe(4);
 
       // 砍价记录：唯一键 (goodid, goodstype) ⇒ 同商品两单只留一行（旧 updateOrCreate 语义）
-      const bargains = await tx.dg_bargain_record.findMany({ where: { goodid: BigInt(1001), goodstype: 1 } });
+      const bargains = await tx.dg_bargain_record.findMany({
+        where: { goodid: BigInt(1001), goodstype: 1 },
+      });
       expect(bargains).toHaveLength(1);
       expect(bargains[0]).toMatchObject({ adminid: 7, adminname: 'buyer01' });
     });
@@ -416,11 +514,22 @@ describe('chrome 回传保存（saveOrderInfo + BatchUpdateOrder 子集）', () 
       const a = await seedOrder(tx, { state: 1, skuName: SKU_RED, goodsnum: 3 });
       const svc = makeService(tx, PLATFORM_1688);
       const result = await svc.handle(
-        inputOf({ oids: String(a), tradeId: 'T-nopay', action: CHROME_ACTION.SAVE, orderDetail: { action: CHROME_ACTION.SAVE } }),
+        inputOf({
+          oids: String(a),
+          tradeId: 'T-nopay',
+          action: CHROME_ACTION.SAVE,
+          orderDetail: { action: CHROME_ACTION.SAVE },
+        }),
         { ...ADMIN, payid: '' },
       );
-      expect(result).toEqual({ code: 40000, msg: '当前账号未绑定采购员，暂不允许更新单号。请联系管理员处理。' });
-      const row = await tx.dg_order.findUnique({ where: { oid: a }, select: { tid: true, sendprice: true } });
+      expect(result).toEqual({
+        code: 40000,
+        msg: '当前账号未绑定采购员，暂不允许更新单号。请联系管理员处理。',
+      });
+      const row = await tx.dg_order.findUnique({
+        where: { oid: a },
+        select: { tid: true, sendprice: true },
+      });
       expect(row?.tid).toBe('');
       expect(Number(row?.sendprice)).toBe(0);
     });
@@ -432,7 +541,11 @@ describe('chrome 回传保存（saveOrderInfo + BatchUpdateOrder 子集）', () 
       const a = await seedOrder(tx, { state: 2, skuName: SKU_RED, goodsnum: 3 });
       const svc = makeService(tx, PLATFORM_1688);
       const result = await svc.handle(
-        inputOf({ oids: String(a), action: CHROME_ACTION.SAVE, orderDetail: { action: CHROME_ACTION.SAVE } }),
+        inputOf({
+          oids: String(a),
+          action: CHROME_ACTION.SAVE,
+          orderDetail: { action: CHROME_ACTION.SAVE },
+        }),
         ADMIN,
       );
       expect(result).toEqual({ code: 40000, msg: '有订单处未处于待采购状态，暂不支持更新。' });
@@ -462,15 +575,26 @@ describe('chrome 回传保存（saveOrderInfo + BatchUpdateOrder 子集）', () 
       // 只回传较旧的 b（后台数量改成 1 以对齐平台数量 1）
       await tx.dg_order.updateMany({ where: { oid: b }, data: { goodsnum: 1 } });
       const result = await svc.handle(
-        inputOf({ oids: String(b), tradeId: 'T-group', action: CHROME_ACTION.SAVE, orderDetail: { action: CHROME_ACTION.SAVE } }),
+        inputOf({
+          oids: String(b),
+          tradeId: 'T-group',
+          action: CHROME_ACTION.SAVE,
+          orderDetail: { action: CHROME_ACTION.SAVE },
+        }),
         ADMIN,
       );
       expect(result).toEqual({ code: 200 });
 
-      const rowB = await tx.dg_order.findUnique({ where: { oid: b }, select: { sendprice: true, bargainprice: true } });
+      const rowB = await tx.dg_order.findUnique({
+        where: { oid: b },
+        select: { sendprice: true, bargainprice: true },
+      });
       // 承载金额迁到 b，a 清零
       expect(Number(rowB?.sendprice)).toBe(10);
-      const rowA = await tx.dg_order.findUnique({ where: { oid: a }, select: { sendprice: true, bargainprice: true } });
+      const rowA = await tx.dg_order.findUnique({
+        where: { oid: a },
+        select: { sendprice: true, bargainprice: true },
+      });
       expect(Number(rowA?.sendprice)).toBe(0);
       expect(Number(rowA?.bargainprice)).toBe(0);
     });

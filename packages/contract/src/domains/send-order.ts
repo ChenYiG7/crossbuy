@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { pageQuerySchema, type Money, type PageResult } from '../core';
+import { pageQuerySchema, type PageResult } from '../core';
 
 /**
  * send-order 域契约 —— 唯一对外类型源（docs/07 §2）。
@@ -69,11 +69,15 @@ const SEND_ORDER_FROM_ANY_ACTIVE: readonly SendOrderStatusCode[] = [
  * 有强守卫的入口按守卫原文收录（→7/→8）；admin 批量工具无守卫的分支（→2/→3/→4/→5）
  * 按旧真实行为收录为全活跃态——1:1 保真，R2 收敛时收紧（S19）。
  */
-export const SEND_ORDER_STATUS_TRANSITIONS: Readonly<Record<SendOrderStatusCode, readonly SendOrderStatusCode[]>> = {
+export const SEND_ORDER_STATUS_TRANSITIONS: Readonly<
+  Record<SendOrderStatusCode, readonly SendOrderStatusCode[]>
+> = {
   /** 创建初态；无迁移写点（订单回改联动把运单改回 1 的源态未核实完整，暂拒——见 09 §2.1 A 组） */
   [SendOrderStatus.WAITING]: [],
   /** admin 批量邮寄（DG 无守卫；DF 仅 state≠2 幂等校验）→ 旧真实行为 = 除自身外全活跃态 */
-  [SendOrderStatus.SHIPPED]: SEND_ORDER_FROM_ANY_ACTIVE.filter((s) => s !== SendOrderStatus.SHIPPED),
+  [SendOrderStatus.SHIPPED]: SEND_ORDER_FROM_ANY_ACTIVE.filter(
+    (s) => s !== SendOrderStatus.SHIPPED,
+  ),
   /** 用户确认收货（行锁，必须 2，DF 当天发货不可当天确认）；admin 批量完成无守卫 */
   [SendOrderStatus.COMPLETED]: [...SEND_ORDER_FROM_ANY_ACTIVE],
   /** 订单拉无效联动（DF 拆分）/ admin 批量 / 删运单（旧无守卫） */
@@ -90,7 +94,10 @@ export const SEND_ORDER_STATUS_TRANSITIONS: Readonly<Record<SendOrderStatusCode,
 };
 
 /** 迁移判定（service 层状态命令的唯一合法入口） */
-export function canTransitionSendOrderStatus(from: SendOrderStatusCode, to: SendOrderStatusCode): boolean {
+export function canTransitionSendOrderStatus(
+  from: SendOrderStatusCode,
+  to: SendOrderStatusCode,
+): boolean {
   return SEND_ORDER_STATUS_TRANSITIONS[to].includes(from);
 }
 
@@ -324,7 +331,13 @@ export const sendOrderLabelCreateSchema = z.object({
   fbaShipmentId: z.string().max(64).optional(),
   destinationCode: z.string().max(32).optional(),
   boxes: z
-    .array(z.object({ boxNo: z.string(), orderId: z.number().int().positive().optional(), qty: z.number().int().min(1) }))
+    .array(
+      z.object({
+        boxNo: z.string(),
+        orderId: z.number().int().positive().optional(),
+        qty: z.number().int().min(1),
+      }),
+    )
     .optional(),
 });
 export type SendOrderLabelCreate = z.infer<typeof sendOrderLabelCreateSchema>;

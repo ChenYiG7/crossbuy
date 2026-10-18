@@ -1,5 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import nextPlugin from '@next/eslint-plugin-next';
+import reactHooks from 'eslint-plugin-react-hooks';
 
 /**
  * 域清单——与 scripts/scaffold-domains.mjs 的 DOMAINS 保持一致（改域清单时两处同改）。
@@ -124,5 +126,17 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
     },
+  },
+  // ---- React / Next 规则（#6-b：2026-10-18 接入）----
+  // react-hooks：所有 React 代码位点（三个 Next app + packages/ui 共享组件源）
+  // ★ 用 recommended-latest（flat 原生 plugins 对象）；recommended 是 eslintrc 数组形态，flat 会报错
+  {
+    files: ['apps/**/*.{ts,tsx,js,jsx}', 'packages/ui/**/*.{ts,tsx,js,jsx}'],
+    ...reactHooks.configs['recommended-latest'],
+  },
+  // next core-web-vitals：仅 Next app（packages/ui 无 next 运行时；api/worker 是 Node）
+  {
+    files: ['apps/*/**/*.{ts,tsx,js,jsx}'],
+    ...nextPlugin.flatConfig.coreWebVitals,
   },
 );

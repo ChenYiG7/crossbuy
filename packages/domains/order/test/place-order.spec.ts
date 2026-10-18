@@ -57,10 +57,33 @@ async function seedUser(tx: Tx, overrides: Record<string, unknown> = {}) {
  * 上上轮 41 列对 37 值、本轮 26 列对 25 值，两次都是同一类事故；这里让 SQL 自己数）。
  */
 const CART_DATA_COLS = [
-  'gid', 'uid', 'uname', 'supplier_product_id', 'type', 'goodsurl', 'goodsname', 'goodsprice',
-  'goodsimg', 'offer_price', 'retail_price', 'one_piece_price', 'sendprice', 'goodsnum', 'min_order_quantity',
-  'goodssize', 'goodscolor', 'goodsseller', 'goodssite', 'goodsid', 'shangpin_sku', 'sku_name',
-  'expressno', 'proprice', 'addtime', 'add_from', 'add_from_memo',
+  'gid',
+  'uid',
+  'uname',
+  'supplier_product_id',
+  'type',
+  'goodsurl',
+  'goodsname',
+  'goodsprice',
+  'goodsimg',
+  'offer_price',
+  'retail_price',
+  'one_piece_price',
+  'sendprice',
+  'goodsnum',
+  'min_order_quantity',
+  'goodssize',
+  'goodscolor',
+  'goodsseller',
+  'goodssite',
+  'goodsid',
+  'shangpin_sku',
+  'sku_name',
+  'expressno',
+  'proprice',
+  'addtime',
+  'add_from',
+  'add_from_memo',
 ] as const;
 
 async function seedCart(tx: Tx, input: Record<string, unknown>): Promise<number> {
@@ -108,9 +131,14 @@ async function seedProduct(tx: Tx, input: Record<string, unknown>): Promise<numb
     `INSERT INTO v2_supplier_product (id, shop_id, platform, goods_id, goods_name, price_range, min_order_quantity,
        seller_mix_setting, one_piece_free_postage, created_at)
      VALUES (?, ?, '1688', ?, ?, ?, ?, ?, ?, NOW())`,
-    id, input.shop_id ?? 0, input.goods_id ?? `p${id}`, input.goods_name ?? '商品',
+    id,
+    input.shop_id ?? 0,
+    input.goods_id ?? `p${id}`,
+    input.goods_name ?? '商品',
     input.price_range ? JSON.stringify(input.price_range) : null,
-    input.min_order_quantity ?? 2, input.seller_mix_setting ?? null, input.one_piece_free_postage ?? 0,
+    input.min_order_quantity ?? 2,
+    input.seller_mix_setting ?? null,
+    input.one_piece_free_postage ?? 0,
   );
   return id;
 }
@@ -157,7 +185,7 @@ function makeService(tx: Tx, opts: HarnessOptions = {}) {
   const goodsPriceRefreshPort: GoodsPriceRefreshPort = { refresh: async () => undefined };
   const skuTranslationPort: SkuTranslationPort = { attributesFor: async () => null };
   const benefitPort: PlaceOrderBenefitPort = {
-    previewFeeDeduct: async () => (opts.feeDeductPreviewEnabled ? opts.preview ?? null : null),
+    previewFeeDeduct: async () => (opts.feeDeductPreviewEnabled ? (opts.preview ?? null) : null),
     useFeeDeductBenefit: async (_uid, _money, orderIds) => {
       used.push(...orderIds);
     },
@@ -222,7 +250,13 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx, { money: 1000 });
-      const gid = await seedCart(tx, { uid: user.uid, type: 1, goodsprice: 100, goodsnum: 2, goodsimg: 'https://e.com/1.jpg' });
+      const gid = await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsprice: 100,
+        goodsnum: 2,
+        goodsimg: 'https://e.com/1.jpg',
+      });
       const { service, sideEffects } = makeService(tx);
 
       const result = await service.placeOrders(member(user.uid), { ids: String(gid) });
@@ -235,7 +269,20 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       const oid = result.value.orderIds[0]!;
       const order = await tx.dg_order.findUnique({
         where: { oid },
-        select: { state: true, type: true, goodsprice: true, goodsnum: true, sendprice: true, uname: true, memberid: true, belong_company: true, extend: true, add_from: true, sku_name: true, goodsname: true },
+        select: {
+          state: true,
+          type: true,
+          goodsprice: true,
+          goodsnum: true,
+          sendprice: true,
+          uname: true,
+          memberid: true,
+          belong_company: true,
+          extend: true,
+          add_from: true,
+          sku_name: true,
+          goodsname: true,
+        },
       });
       expect(order?.state).toBe(1); // STATE_WAIT_CREATE
       expect(order?.type).toBe(1);
@@ -246,7 +293,18 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       // countMoney 的内存态副作用 → order.extend → payOrder 读回
       expect(order?.extend).toBe('{"deducted_service_fee":0}');
 
-      const rec = await tx.dg_record.findFirst({ where: { uid: user.uid, oid }, select: { money: true, accountmoney: true, action: true, ordflag: true, type: true, remark: true, extend: true } });
+      const rec = await tx.dg_record.findFirst({
+        where: { uid: user.uid, oid },
+        select: {
+          money: true,
+          accountmoney: true,
+          action: true,
+          ordflag: true,
+          type: true,
+          remark: true,
+          extend: true,
+        },
+      });
       expect(Number(rec?.money)).toBe(-210);
       expect(Number(rec?.accountmoney)).toBe(790);
       expect(rec?.action).toBe(1); // RECORD_ACTION_1
@@ -254,7 +312,10 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       expect(rec?.type).toBe(1); // TYPE_DECR
       expect(rec?.remark).toContain('オーダーID:');
 
-      const after = await tx.dg_users.findUnique({ where: { uid: user.uid }, select: { money: true } });
+      const after = await tx.dg_users.findUnique({
+        where: { uid: user.uid },
+        select: { money: true },
+      });
       expect(Number(after?.money)).toBe(790);
       const cartLeft = await tx.dg_cart.findUnique({ where: { gid }, select: { gid: true } });
       expect(cartLeft).toBeNull();
@@ -271,7 +332,13 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx, { money: 100 });
-      const gid = await seedCart(tx, { uid: user.uid, type: 1, goodsprice: 100, goodsnum: 2, goodsimg: 'https://e.com/1.jpg' });
+      const gid = await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsprice: 100,
+        goodsnum: 2,
+        goodsimg: 'https://e.com/1.jpg',
+      });
       const { service, sideEffects } = makeService(tx);
 
       const result = await service.placeOrders(member(user.uid), { ids: String(gid) });
@@ -279,7 +346,10 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       if (result.ok) return;
       expect(result.error.code).toBe('ORDER_INSUFFICIENT_BALANCE');
 
-      const orders = await tx.dg_order.findMany({ where: { uid: user.uid }, select: { oid: true } });
+      const orders = await tx.dg_order.findMany({
+        where: { uid: user.uid },
+        select: { oid: true },
+      });
       expect(orders).toHaveLength(0);
       expect(await tx.dg_cart.findUnique({ where: { gid }, select: { gid: true } })).not.toBeNull();
       expect(sideEffects.emails).toHaveLength(0);
@@ -350,7 +420,22 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
 
       const so = await tx.dg_sendorder.findUnique({
         where: { sid },
-        select: { otype: true, state: true, consignee: true, address: true, tel: true, zip: true, remark: true, country: true, deliveryname: true, dfsendaddress: true, dfsendname: true, dfsendtel: true, oids: true, uid: true },
+        select: {
+          otype: true,
+          state: true,
+          consignee: true,
+          address: true,
+          tel: true,
+          zip: true,
+          remark: true,
+          country: true,
+          deliveryname: true,
+          dfsendaddress: true,
+          dfsendname: true,
+          dfsendtel: true,
+          oids: true,
+          uid: true,
+        },
       });
       expect(so?.otype).toBe(3); // OTYPE_3
       expect(so?.state).toBe(1); // STATE_WAITING
@@ -362,14 +447,20 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       expect(so?.oids).toBe(result.value.orderIds.join(','));
 
       // 发件信息回写会员
-      const u = await tx.dg_users.findUnique({ where: { uid: user.uid }, select: { dfsendaddress: true, dfsendtel: true, dfsendname: true, money: true } });
+      const u = await tx.dg_users.findUnique({
+        where: { uid: user.uid },
+        select: { dfsendaddress: true, dfsendtel: true, dfsendname: true, money: true },
+      });
       expect(u?.dfsendaddress).toBe('中国浙江省义乌市');
       expect(u?.dfsendtel).toBe('0579-0000');
       expect(u?.dfsendname).toBe('張三');
       expect(Number(u?.money)).toBe(880);
 
       // dfflag=1 → addMoney 强制 ordflag=3（旧 addMoney 矫正逻辑）
-      const rec = await tx.dg_record.findFirst({ where: { uid: user.uid, oid: result.value.orderIds[0]! }, select: { money: true, ordflag: true, action: true } });
+      const rec = await tx.dg_record.findFirst({
+        where: { uid: user.uid, oid: result.value.orderIds[0]! },
+        select: { money: true, ordflag: true, action: true },
+      });
       expect(Number(rec?.money)).toBe(-120);
       expect(rec?.ordflag).toBe(3);
       expect(rec?.action).toBe(1);
@@ -380,8 +471,21 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx, { money: 1000 });
-      const gid1 = await seedCart(tx, { uid: user.uid, type: 2, goodsprice: 30, goodsnum: 1, sendprice: 5, expressno: 'SF-TR-1' });
-      const gid2 = await seedCart(tx, { uid: user.uid, type: 2, goodsprice: 40, goodsnum: 1, expressno: '' });
+      const gid1 = await seedCart(tx, {
+        uid: user.uid,
+        type: 2,
+        goodsprice: 30,
+        goodsnum: 1,
+        sendprice: 5,
+        expressno: 'SF-TR-1',
+      });
+      const gid2 = await seedCart(tx, {
+        uid: user.uid,
+        type: 2,
+        goodsprice: 40,
+        goodsnum: 1,
+        expressno: '',
+      });
       const { service } = makeService(tx);
 
       const result = await service.placeOrders(member(user.uid), { ids: `${gid1},${gid2}` });
@@ -392,20 +496,34 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       expect(result.value.totalMoney).toBe('0.00');
 
       const oids = result.value.orderIds;
-      const o1 = await tx.dg_order.findUnique({ where: { oid: oids[0]! }, select: { state: true, type: true, sendprice: true } });
+      const o1 = await tx.dg_order.findUnique({
+        where: { oid: oids[0]! },
+        select: { state: true, type: true, sendprice: true },
+      });
       expect(o1?.state).toBe(3); // STATE_SEND
       expect(o1?.sendprice).toBe(5); // 转运保留运费
-      const o2 = await tx.dg_order.findUnique({ where: { oid: oids[1]! }, select: { state: true } });
+      const o2 = await tx.dg_order.findUnique({
+        where: { oid: oids[1]! },
+        select: { state: true },
+      });
       expect(o2?.state).toBe(2); // STATE_PAID（无单号）
 
-      const arrivals = await tx.v2_logistic_domestic.findMany({ where: { expressno: 'SF-TR-1' }, select: { id: true, state: true, provider_code: true } });
+      const arrivals = await tx.v2_logistic_domestic.findMany({
+        where: { expressno: 'SF-TR-1' },
+        select: { id: true, state: true, provider_code: true },
+      });
       expect(arrivals).toHaveLength(1);
       expect(arrivals[0]?.state).toBe(1);
-      const pivots = await tx.v2_relation_order_and_logistic_domestic.findMany({ where: { oid: BigInt(oids[0]!) } });
+      const pivots = await tx.v2_relation_order_and_logistic_domestic.findMany({
+        where: { oid: BigInt(oids[0]!) },
+      });
       expect(pivots.length).toBeGreaterThanOrEqual(1);
 
       // 转运 payOrder 不扣款
-      const recs = await tx.dg_record.findMany({ where: { uid: user.uid }, select: { money: true } });
+      const recs = await tx.dg_record.findMany({
+        where: { uid: user.uid },
+        select: { money: true },
+      });
       expect(recs).toHaveLength(0);
       const u = await tx.dg_users.findUnique({ where: { uid: user.uid }, select: { money: true } });
       expect(Number(u?.money)).toBe(1000);
@@ -424,7 +542,10 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       expect(result.ok).toBe(true);
       if (!result.ok) return;
       expect(result.value.totalMoney).toBe('200.00');
-      const rec = await tx.dg_record.findFirst({ where: { uid: user.uid }, select: { money: true, accountmoney: true } });
+      const rec = await tx.dg_record.findFirst({
+        where: { uid: user.uid },
+        select: { money: true, accountmoney: true },
+      });
       expect(Number(rec?.money)).toBe(-200);
       expect(Number(rec?.accountmoney)).toBe(800);
     });
@@ -434,7 +555,13 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
     await withRollback(async (tx0) => {
       const tx = tx0 as unknown as Tx;
       const user = await seedUser(tx, { money: 1000 });
-      const gid = await seedCart(tx, { uid: user.uid, type: 1, goodsprice: 100, goodsnum: 2, goodsimg: null });
+      const gid = await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsprice: 100,
+        goodsnum: 2,
+        goodsimg: null,
+      });
       const { service, sideEffects, used } = makeService(tx, {
         feeDeductPreviewEnabled: true,
         preview: { canDeduct: 5, maxDeduct: 5, benefitId: 77 },
@@ -444,10 +571,16 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       expect(result.ok).toBe(true);
       if (!result.ok) return;
 
-      const order = await tx.dg_order.findUnique({ where: { oid: result.value.orderIds[0]! }, select: { extend: true, goodsimg: true } });
+      const order = await tx.dg_order.findUnique({
+        where: { oid: result.value.orderIds[0]! },
+        select: { extend: true, goodsimg: true },
+      });
       expect(order?.extend).toBe('{"deducted_service_fee":5}');
       // 服务费 10 − 抵扣 5 = 5 → 实付 205
-      const rec = await tx.dg_record.findFirst({ where: { uid: user.uid }, select: { money: true } });
+      const rec = await tx.dg_record.findFirst({
+        where: { uid: user.uid },
+        select: { money: true },
+      });
       expect(Number(rec?.money)).toBe(-205);
       expect(used).toEqual(result.value.orderIds);
       // 1688 + 缺图 → 补全 Job
@@ -479,13 +612,23 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
       const first = await service.placeOrders(member(user.uid), { ids: String(gid) });
       expect(first.ok).toBe(true);
       if (!first.ok) return;
-      const order = await tx.dg_order.findUnique({ where: { oid: first.value.orderIds[0]! }, select: { goodsprice: true } });
+      const order = await tx.dg_order.findUnique({
+        where: { oid: first.value.orderIds[0]! },
+        select: { goodsprice: true },
+      });
       expect(order?.goodsprice).toBe(80); // 阶梯价回写后按 80 计费
       // 100 → 服务费 ceil(80*0.05*100)/100 = 4 → 84
       expect(first.value.totalMoney).toBe('84.00');
 
       // 同 goodsid + 同 sku → 30s 冷却命中（旧 Cache::has）
-      const gid2 = await seedCart(tx, { uid: user.uid, type: 1, goodsprice: 100, goodsnum: 1, goodssite: '1688', goodsid: 'g1' });
+      const gid2 = await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsprice: 100,
+        goodsnum: 1,
+        goodssite: '1688',
+        goodsid: 'g1',
+      });
       const second = await service.placeOrders(member(user.uid), { ids: String(gid2) });
       expect(second.ok).toBe(false);
       if (!second.ok) expect(second.error.code).toBe('ORDER_SKU_CREATING');
@@ -502,7 +645,9 @@ describe('下单主体（CreateOrderFromCartService + cartToOrder + payOrder 1:1
     // 锁键：shangpin_sku 优先；空则 md5(去空白 sku_name)
     const withSku = skuLockSuffix(7, { goodsid: '123', shangpin_sku: ' SK-1 ', sku_name: '' });
     expect(withSku.startsWith('7_')).toBe(true);
-    expect(withSku).toBe(skuLockSuffix(7, { goodsid: '123', shangpin_sku: 'SK-1', sku_name: 'zzz' }));
+    expect(withSku).toBe(
+      skuLockSuffix(7, { goodsid: '123', shangpin_sku: 'SK-1', sku_name: 'zzz' }),
+    );
     expect(skuLockSuffix(7, { goodsid: '123', shangpin_sku: '', sku_name: 'a b' })).toBe(
       skuLockSuffix(7, { goodsid: '123', shangpin_sku: '', sku_name: 'ab' }),
     );

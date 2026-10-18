@@ -54,7 +54,12 @@ export interface PlatformGoodsInfo {
   minNum?: number | null;
   minOrderQuantity?: number | null;
   sellerMixSetting?: unknown;
-  sellerInfo?: { openid?: string | null; id?: string | number | null; nick?: string | null; shopName?: string | null } | null;
+  sellerInfo?: {
+    openid?: string | null;
+    id?: string | number | null;
+    nick?: string | null;
+    shopName?: string | null;
+  } | null;
   skus?: PlatformSku[];
   propsList?: Record<string, string>;
   propsImg?: Record<string, string>;
@@ -73,7 +78,11 @@ export interface PlatformSku {
 }
 
 export interface PlatformGoodsInfoPort {
-  fetch(input: { goodsSite: string; goodsId: string; miId: string }): Promise<PlatformGoodsInfo | null>;
+  fetch(input: {
+    goodsSite: string;
+    goodsId: string;
+    miId: string;
+  }): Promise<PlatformGoodsInfo | null>;
 }
 
 /** 1688 店铺反解（旧 Alibaba::searchShopNameByGoodsId / decryptOpenidFromFenxiaoApi） */
@@ -114,9 +123,19 @@ export interface SupplierProductPort {
 
 /** 供应商店铺映射（v2_supplier_shop 属主 = purchase 域） */
 export interface SupplierShopPort {
-  findByOpenId(appid: number, openid: string): Promise<{ id: number; title: string; nickname: string | null } | null>;
-  create(appid: number, openid: string, title: string): Promise<{ id: number; title: string; nickname: string | null }>;
-  update(id: number, patch: { title?: string; nickname?: string | null }): Promise<{ id: number; title: string; nickname: string | null }>;
+  findByOpenId(
+    appid: number,
+    openid: string,
+  ): Promise<{ id: number; title: string; nickname: string | null } | null>;
+  create(
+    appid: number,
+    openid: string,
+    title: string,
+  ): Promise<{ id: number; title: string; nickname: string | null }>;
+  update(
+    id: number,
+    patch: { title?: string; nickname?: string | null },
+  ): Promise<{ id: number; title: string; nickname: string | null }>;
 }
 
 /** 加购后 Job（旧 4 个 dispatch；R1 组合根 no-op，随 worker 落地接线 TODO(#16)） */
@@ -133,7 +152,9 @@ export interface AddCartSideEffectPort {
 
 /** 会员身份（dg_users 属主 = member 域；复用购物车金额的窄投影端口） */
 export interface AddCartMemberPort {
-  getMoneyFactors(uid: number): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null>;
+  getMoneyFactors(
+    uid: number,
+  ): Promise<{ isDf: boolean; dffee: number; utype: number; uname: string | null } | null>;
 }
 
 export interface AddCartDeps {
@@ -176,7 +197,9 @@ export function formatSkuNameHtml(props: Array<{ name: string; value: string }>)
 }
 
 /** 旧 sortAttrs：按 name 的 strcmp 排序（等价 localeCompare 之外的字节序 → 用 < 比较） */
-export function sortAttrs(attrs: Array<{ name?: string | null; value?: string | null }>): Array<{ name: string; value: string }> {
+export function sortAttrs(
+  attrs: Array<{ name?: string | null; value?: string | null }>,
+): Array<{ name: string; value: string }> {
   const copy = attrs.map((a) => ({ name: a.name ?? '', value: a.value ?? '' }));
   copy.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return copy;
@@ -186,21 +209,41 @@ export function sortAttrs(attrs: Array<{ name?: string | null; value?: string | 
  * 旧 generateSkuAttrsHash：`md5(json_encode(sortAttrs($attrs), JSON_UNESCAPED_UNICODE))`。
  * ⚠ 只需**判等**（不与库里旧哈希比对），故用 JSON.stringify + md5 语义等价实现。
  */
-export function generateSkuAttrsHash(attrs: Array<{ name?: string | null; value?: string | null }>): string {
-  return createHash('md5').update(JSON.stringify(sortAttrs(attrs))).digest('hex');
+export function generateSkuAttrsHash(
+  attrs: Array<{ name?: string | null; value?: string | null }>,
+): string {
+  return createHash('md5')
+    .update(JSON.stringify(sortAttrs(attrs)))
+    .digest('hex');
 }
 
 /** 旧 parseSkuAttrsFromCart：从 sku_name 反解属性（空 → []） */
-export function parseSkuAttrsFromCart(skuName: string | null | undefined): Array<{ name: string; value: string }> {
+export function parseSkuAttrsFromCart(
+  skuName: string | null | undefined,
+): Array<{ name: string; value: string }> {
   if (!skuName) return [];
   return parseSkuName(skuName, null, null);
 }
 
 /** 旧 compareExtraFields：17 列逐项 `empty() ? '' : v` 宽松比较（全等才合并） */
 export const EXTRA_COMPARE_FIELDS = [
-  'yanhuofba', 'yanhuoasin', 'yanhuofnsku', 'outid',
-  'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7',
-  'var8', 'var9', 'var10', 'var11', 'var12', 'goodsremark',
+  'yanhuofba',
+  'yanhuoasin',
+  'yanhuofnsku',
+  'outid',
+  'var1',
+  'var2',
+  'var3',
+  'var4',
+  'var5',
+  'var6',
+  'var7',
+  'var8',
+  'var9',
+  'var10',
+  'var11',
+  'var12',
+  'goodsremark',
 ] as const;
 
 export function compareExtraFields(
@@ -238,7 +281,10 @@ export function propsFromSkuAttributes(sku: PlatformSku): Array<{ name: string; 
 }
 
 /** 旧 propsFromPlatformSku：skuAttributes 为空时按 `properties` 查 props_list */
-export function propsFromPlatformSku(sku: PlatformSku, propsList: Record<string, string>): Array<{ name: string; value: string }> {
+export function propsFromPlatformSku(
+  sku: PlatformSku,
+  propsList: Record<string, string>,
+): Array<{ name: string; value: string }> {
   const fromAttributes = propsFromSkuAttributes(sku);
   if (fromAttributes.length > 0) return fromAttributes;
 
@@ -258,7 +304,9 @@ export function propsFromPlatformSku(sku: PlatformSku, propsList: Record<string,
 }
 
 /** 旧 normalizeAttrPairs：小写 + 排序后的 `name:value` 串（用于 SKU 匹配） */
-export function normalizeAttrPairs(attrs: Array<{ name?: string | null; value?: string | null }>): string[] {
+export function normalizeAttrPairs(
+  attrs: Array<{ name?: string | null; value?: string | null }>,
+): string[] {
   const pairs: string[] = [];
   for (const attr of attrs) {
     const name = (attr.name ?? '').trim().toLowerCase();
@@ -271,7 +319,10 @@ export function normalizeAttrPairs(attrs: Array<{ name?: string | null; value?: 
 }
 
 /** 旧 attrsFromPlatformSku：平台 SKU 侧的属性串（与 normalizeAttrPairs 同形） */
-export function attrsFromPlatformSku(sku: PlatformSku, propsList: Record<string, string>): string[] {
+export function attrsFromPlatformSku(
+  sku: PlatformSku,
+  propsList: Record<string, string>,
+): string[] {
   const pairs: string[] = [];
   for (const propKey of String(sku.properties ?? '').split(';')) {
     if (propKey === '') continue;
@@ -280,7 +331,10 @@ export function attrsFromPlatformSku(sku: PlatformSku, propsList: Record<string,
     const idx = raw.indexOf(':');
     if (idx < 0) continue;
     const name = raw.slice(0, idx).trim().toLowerCase();
-    const value = raw.slice(idx + 1).trim().toLowerCase();
+    const value = raw
+      .slice(idx + 1)
+      .trim()
+      .toLowerCase();
     if (name === '' || value === '') continue;
     pairs.push(`${name}:${value}`);
   }
@@ -341,7 +395,10 @@ export function resolvePlatformImage(goodsInfo: PlatformGoodsInfo, sku: Platform
 }
 
 /** 旧 mixRule：平台 seller_mix_setting 优先，回落请求里的 sellerMixSetting JSON */
-export function mixRule(platform: PlatformGoodsInfo | null, goodsInfo: GoodsInfoInput): { mixAmount: number; mixNumber: number } | null {
+export function mixRule(
+  platform: PlatformGoodsInfo | null,
+  goodsInfo: GoodsInfoInput,
+): { mixAmount: number; mixNumber: number } | null {
   let raw: unknown = null;
   if (platform && platform.sellerMixSetting !== undefined && platform.sellerMixSetting !== null) {
     raw = platform.sellerMixSetting;
@@ -362,11 +419,17 @@ export function mixRule(platform: PlatformGoodsInfo | null, goodsInfo: GoodsInfo
   const mixAmount = Number(obj['mixAmount'] ?? 0);
   const mixNumber = Number(obj['mixNumber'] ?? 0);
   if (!(mixAmount > 0) && !(mixNumber > 0)) return null;
-  return { mixAmount: Number.isFinite(mixAmount) ? mixAmount : 0, mixNumber: Number.isFinite(mixNumber) ? mixNumber : 0 };
+  return {
+    mixAmount: Number.isFinite(mixAmount) ? mixAmount : 0,
+    mixNumber: Number.isFinite(mixNumber) ? mixNumber : 0,
+  };
 }
 
 /** 旧 resolveMinOrderQuantity：平台 min_num/minOrderQuantity > 0 优先，否则请求值；平台缺失时 <1 视为不校验 */
-export function resolveMinOrderQuantity(platform: PlatformGoodsInfo | null, goodsInfo: GoodsInfoInput): number {
+export function resolveMinOrderQuantity(
+  platform: PlatformGoodsInfo | null,
+  goodsInfo: GoodsInfoInput,
+): number {
   if (platform) {
     const raw = Number(platform.minNum ?? platform.minOrderQuantity ?? 0);
     return raw > 0 ? Math.trunc(raw) : 1;
@@ -375,7 +438,11 @@ export function resolveMinOrderQuantity(platform: PlatformGoodsInfo | null, good
 }
 
 /** 旧 shopKey：有卖家标识 → `{site}:shop:{id}`，否则退化成 `{site}:goods:{goodsId}` */
-export function shopKey(platform: PlatformGoodsInfo | null, goodsSite: string, goodsId: string): string {
+export function shopKey(
+  platform: PlatformGoodsInfo | null,
+  goodsSite: string,
+  goodsId: string,
+): string {
   const seller = platform?.sellerInfo ?? null;
   let id = '';
   if (seller) {
@@ -398,7 +465,10 @@ export interface MinOrderLine {
 
 /** 旧 shopKeysMeetingMix：店铺维度合计达标（金额或件数任一） */
 export function shopKeysMeetingMix(products: MinOrderLine[]): Record<string, true> {
-  const shops = new Map<string, { quantity: number; amount: number; mix: { mixAmount: number; mixNumber: number } }>();
+  const shops = new Map<
+    string,
+    { quantity: number; amount: number; mix: { mixAmount: number; mixNumber: number } }
+  >();
   for (const product of products) {
     if (!product.hasMix || !product.mix) continue;
     const entry = shops.get(product.shopKey) ?? { quantity: 0, amount: 0, mix: product.mix };
@@ -416,9 +486,7 @@ export function shopKeysMeetingMix(products: MinOrderLine[]): Record<string, tru
 }
 
 /** 旧 assertProductMinOrderQuantity：数量不足且店铺未达混批 → 抛（返回首个违规行） */
-export function findBelowMinOrderQuantity(
-  products: MinOrderLine[],
-): MinOrderLine | null {
+export function findBelowMinOrderQuantity(products: MinOrderLine[]): MinOrderLine | null {
   const mixShops = shopKeysMeetingMix(products);
   for (const product of products) {
     if (product.quantity >= product.min) continue;
@@ -450,7 +518,10 @@ export class AddCartService {
    *
    * @returns `result` 与旧系统同形（'done' / gid 逗号串 / 再买一单跳转 URL）
    */
-  async addCarts(principal: Principal, rawInput: unknown): Promise<Result<AddCartResult, OrderError>> {
+  async addCarts(
+    principal: Principal,
+    rawInput: unknown,
+  ): Promise<Result<AddCartResult, OrderError>> {
     if (principal.kind !== 'member') return err(orderError('NO_PERMISSIONS'));
     const uid = Number(principal.subject);
     if (!Number.isInteger(uid) || uid <= 0) return err(orderError('NO_PERMISSIONS'));
@@ -489,8 +560,8 @@ export class AddCartService {
       if (below) {
         return err({
           code: 'CART_BELOW_MIN_ORDER_QUANTITY',
-          message: orderError('CART_BELOW_MIN_ORDER_QUANTITY').message
-            .replace(':name', below.title)
+          message: orderError('CART_BELOW_MIN_ORDER_QUANTITY')
+            .message.replace(':name', below.title)
             .replace(':qty', String(below.quantity))
             .replace(':min', String(below.min)),
         });
@@ -540,7 +611,11 @@ export class AddCartService {
       }
 
       let created: { gid: number };
-      if (isValidate === 2 && preparedCart.duplicatedCarts && preparedCart.duplicatedCarts.length > 0) {
+      if (
+        isValidate === 2 &&
+        preparedCart.duplicatedCarts &&
+        preparedCart.duplicatedCarts.length > 0
+      ) {
         // 旧：事务内先建后删（合并数量）
         const duplicatedGids = preparedCart.duplicatedCarts.map((c) => c.gid);
         const totalQuantity = preparedCart.duplicatedCarts.reduce(
@@ -548,10 +623,16 @@ export class AddCartService {
           Number(cart['goodsnum'] ?? 0),
         );
         cart['goodsnum'] = totalQuantity;
-        created = await this.deps.repository.createCart(this.deps.repository.db, cart as CreateCartData);
+        created = await this.deps.repository.createCart(
+          this.deps.repository.db,
+          cart as CreateCartData,
+        );
         await this.deps.repository.deleteCarts(this.deps.repository.db, duplicatedGids);
       } else {
-        created = await this.deps.repository.createCart(this.deps.repository.db, cart as CreateCartData);
+        created = await this.deps.repository.createCart(
+          this.deps.repository.db,
+          cart as CreateCartData,
+        );
       }
 
       if (input.returnCartId === true) cartIds.push(created.gid);
@@ -563,7 +644,10 @@ export class AddCartService {
       ) {
         await this.deps.sideEffects.enqueueCompletionGoodsInfoForCart(created.gid);
       }
-      if ((goodsSite === GOODS_SITE_1688 || goodsSite === GOODS_SITE_TAOBAO) && !isEmptyValue(cart['goodsurl'])) {
+      if (
+        (goodsSite === GOODS_SITE_1688 || goodsSite === GOODS_SITE_TAOBAO) &&
+        !isEmptyValue(cart['goodsurl'])
+      ) {
         await this.deps.sideEffects.enqueueTranslateCartGoodsInfo(created.gid);
       }
     }
@@ -673,7 +757,8 @@ export class AddCartService {
       if (goodsInfo.props && goodsInfo.props.length > 0) {
         let propsHtml = '';
         for (const prop of goodsInfo.props) {
-          if (prop.name === null || prop.name === '' || prop.value === null || prop.value === '') continue;
+          if (prop.name === null || prop.name === '' || prop.value === null || prop.value === '')
+            continue;
           propsHtml += `<font color=red>${prop.name}:</font><font color=green> ${prop.value} </font>`;
           skus.push({ name: prop.name, value: prop.value });
         }
@@ -700,37 +785,52 @@ export class AddCartService {
       if (goodsSite !== GOODS_SITE_TAOBAO && goodsSite !== GOODS_SITE_1688) continue;
 
       if (isEmptyValue(cart['goodsid'])) {
-        this.deps.log?.('加购物车无法解析 goodsid，跳过平台实价覆盖', { uid: ctx.uid, goodsInfo: preparedCart.goodsInfo });
+        this.deps.log?.('加购物车无法解析 goodsid，跳过平台实价覆盖', {
+          uid: ctx.uid,
+          goodsInfo: preparedCart.goodsInfo,
+        });
         continue;
       }
 
       const platformGoods = await this.fetchPlatformGoodsInfoForVerify(cart, ctx);
       if (!platformGoods) {
         this.deps.log?.('加购物车拉取平台商品失败，保留前端价格', {
-          uid: ctx.uid, goodsid: cart['goodsid'], goodsurl: cart['goodsurl'],
+          uid: ctx.uid,
+          goodsid: cart['goodsid'],
+          goodsurl: cart['goodsurl'],
         });
         continue;
       }
 
-      const matchedSku = resolvePlatformSku(platformGoods, { shangpin_sku: String(cart['shangpin_sku'] ?? '') }, preparedCart.skus);
+      const matchedSku = resolvePlatformSku(
+        platformGoods,
+        { shangpin_sku: String(cart['shangpin_sku'] ?? '') },
+        preparedCart.skus,
+      );
       if (!matchedSku) {
         this.deps.log?.('加购物车匹配平台 SKU 失败，保留前端价格', {
-          uid: ctx.uid, goodsid: cart['goodsid'], shangpin_sku: cart['shangpin_sku'], sku_name: cart['sku_name'],
+          uid: ctx.uid,
+          goodsid: cart['goodsid'],
+          shangpin_sku: cart['shangpin_sku'],
+          sku_name: cart['sku_name'],
         });
         continue;
       }
 
       const price = round2(Number(matchedSku.price ?? 0));
       cart['goodsprice'] = price;
-      cart['one_piece_price'] = matchedSku.onePiecePrice !== undefined && matchedSku.onePiecePrice !== null
-        ? round2(Number(matchedSku.onePiecePrice))
-        : price;
-      cart['offer_price'] = matchedSku.offerPrice !== undefined && matchedSku.offerPrice !== null
-        ? round2(Number(matchedSku.offerPrice))
-        : price;
-      cart['retail_price'] = matchedSku.retailPrice !== undefined && matchedSku.retailPrice !== null
-        ? round2(Number(matchedSku.retailPrice))
-        : 0;
+      cart['one_piece_price'] =
+        matchedSku.onePiecePrice !== undefined && matchedSku.onePiecePrice !== null
+          ? round2(Number(matchedSku.onePiecePrice))
+          : price;
+      cart['offer_price'] =
+        matchedSku.offerPrice !== undefined && matchedSku.offerPrice !== null
+          ? round2(Number(matchedSku.offerPrice))
+          : price;
+      cart['retail_price'] =
+        matchedSku.retailPrice !== undefined && matchedSku.retailPrice !== null
+          ? round2(Number(matchedSku.retailPrice))
+          : 0;
       cart['proprice'] = roundedPriceOrZero(matchedSku.promotionPrice ?? null);
 
       this.fillMissingPlatformGoodsMeta(preparedCart, platformGoods, matchedSku);
@@ -853,7 +953,14 @@ export class AddCartService {
     if (!isValidate) return preparedCarts;
 
     const goodsIds: string[] = [];
-    const newCartSkuHashes = new Map<string, { preparedCart: PreparedCart; index: number; duplicatedCarts: Array<{ gid: number; goodsnum: number }> }>();
+    const newCartSkuHashes = new Map<
+      string,
+      {
+        preparedCart: PreparedCart;
+        index: number;
+        duplicatedCarts: Array<{ gid: number; goodsnum: number }>;
+      }
+    >();
 
     for (const preparedCart of preparedCarts) {
       const cart = preparedCart.cart;
@@ -881,7 +988,9 @@ export class AddCartService {
       const entry = newCartSkuHashes.get(key);
       if (!entry) continue;
       // 额外信息（17 列）全等才合并；校验模式的返回 gids 分支在旧代码里已注释掉（死代码）
-      if (compareExtraFields(existing as unknown as Record<string, unknown>, entry.preparedCart.cart)) {
+      if (
+        compareExtraFields(existing as unknown as Record<string, unknown>, entry.preparedCart.cart)
+      ) {
         entry.duplicatedCarts.push({ gid: existing.gid, goodsnum: existing.goodsnum ?? 0 });
       }
     }
@@ -909,11 +1018,19 @@ export class AddCartService {
     if (maxCount <= 0) return null;
 
     const types = ctx.isDf ? [ORDER_TYPE.DAIFA] : [ORDER_TYPE.DAIGOU, ORDER_TYPE.ZHUANYUN];
-    const currentCount = await this.deps.repository.countUserCarts(this.deps.repository.db, ctx.uid, types);
+    const currentCount = await this.deps.repository.countUserCarts(
+      this.deps.repository.db,
+      ctx.uid,
+      types,
+    );
 
     let delta = 0;
     for (const preparedCart of finalPreparedCarts) {
-      if (isValidate === 2 && preparedCart.duplicatedCarts && preparedCart.duplicatedCarts.length > 0) {
+      if (
+        isValidate === 2 &&
+        preparedCart.duplicatedCarts &&
+        preparedCart.duplicatedCarts.length > 0
+      ) {
         delta += 1 - preparedCart.duplicatedCarts.length;
       } else {
         delta += 1;
@@ -923,7 +1040,10 @@ export class AddCartService {
     if (currentCount + delta > maxCount) {
       return {
         code: 'CART_MAX_COUNT_REACHED',
-        message: orderError('CART_MAX_COUNT_REACHED').message.replace(':maxCount', String(maxCount)),
+        message: orderError('CART_MAX_COUNT_REACHED').message.replace(
+          ':maxCount',
+          String(maxCount),
+        ),
       };
     }
     return null;
@@ -938,7 +1058,9 @@ export class AddCartService {
     preparedCarts: PreparedCart[],
     ctx: { uid: number; isDf: boolean; goodsInfoCache: Map<string, PlatformGoodsInfo | null> },
   ): Promise<string | null> {
-    const repurchaseCarts = preparedCarts.filter((p) => Number(p.goodsInfo.addFrom ?? 0) === ADD_FROM_REPURCHASE);
+    const repurchaseCarts = preparedCarts.filter(
+      (p) => Number(p.goodsInfo.addFrom ?? 0) === ADD_FROM_REPURCHASE,
+    );
     if (repurchaseCarts.length === 0) return null;
 
     const platformCarts: PreparedCart[] = [];
@@ -970,7 +1092,10 @@ export class AddCartService {
       const quantity = Math.trunc(Number(preparedCart.cart['goodsnum'] ?? 0));
       if (!skuQuantityMap.has(skuId)) {
         skuQuantityMap.set(skuId, 0);
-        skuCartMap.set(skuId, { ...preparedCart.cart, props: preparedCart.goodsInfo.props ?? null });
+        skuCartMap.set(skuId, {
+          ...preparedCart.cart,
+          props: preparedCart.goodsInfo.props ?? null,
+        });
       }
       skuQuantityMap.set(skuId, (skuQuantityMap.get(skuId) ?? 0) + quantity);
     }
@@ -997,7 +1122,8 @@ export class AddCartService {
 
     let path: string;
     if (goodsSite === GOODS_SITE_1688) {
-      if (productUrl === '') productUrl = detailUrl !== '' ? detailUrl : `https://detail.1688.com/offer/${goodsId}.html`;
+      if (productUrl === '')
+        productUrl = detailUrl !== '' ? detailUrl : `https://detail.1688.com/offer/${goodsId}.html`;
       path = `product/1688/${goodsId}.html?productUrl=${encodeURIComponent(productUrl)}&serviceType=0`;
     } else {
       if (productUrl === '') productUrl = detailUrl;
@@ -1025,10 +1151,15 @@ export class AddCartService {
     const cart = preparedCart.cart;
     if (goodsInfo.platform !== '1688' || ![1, 2].includes(Number(goodsInfo.addFrom ?? -1))) return;
 
-    const sellerOpenId = await this.deps.alibabaShop.searchShopNameByGoodsId(String(cart['goodsid'] ?? ''));
+    const sellerOpenId = await this.deps.alibabaShop.searchShopNameByGoodsId(
+      String(cart['goodsid'] ?? ''),
+    );
     if (!sellerOpenId) return;
 
-    let shop = await this.deps.supplierShop.findByOpenId(this.deps.alibabaFenxiaoAppid, sellerOpenId);
+    let shop = await this.deps.supplierShop.findByOpenId(
+      this.deps.alibabaFenxiaoAppid,
+      sellerOpenId,
+    );
     if (!shop && !isEmptyValue(cart['goodsseller'])) {
       shop = await this.deps.supplierShop.create(
         this.deps.alibabaFenxiaoAppid,
@@ -1046,7 +1177,8 @@ export class AddCartService {
 
     let title: string = shop.title;
     // 清洗：title 与 nickname/openid 相同 → 置空（历史脏数据的清洗，旧代码原话）
-    if (title !== null && title !== '' && (title === nickname || title === sellerOpenId)) title = '';
+    if (title !== null && title !== '' && (title === nickname || title === sellerOpenId))
+      title = '';
     // title 为空且传入的店铺名既不是 openid 也不是昵称 → 用传入值补
     if (!isEmptyValue(cart['goodsseller']) && isEmptyValue(title)) {
       const incoming = String(cart['goodsseller']);
@@ -1092,9 +1224,24 @@ export function buildRepurchaseItems(
   skuCarts: Array<Record<string, unknown>>,
 ): Array<Record<string, unknown>> {
   const extraFields = [
-    'goodsremark', 'yanhuofba', 'yanhuoasin', 'yanhuofnsku', 'outid', 'props',
-    'var1', 'var2', 'var3', 'var4', 'var5', 'var6', 'var7',
-    'var8', 'var9', 'var10', 'var11', 'var12',
+    'goodsremark',
+    'yanhuofba',
+    'yanhuoasin',
+    'yanhuofnsku',
+    'outid',
+    'props',
+    'var1',
+    'var2',
+    'var3',
+    'var4',
+    'var5',
+    'var6',
+    'var7',
+    'var8',
+    'var9',
+    'var10',
+    'var11',
+    'var12',
   ];
   const items: Array<Record<string, unknown>> = [];
   for (let i = 0; i < skuIds.length; i += 1) {
@@ -1102,7 +1249,13 @@ export function buildRepurchaseItems(
     const item: Record<string, unknown> = { skuId: skuIds[i], quantity: quantities[i] };
     for (const field of extraFields) {
       const value = skuCart[field];
-      if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) continue;
+      if (
+        value === null ||
+        value === undefined ||
+        value === '' ||
+        (Array.isArray(value) && value.length === 0)
+      )
+        continue;
       item[field] = Array.isArray(value) ? value : String(value);
     }
     items.push(item);
@@ -1111,7 +1264,9 @@ export function buildRepurchaseItems(
 }
 
 /** 旧 getPriceRange：必须是非空数组，且每项同时含 price 与 startQuantity */
-export function parsePriceRangeJson(raw: string | null | undefined): Array<{ price: unknown; startQuantity: unknown }> | null {
+export function parsePriceRangeJson(
+  raw: string | null | undefined,
+): Array<{ price: unknown; startQuantity: unknown }> | null {
   if (!raw) return null;
   let decoded: unknown;
   try {

@@ -18,13 +18,30 @@ import type { Db } from './repository';
 
 /** baseInfo 保留字段（旧 BASE_KEYS） */
 const BASE_KEYS = [
-  'id', 'status', 'createTime', 'payTime', 'totalAmount', 'shippingFee', 'sumProductPayment',
-  'discount', 'couponFee', 'refund', 'tradeType', 'stepPayAll',
+  'id',
+  'status',
+  'createTime',
+  'payTime',
+  'totalAmount',
+  'shippingFee',
+  'sumProductPayment',
+  'discount',
+  'couponFee',
+  'refund',
+  'tradeType',
+  'stepPayAll',
 ] as const;
 
 /** productItems[] 保留字段（旧 ITEM_KEYS） */
 const ITEM_KEYS = [
-  'productID', 'skuID', 'name', 'price', 'quantity', 'itemAmount', 'entryDiscount', 'status',
+  'productID',
+  'skuID',
+  'name',
+  'price',
+  'quantity',
+  'itemAmount',
+  'entryDiscount',
+  'status',
 ] as const;
 
 /** 旧 PLATFORM_1688 */
@@ -64,8 +81,12 @@ function onlyKeys(obj: unknown, keys: readonly string[]): Record<string, unknown
 
 /** 旧 extract 1:1：goods_total = Σ(price×quantity)；seller_adjust = Σ newStepOrderList.adjustFee */
 export function extractSnapshot(detail: AlibabaOrderDetail): PlatformSnapshotExtract {
-  const base = (typeof detail.baseInfo === 'object' && detail.baseInfo !== null ? detail.baseInfo : {}) as Record<string, unknown>;
-  const items = (Array.isArray(detail.productItems) ? detail.productItems : []).map((it) => onlyKeys(it, ITEM_KEYS));
+  const base = (
+    typeof detail.baseInfo === 'object' && detail.baseInfo !== null ? detail.baseInfo : {}
+  ) as Record<string, unknown>;
+  const items = (Array.isArray(detail.productItems) ? detail.productItems : []).map((it) =>
+    onlyKeys(it, ITEM_KEYS),
+  );
 
   let goodsTotal = 0;
   for (const it of items) {
@@ -115,7 +136,13 @@ export async function record1688Snapshot(
   }
 }
 
-async function doRecord(db: Db, tid: string, detail: AlibabaOrderDetail, stage: PlatformSnapshotStage, now: Date): Promise<void> {
+async function doRecord(
+  db: Db,
+  tid: string,
+  detail: AlibabaOrderDetail,
+  stage: PlatformSnapshotStage,
+  now: Date,
+): Promise<void> {
   if (tid === '' || !(typeof detail.baseInfo === 'object' && detail.baseInfo !== null)) {
     return; // 旧 doRecord 首判：baseInfo 缺失直接忽略
   }
@@ -164,7 +191,13 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 /** 旧 updateLatest 1:1：金额按 latest_snapshot_at 只前进；阶段单调不退；paid_at 回填 */
-async function updateLatest(db: Db, tid: string, stage: PlatformSnapshotStage, x: PlatformSnapshotExtract, now: Date): Promise<void> {
+async function updateLatest(
+  db: Db,
+  tid: string,
+  stage: PlatformSnapshotStage,
+  x: PlatformSnapshotExtract,
+  now: Date,
+): Promise<void> {
   const row = await db.v2_platform_order_amount.findUnique({
     where: { tid_platform: { tid, platform: PLATFORM_1688 } },
     select: { latest_snapshot_at: true, latest_stage: true },
@@ -189,9 +222,10 @@ async function updateLatest(db: Db, tid: string, stage: PlatformSnapshotStage, x
   }
 
   // 阶段：rank 单调不退
-  const currentRank = row.latest_stage && row.latest_stage in PLATFORM_SNAPSHOT_STAGE_RANK
-    ? PLATFORM_SNAPSHOT_STAGE_RANK[row.latest_stage as PlatformSnapshotStage]
-    : 0;
+  const currentRank =
+    row.latest_stage && row.latest_stage in PLATFORM_SNAPSHOT_STAGE_RANK
+      ? PLATFORM_SNAPSHOT_STAGE_RANK[row.latest_stage as PlatformSnapshotStage]
+      : 0;
   if (currentRank <= PLATFORM_SNAPSHOT_STAGE_RANK[stage]) {
     await db.v2_platform_order_amount.update({
       where: { tid_platform: { tid, platform: PLATFORM_1688 } },

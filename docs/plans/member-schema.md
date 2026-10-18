@@ -12,6 +12,7 @@
 **member 域负责**：会员身份、认证、地址、平台账号绑定、收藏/浏览、权益、开放 API 的会员侧（webhook 配置 + 幂等键）、会员操作审计。
 
 **member 域不负责**（跨域，通过 contract 调用，禁直接建库关联）：
+
 - 余额的**记账**（归 finance：`ledger_entries`）——member 只持有余额**冗余列**
 - 平台订单/店铺（归 order：`v2_ecommerce_shop` 是 order 域的 `Shop`）
 - 采买子账号的**用**（`v2_platform_sub_account` 供 order 下单使用；member 域只做「账号池」的增删改查）
@@ -22,24 +23,24 @@
 
 ## 二、实体清单与源表映射
 
-| # | 新实体（Prisma model） | 目标表名 | 源表 | 备注 |
-|---|---|---|---|---|
-| 1 | `Member` | `member` | `dg_users` | 会员根实体 |
-| 2 | `MemberCompany` | `member_company` | `dg_users`（com* 组拆分） | 法人信息，1:1，仅 regtype=1 |
-| 3 | `MemberAddress` | `member_address` | `dg_address` | type 1收货/2进口商 |
-| 4 | `MemberWebhook` | `member_webhook` | `v2_member_webhook` | uid 唯一 |
-| 5 | `MemberWebhookDelivery` | `member_webhook_delivery` | `v2_member_webhook_delivery` | event_key 唯一 |
-| 6 | `PersonalAccessToken` | `personal_access_token` | `v2_personal_access_tokens` | 取代 dg_users.apitoken |
-| 7 | `OauthLogin` | `oauth_login` | `v2_oauth_login` | |
-| 8 | `OauthTaobaoGlobal` | `oauth_taobao_global` | `v2_oauth_taobao_global` | |
-| 9 | `OpenApiIdempotency` | `open_api_idempotency` | `v2_open_api_idempotency` | 三列唯一 |
-| 10 | `Favorite` | `favorite` | `v2_favorite` | |
-| 11 | `FavoriteCategory` | `favorite_category` | `v2_favorite_category` | |
-| 12 | `BrowseHistory` | `browse_history` | `v2_user_browse_history` | 高频写 |
-| 13 | `BenefitConfig` | `benefit_config` | `user_benefit_configs` | |
-| 14 | `MemberBenefit` | `member_benefit` | `user_benefits` | |
-| 15 | `MemberOperationLog` | `member_operation_log` | `user_operation_log` | 审计 |
-| 16 | `Area` | `area` | `v2_area`（弃 `v2_address`） | geo 字典，建议移入 `common` 域 |
+| #   | 新实体（Prisma model）  | 目标表名                  | 源表                         | 备注                           |
+| --- | ----------------------- | ------------------------- | ---------------------------- | ------------------------------ |
+| 1   | `Member`                | `member`                  | `dg_users`                   | 会员根实体                     |
+| 2   | `MemberCompany`         | `member_company`          | `dg_users`（com* 组拆分）    | 法人信息，1:1，仅 regtype=1    |
+| 3   | `MemberAddress`         | `member_address`          | `dg_address`                 | type 1收货/2进口商             |
+| 4   | `MemberWebhook`         | `member_webhook`          | `v2_member_webhook`          | uid 唯一                       |
+| 5   | `MemberWebhookDelivery` | `member_webhook_delivery` | `v2_member_webhook_delivery` | event_key 唯一                 |
+| 6   | `PersonalAccessToken`   | `personal_access_token`   | `v2_personal_access_tokens`  | 取代 dg_users.apitoken         |
+| 7   | `OauthLogin`            | `oauth_login`             | `v2_oauth_login`             |                                |
+| 8   | `OauthTaobaoGlobal`     | `oauth_taobao_global`     | `v2_oauth_taobao_global`     |                                |
+| 9   | `OpenApiIdempotency`    | `open_api_idempotency`    | `v2_open_api_idempotency`    | 三列唯一                       |
+| 10  | `Favorite`              | `favorite`                | `v2_favorite`                |                                |
+| 11  | `FavoriteCategory`      | `favorite_category`       | `v2_favorite_category`       |                                |
+| 12  | `BrowseHistory`         | `browse_history`          | `v2_user_browse_history`     | 高频写                         |
+| 13  | `BenefitConfig`         | `benefit_config`          | `user_benefit_configs`       |                                |
+| 14  | `MemberBenefit`         | `member_benefit`          | `user_benefits`              |                                |
+| 15  | `MemberOperationLog`    | `member_operation_log`    | `user_operation_log`         | 审计                           |
+| 16  | `Area`                  | `area`                    | `v2_area`（弃 `v2_address`） | geo 字典，建议移入 `common` 域 |
 
 > `v2_user_platform_account` / `v2_platform_sub_account`：**暂不建模**。前者与 order 域耦合（下单提交信息），后者是采买账号池——待 order 域再定，避免 member 域越界。
 
@@ -87,6 +88,7 @@
 ### 3.7 索引：照搬旧表「真正被用到的」
 
 旧表有些索引是重复的（如 `v2_supplier_product` 的 `idx_plat_gid` 与 `idx_platform_goods_id`）。新 schema 只保留：
+
 - `Member`: `username`(unique)、`email`、`memberId`、`bizCode`、`state`
 - `MemberAddress`: `uid`、`(uid, type)`
 - `MemberWebhookDelivery`: `eventKey`(unique)、`(uid, createdAt)`、`(status, nextAttemptAt)`
@@ -147,15 +149,15 @@
 
 ## 六、未决问题（需业务/用户确认）
 
-| # | 问题 | 影响 |
-|---|---|---|
-| Q1 | `dg_users.utype` / `usetype` / `state` 的完整枚举值？dump 无注释 | Member 状态字段契约 |
-| Q2 | `finance_order_cash_flow.change_type` 的枚举值？需从旧代码反查 | finance 域（下一步） |
-| ~~Q3~~ | ~~余额币种与精度~~ → **已定，但 2026-10-15 改判：CNY + `Decimal(14,2)`**（原判「JPY + 12,2」被实测推翻，见 `finance-schema.md` §3.3 与 §八 Q1/Q8）；跨币种靠 `balanceCurrency` 隔离，**禁跨币种直接加减** | ✅ 已决（改判） |
-| ~~Q4~~ | ~~用户名唯一约束~~ → **已定：上 UNIQUE**；**查重已跑**（旧库只读）：22,611 用户中 **8 组 / 16 账号**重名（`utf8_general_ci` 语义），明细与消歧建议见 `docs/plans/02-用户名重名处置.md`；T1 回填前需业务定名（4 组待确认） | ✅ 已决（查重完成） |
-| Q5 | `email_subscribe_status` 位运算的位定义？ | 通知订阅 |
-| Q6 | `v2_user_platform_account` / `v2_platform_sub_account` 归 member 还是 order？ | 域边界 |
-| ~~Q7~~ | ~~共存方案 A/B/C~~ → **已定：新表正本 + 同库事务双写**（§四） | ✅ 已决 |
+| #      | 问题                                                                                                                                                                                                                      | 影响                 |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Q1     | `dg_users.utype` / `usetype` / `state` 的完整枚举值？dump 无注释                                                                                                                                                          | Member 状态字段契约  |
+| Q2     | `finance_order_cash_flow.change_type` 的枚举值？需从旧代码反查                                                                                                                                                            | finance 域（下一步） |
+| ~~Q3~~ | ~~余额币种与精度~~ → **已定，但 2026-10-15 改判：CNY + `Decimal(14,2)`**（原判「JPY + 12,2」被实测推翻，见 `finance-schema.md` §3.3 与 §八 Q1/Q8）；跨币种靠 `balanceCurrency` 隔离，**禁跨币种直接加减**                 | ✅ 已决（改判）      |
+| ~~Q4~~ | ~~用户名唯一约束~~ → **已定：上 UNIQUE**；**查重已跑**（旧库只读）：22,611 用户中 **8 组 / 16 账号**重名（`utf8_general_ci` 语义），明细与消歧建议见 `docs/plans/02-用户名重名处置.md`；T1 回填前需业务定名（4 组待确认） | ✅ 已决（查重完成）  |
+| Q5     | `email_subscribe_status` 位运算的位定义？                                                                                                                                                                                 | 通知订阅             |
+| Q6     | `v2_user_platform_account` / `v2_platform_sub_account` 归 member 还是 order？                                                                                                                                             | 域边界               |
+| ~~Q7~~ | ~~共存方案 A/B/C~~ → **已定：新表正本 + 同库事务双写**（§四）                                                                                                                                                             | ✅ 已决              |
 
 ---
 

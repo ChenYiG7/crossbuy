@@ -30,11 +30,23 @@ async function seedUser(tx: Tx, overrides: Record<string, unknown> = {}) {
   await tx.$executeRawUnsafe(
     `INSERT INTO dg_users (uname, password, card, memberid, email, money, dfflag, utype, validity, dffee, state)
      VALUES (?, 'x', 'test', ?, NULL, 100, ?, ?, 0, ?, 1)`,
-    uname, uname, overrides.dfflag ?? 0, overrides.utype ?? 0, overrides.dffee ?? 10,
+    uname,
+    uname,
+    overrides.dfflag ?? 0,
+    overrides.utype ?? 0,
+    overrides.dffee ?? 10,
   );
-  const row = await tx.dg_users.findFirst({ where: { uname }, select: { uid: true, dfflag: true, dffee: true, utype: true } });
+  const row = await tx.dg_users.findFirst({
+    where: { uname },
+    select: { uid: true, dfflag: true, dffee: true, utype: true },
+  });
   expect(row).toBeTruthy();
-  return { uid: row!.uid, dfflag: Number(row!.dfflag), dffee: Number(row!.dffee), utype: Number(row!.utype) };
+  return {
+    uid: row!.uid,
+    dfflag: Number(row!.dfflag),
+    dffee: Number(row!.dffee),
+    utype: Number(row!.utype),
+  };
 }
 
 /** dg_cart（占位符顺序注释锁定——上上轮 41 列对 37 值的教训） */
@@ -47,13 +59,33 @@ async function seedCart(tx: Tx, input: Record<string, unknown>) {
     `INSERT INTO dg_cart (gid, uid, supplier_product_id, type, goodsurl, goodsname, goodsprice, offer_price, retail_price,
        one_piece_price, sendprice, goodsnum, min_order_quantity, goodssize, goodscolor, goodsseller, goodssite,
        goodsid, sku_name, addtime, add_from, ${CART_EMPTY_COLS})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${CART_EMPTY_COLS.split(',').map(() => `' '`).join(',')})`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${CART_EMPTY_COLS.split(
+       ',',
+     )
+       .map(() => `' '`)
+       .join(',')})`,
     // supplier_product_id 列 NOT NULL：无商品落 0（falsy 跳过阶梯）
-    gid, input.uid, input.supplier_product_id ?? 0, input.type ?? 1, input.goodsurl ?? 'https://e.com/1',
-    input.goodsname ?? 'テスト商品', input.goodsprice ?? 100, input.offer_price ?? 0, input.retail_price ?? null,
-    input.one_piece_price ?? 0, input.sendprice ?? 0, input.goodsnum ?? 1, input.min_order_quantity ?? 2,
-    input.goodssize ?? null, input.goodscolor ?? null, input.goodsseller ?? 'shopA', input.goodssite ?? '1688',
-    input.goodsid ?? 'g1', input.sku_name ?? '', Math.floor(Date.now() / 1000), input.add_from ?? 1,
+    gid,
+    input.uid,
+    input.supplier_product_id ?? 0,
+    input.type ?? 1,
+    input.goodsurl ?? 'https://e.com/1',
+    input.goodsname ?? 'テスト商品',
+    input.goodsprice ?? 100,
+    input.offer_price ?? 0,
+    input.retail_price ?? null,
+    input.one_piece_price ?? 0,
+    input.sendprice ?? 0,
+    input.goodsnum ?? 1,
+    input.min_order_quantity ?? 2,
+    input.goodssize ?? null,
+    input.goodscolor ?? null,
+    input.goodsseller ?? 'shopA',
+    input.goodssite ?? '1688',
+    input.goodsid ?? 'g1',
+    input.sku_name ?? '',
+    Math.floor(Date.now() / 1000),
+    input.add_from ?? 1,
   );
   return gid;
 }
@@ -66,14 +98,23 @@ async function seedProduct(tx: Tx, input: Record<string, unknown>) {
        seller_mix_setting, one_piece_free_postage, created_at)
      VALUES (?, ?, '1688', ?, ?, ?, ?, ?, ?, NOW())`,
     // shop_id NOT NULL：无店铺落 0
-    id, input.shop_id ?? 0, input.goods_id ?? `p${id}`, input.goods_name ?? '商品',
+    id,
+    input.shop_id ?? 0,
+    input.goods_id ?? `p${id}`,
+    input.goods_name ?? '商品',
     input.price_range ? JSON.stringify(input.price_range) : null,
-    input.min_order_quantity ?? 2, input.seller_mix_setting ?? null, input.one_piece_free_postage ?? 0,
+    input.min_order_quantity ?? 2,
+    input.seller_mix_setting ?? null,
+    input.one_piece_free_postage ?? 0,
   );
   return id;
 }
 
-function makeFactorsPort(user: { dfflag: number; dffee: number; utype: number }): MemberFactorsPort {
+function makeFactorsPort(user: {
+  dfflag: number;
+  dffee: number;
+  utype: number;
+}): MemberFactorsPort {
   return {
     getMoneyFactors: async () => ({
       isDf: user.dfflag === 1,
@@ -87,7 +128,11 @@ function makeFactorsPort(user: { dfflag: number; dffee: number; utype: number })
 const benefitPort: BenefitPort = { previewFeeDeduct: async () => null };
 const currencyPort: CurrencyPort = { cnyToJpy: async () => 21.5 };
 
-function makeService(tx: unknown, user: { dfflag: number; dffee: number; utype: number }, overrides: Record<string, unknown> = {}) {
+function makeService(
+  tx: unknown,
+  user: { dfflag: number; dffee: number; utype: number },
+  overrides: Record<string, unknown> = {},
+) {
   // 供应商目录只读端口：用真实 DB 适配（v2_supplier_product / v2_supplier_shop 属主 = purchase 域，TODO #17）
   const purchaseRepo = new PurchaseRepository(tx as never);
   const supplierCatalog: SupplierCatalogPort = {
@@ -166,9 +211,27 @@ describe('购物车列表（listCart 1:1）', () => {
       const tx = tx0 as Tx;
       const user = await seedUser(tx, { dfflag: 0 });
       // 同卖家 shopA 两行（不同 sku → 不同桶），shopB 一行
-      await seedCart(tx, { uid: user.uid, type: 1, goodsseller: 'shopA', goodsid: 'g1', sku_name: '' });
-      await seedCart(tx, { uid: user.uid, type: 1, goodsseller: 'shopB', goodsid: 'g2', sku_name: '' });
-      await seedCart(tx, { uid: user.uid, type: 1, goodsseller: 'shopA', goodsid: 'g1', sku_name: '' });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsseller: 'shopA',
+        goodsid: 'g1',
+        sku_name: '',
+      });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsseller: 'shopB',
+        goodsid: 'g2',
+        sku_name: '',
+      });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        goodsseller: 'shopA',
+        goodsid: 'g1',
+        sku_name: '',
+      });
 
       const svc = makeService(tx, user);
       const result = await svc.listCarts(memberPrincipal(user.uid), {});
@@ -190,7 +253,10 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
       const tx = tx0 as Tx;
       const user = await seedUser(tx, { dfflag: 0, utype: 0 });
       const gid = await seedCart(tx, { uid: user.uid, type: 1, goodsprice: 100, goodsnum: 3 });
-      const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [1, 2] });
+      const rows = await new OrderRepository(tx as never).listCarts(tx, {
+        uid: user.uid,
+        types: [1, 2],
+      });
       const products = new Map();
 
       const money = countMoney(rows, products, false, user.dffee, null);
@@ -212,7 +278,10 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
       const tx = tx0 as Tx;
       const user = await seedUser(tx, { dfflag: 1, dffee: 10 });
       await seedCart(tx, { uid: user.uid, type: 3, goodsprice: 50, goodsnum: 4 });
-      const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [3] });
+      const rows = await new OrderRepository(tx as never).listCarts(tx, {
+        uid: user.uid,
+        types: [3],
+      });
 
       const money = countMoney(rows, new Map(), false, user.dffee, null);
       expect(money.goodsMoney).toBe(200);
@@ -227,18 +296,49 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
       const user = await seedUser(tx, { dfflag: 0 });
       // 同商品合计 3 件（goodsprice 100 / 两组阶梯：3件→90、2件→95——单组不算阶梯是旧语义）
       const pid = await seedProduct(tx, {
-        price_range: [{ startQuantity: 3, price: 90 }, { startQuantity: 2, price: 95 }],
+        price_range: [
+          { startQuantity: 3, price: 90 },
+          { startQuantity: 2, price: 95 },
+        ],
         min_order_quantity: 2,
       });
-      await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid, goodsprice: 100, goodsnum: 3 });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        supplier_product_id: pid,
+        goodsprice: 100,
+        goodsnum: 3,
+      });
       // 单件 + retail_price 95
-      const pid2 = await seedProduct(tx, { price_range: [{ startQuantity: 2, price: 90 }], min_order_quantity: 2 });
-      await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid2, goodsprice: 100, goodsnum: 1, retail_price: 95 });
+      const pid2 = await seedProduct(tx, {
+        price_range: [{ startQuantity: 2, price: 90 }],
+        min_order_quantity: 2,
+      });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        supplier_product_id: pid2,
+        goodsprice: 100,
+        goodsnum: 1,
+        retail_price: 95,
+      });
       // 单组 price_range → 原价
-      const pid3 = await seedProduct(tx, { price_range: [{ startQuantity: 5, price: 80 }], min_order_quantity: 2 });
-      await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid3, goodsprice: 100, goodsnum: 10 });
+      const pid3 = await seedProduct(tx, {
+        price_range: [{ startQuantity: 5, price: 80 }],
+        min_order_quantity: 2,
+      });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        supplier_product_id: pid3,
+        goodsprice: 100,
+        goodsnum: 10,
+      });
 
-      const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [1, 2] });
+      const rows = await new OrderRepository(tx as never).listCarts(tx, {
+        uid: user.uid,
+        types: [1, 2],
+      });
       const products = new Map(
         (
           await new PurchaseRepository(tx as never).findSupplierProductsByIds(
@@ -265,12 +365,31 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
         seller_mix_setting: JSON.stringify({ mixAmount: 500 }),
       });
       // 同店铺另一商品凑混批金额（600）
-      const pidMate = await seedProduct(tx, { shop_id: 777, price_range: null, min_order_quantity: 2 });
-      await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pidMate, goodsprice: 600, goodsnum: 1 });
+      const pidMate = await seedProduct(tx, {
+        shop_id: 777,
+        price_range: null,
+        min_order_quantity: 2,
+      });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        supplier_product_id: pidMate,
+        goodsprice: 600,
+        goodsnum: 1,
+      });
       // 目标商品 2 件 < startQuantity 10，但店铺混批达标 → 原价 100
-      await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid, goodsprice: 100, goodsnum: 2 });
+      await seedCart(tx, {
+        uid: user.uid,
+        type: 1,
+        supplier_product_id: pid,
+        goodsprice: 100,
+        goodsnum: 2,
+      });
 
-      const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [1, 2] });
+      const rows = await new OrderRepository(tx as never).listCarts(tx, {
+        uid: user.uid,
+        types: [1, 2],
+      });
       const products = new Map(
         (
           await new PurchaseRepository(tx as never).findSupplierProductsByIds(

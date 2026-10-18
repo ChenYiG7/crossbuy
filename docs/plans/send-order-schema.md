@@ -18,14 +18,14 @@
 
 ### 1.2 send-order 域不负责（跨域，禁直接建库关联）
 
-| 域 | 表 | 边界说明 |
-|---|---|---|
-| order | `dg_order` | 订单行；**关系只存 `orders.sendOrderId` 一侧**（order-schema.md §4.5 已定），禁 `dg_sendorder.oids` 双写 |
-| member | `dg_users` / `dg_address` | SendOrder 只存 `memberId`；收件人信息是运单**快照**（历史事实，保留） |
-| finance | `dg_record` / `dg_rechargerecord` | 扣费/返金一律 finance 事件（`ledger_entries`）；send-order 只落状态与金额快照 |
-| logistics | `dg_airbill`（10 万行） | 航空运单轨迹；SendOrder 经 `airbills` 反查（`sendid`），归 logistics 域 |
-| WMS | `dg_shelves` / `dg_stores` | 货架/仓储；已邮寄时 `sid=0` 释放货架是 WMS 动作 |
-| email | `dg_mail` / `EmailTaskRecord` | 已邮寄通知邮件（`MAIL_TYPE_DF_SENDORDER_SHIPPED`） |
+| 域        | 表                                | 边界说明                                                                                                 |
+| --------- | --------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| order     | `dg_order`                        | 订单行；**关系只存 `orders.sendOrderId` 一侧**（order-schema.md §4.5 已定），禁 `dg_sendorder.oids` 双写 |
+| member    | `dg_users` / `dg_address`         | SendOrder 只存 `memberId`；收件人信息是运单**快照**（历史事实，保留）                                    |
+| finance   | `dg_record` / `dg_rechargerecord` | 扣费/返金一律 finance 事件（`ledger_entries`）；send-order 只落状态与金额快照                            |
+| logistics | `dg_airbill`（10 万行）           | 航空运单轨迹；SendOrder 经 `airbills` 反查（`sendid`），归 logistics 域                                  |
+| WMS       | `dg_shelves` / `dg_stores`        | 货架/仓储；已邮寄时 `sid=0` 释放货架是 WMS 动作                                                          |
+| email     | `dg_mail` / `EmailTaskRecord`     | 已邮寄通知邮件（`MAIL_TYPE_DF_SENDORDER_SHIPPED`）                                                       |
 
 ### 1.3 一条运单的跨域生命周期（总览）
 
@@ -53,25 +53,25 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 
 ## 二、实体清单与源表映射
 
-| # | 新实体（Prisma model） | 目标表名 | 源表 | 旧表量级 | 备注 |
-|---|---|---|---|---|---|
-| 1 | `SendOrder` | `send_orders` | `dg_sendorder` | ~67 万（AUTO_INCREMENT 672,867） | 域根实体（sid 维度） |
-| 2 | `SendOrderStatusHistory` | `send_order_status_histories` | — （旧系统无迁移表） | 新增 | 替代状态平铺；含 prostate 作业流变迁 |
-| 3 | `SendOrderLabel` | `send_order_labels` | `v2_send_order_label` | — | FBA 箱标/商品标/3PL 箱标/运单（客户上传） |
-| 4 | `SendOrderInvoiceEvent` | `send_order_invoice_events` | `v2_send_order_invoice_event` | — | 发票事件流（append-only） |
-| 5 | `SendOrderValueAddedService` | `send_order_value_added_services` | `v2_sendorder_value_added_service` | 36（本地） | 运单增值服务收费 |
-| 6 | `Invoice` | `invoices` | `dg_fapiao` | **446 万行** | ★ Q3 建议归本域（sid 维度）；order 域只提供金额快照 |
-| 7 | `SendOrderCoupon` | — （不建表） | `dg_sendorder.couponid/couponmoney` | — | 优惠券快照留列；券实体归营销域（coupon 域未切片） |
+| #   | 新实体（Prisma model）       | 目标表名                          | 源表                                | 旧表量级                         | 备注                                                |
+| --- | ---------------------------- | --------------------------------- | ----------------------------------- | -------------------------------- | --------------------------------------------------- |
+| 1   | `SendOrder`                  | `send_orders`                     | `dg_sendorder`                      | ~67 万（AUTO_INCREMENT 672,867） | 域根实体（sid 维度）                                |
+| 2   | `SendOrderStatusHistory`     | `send_order_status_histories`     | — （旧系统无迁移表）                | 新增                             | 替代状态平铺；含 prostate 作业流变迁                |
+| 3   | `SendOrderLabel`             | `send_order_labels`               | `v2_send_order_label`               | —                                | FBA 箱标/商品标/3PL 箱标/运单（客户上传）           |
+| 4   | `SendOrderInvoiceEvent`      | `send_order_invoice_events`       | `v2_send_order_invoice_event`       | —                                | 发票事件流（append-only）                           |
+| 5   | `SendOrderValueAddedService` | `send_order_value_added_services` | `v2_sendorder_value_added_service`  | 36（本地）                       | 运单增值服务收费                                    |
+| 6   | `Invoice`                    | `invoices`                        | `dg_fapiao`                         | **446 万行**                     | ★ Q3 建议归本域（sid 维度）；order 域只提供金额快照 |
+| 7   | `SendOrderCoupon`            | — （不建表）                      | `dg_sendorder.couponid/couponmoney` | —                                | 优惠券快照留列；券实体归营销域（coupon 域未切片）   |
 
 **明确不建模 / 归他域**：
 
-| 旧表 | 处置 |
-|---|---|
-| `dg_airbill`（10 万行） | 归 **logistics**（轨迹查询经 `sendid` 反查） |
-| `dg_shelves` | 归 **WMS**（货架；独立项目） |
+| 旧表                                                     | 处置                                             |
+| -------------------------------------------------------- | ------------------------------------------------ |
+| `dg_airbill`（10 万行）                                  | 归 **logistics**（轨迹查询经 `sendid` 反查）     |
+| `dg_shelves`                                             | 归 **WMS**（货架；独立项目）                     |
 | `dg_send`（7 行，cid/content/subject/var_date/filename） | 疑似站内信模板残留，**不建模**（量微，拍板后弃） |
-| `deprecated_dg_sendorder_copy*` | ❌ 排除 |
-| `dg_rechargerecord`（返金凭证） | 归 **finance**（ledger 侧凭证） |
+| `deprecated_dg_sendorder_copy*`                          | ❌ 排除                                          |
+| `dg_rechargerecord`（返金凭证）                          | 归 **finance**（ledger 侧凭证）                  |
 
 ---
 
@@ -80,6 +80,7 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 ### 3.1 `dg_sendorder` 字段分组精读（sid INT PK，本地 ~19,078 行）
 
 **身份/归属**
+
 - `sid` INT PK AUTO_INCREMENT=672,867；`parent_id`（MUL）——同捆子运单指向主运单（本地 51 个子单）
 - `sn` **varchar(2550)**——运单流水号（超长，疑历史拼接残留；有 MUL 索引）
 - `uid`/`uname`/`memberid`/`email`——会员（uname/memberid 冗余副本，§4.10 不回填）
@@ -87,6 +88,7 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 - `otype` tinyint——1 普通代购 / 3 一件代发（**只有 1 和 3，无 2**；本地 7,220 vs 10,858）
 
 **金额（★ 7 个 decimal(10,2)，totalfee 口径曾双轨）**
+
 - ★ **币种定版（2026-10-15）：本域「对客金额」与「采购成本」同为 CNY**——原判「对客 JPY / 采购 CNY」不成立。实测 `totalfee` 均值 774.54、`freight` 均值 460.54，与 `dg_record` 的国际运费扣款（`action=3`）均值 -659 属同一量级；若对客是日元，这里应是数万级（见 `finance-schema.md` §3.3 与 §八 Q1）
 - `freight` 对客国际运费；`ufreight` 采购国际运费（成本）——同一币种下的**对客价 vs 成本价**两个维度
 - `serverfee` 增值费；`customsfee` 报关费；`remotefee` 偏远费
@@ -99,11 +101,13 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 - `storage` decimal 仓储费；`bargainprice`——运单砍价汇总（= Σ order.bargainprice 排除无效态，**与 dg_order.bargainprice 语义不同**，order-schema.md §3.5 已警示）
 
 **收件人快照（历史事实，保留）**
+
 - `consignee`/`country`/`city`/`zip`/`tel`/`address`/`enname`——日本收件人
 - `importer_info` **varchar(2048) JSON**——进口商信息（`real_time_account` 报关号码；掩码防护见 §3.7）
 - `company_name`——公司名（发票用）
 
 **物流/配送**
+
 - `did`/`deliveryname`/`areaname`——配送渠道（`deliveryname` 值域：直送小包/ZC航空便/ヤマト急便/中国郵政船便/OCS）
 - `dfshcode`——代发收货码（已邮寄时清空）
 - `passtype` tinyint 通关类型（词表待查 Q3）
@@ -111,6 +115,7 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 - `dfsendflag` 0/1 可否发货；`dflwh`/`dfsendtel`/`dfsendaddress`/`dfsendname`/`dfsendinfo`/`dfremarkcn`——代发收件族
 
 **状态与流程**
+
 - `state` 8 态状态机（§3.2）；`prostate` 0-9 作业流（§3.2）；`prostatetime`
 - `bargainstate` 0/1 砍价返金状态（本地 5,304 已返金 / 35%）
 - `havefapiao` 0/1 发票是否给用户；`fapiaotime`；`invoice_completed_at`/`invoice_completed_type`（1 系统生成/2 人工生成）
@@ -125,18 +130,19 @@ state 2 已邮寄 ── ConfirmReceive ──► 3 已完成 + 积分（同事�
 
 **state（SendOrder.php 定稿）**
 
-| 值 | 常量 | 中文 | 日文 |
-|---|---|---|---|
-| 1 | `STATE_WAITING` | 待处理 | 配送依頼提出済 |
-| 2 | `STATE_SHIPPED` | 已邮寄 | 出荷済み |
-| 3 | `STATE_COMPLISHED` | 已完成 | 受け取り済み |
-| 4 | `STATE_INVALID` | 无效运单 | — |
-| 5 | `STATE_PROCESSING` | 处理中 | 梱包作業中 |
-| 6 | `STATE_PENDING_CHECK` | 待审核 | — |
-| 7 | `STATE_PENDING_PAY` | 待付款 | お支払い待ち |
-| 8 | `STATE_PENDING_SHIP` | 待邮寄 | 出荷待ち |
+| 值  | 常量                  | 中文     | 日文           |
+| --- | --------------------- | -------- | -------------- |
+| 1   | `STATE_WAITING`       | 待处理   | 配送依頼提出済 |
+| 2   | `STATE_SHIPPED`       | 已邮寄   | 出荷済み       |
+| 3   | `STATE_COMPLISHED`    | 已完成   | 受け取り済み   |
+| 4   | `STATE_INVALID`       | 无效运单 | —              |
+| 5   | `STATE_PROCESSING`    | 处理中   | 梱包作業中     |
+| 6   | `STATE_PENDING_CHECK` | 待审核   | —              |
+| 7   | `STATE_PENDING_PAY`   | 待付款   | お支払い待ち   |
+| 8   | `STATE_PENDING_SHIP`  | 待邮寄   | 出荷待ち       |
 
 **已核实的迁移**（代码/文档）：
+
 - 建单 → 1（`createOrUpdateSendOrderByOrder` / `CreateDfOrderMutation` / `SplitDFOrderMutation` / 导入）
 - 取消：**仅允许 1**（GraphQL `cancelSendOrder` + 开放 API：订单回 `STATE_ARRIVE_CHINA`(4)、`sid=0`、删运单、优惠券复原、仓储回改）
 - 支付：**7 → 8**（`SendOrderPayService`：锁 sendorder → 锁 user → 扣 totalfee → 回写；余额不足抛 `USER_INSUFFICIENT_BALANCE`）
@@ -183,14 +189,14 @@ totalfee = 国际运费(freight) + 增值费(serverfee) + 报关费(customsfee) 
 
 ### 3.6 开放 API（契约归 member 域，业务在本域）
 
-| 接口 | 关键规则 |
-|---|---|
-| `POST /send-orders/pay` | 先 `GET /pay-captcha` 取 6 位数字验证码（Cache 绑定 uid，TTL 300s，一次性）；与 GraphQL `paySendOrder` 同源 |
-| `POST /send-orders/cancel` | 仅 `STATE_WAITING`；副作用同 GraphQL（订单回 4、sid=0、删运单、券复原、仓储回改） |
-| `GET /send-orders`（列表） | tokenable 用户名下；state 过滤 |
-| `GET /send-orders/{sid}`（详情） | — |
-| `GET /send-orders/{sid}/logistics` | 轨迹（ logistics 域） |
-| `GET /send-orders/{sid}/invoice` | 发票（**锁内校验发票版本**——`assertLocked` 闭包） |
+| 接口                               | 关键规则                                                                                                    |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `POST /send-orders/pay`            | 先 `GET /pay-captcha` 取 6 位数字验证码（Cache 绑定 uid，TTL 300s，一次性）；与 GraphQL `paySendOrder` 同源 |
+| `POST /send-orders/cancel`         | 仅 `STATE_WAITING`；副作用同 GraphQL（订单回 4、sid=0、删运单、券复原、仓储回改）                           |
+| `GET /send-orders`（列表）         | tokenable 用户名下；state 过滤                                                                              |
+| `GET /send-orders/{sid}`（详情）   | —                                                                                                           |
+| `GET /send-orders/{sid}/logistics` | 轨迹（ logistics 域）                                                                                       |
+| `GET /send-orders/{sid}/invoice`   | 发票（**锁内校验发票版本**——`assertLocked` 闭包）                                                           |
 
 ### 3.7 进口商信息掩码防护（#51，报关安全）
 
@@ -205,12 +211,12 @@ totalfee = 国际运费(freight) + 增值费(serverfee) + 报关费(customsfee) 
 
 ### 3.9 规模数据（决定回填策略）
 
-| 表 | 行数（本地副本 / 生产口径） | 迁移注意 |
-|---|---|---|
-| `dg_sendorder` | 19,078 / AUTO_INCREMENT 672,867（生产约 67 万） | sid 主键对齐；双写同库同事务 |
-| `dg_fapiao` | 342 万（本地）/ 446 万（生产） | 大表；Q3 归本域则按 sid 分片回填 |
-| `v2_send_order_label` | 本地无（生产有） | 软删表 |
-| `dg_airbill` | 10 万（本地） | 归 logistics，不随本域迁 |
+| 表                    | 行数（本地副本 / 生产口径）                     | 迁移注意                         |
+| --------------------- | ----------------------------------------------- | -------------------------------- |
+| `dg_sendorder`        | 19,078 / AUTO_INCREMENT 672,867（生产约 67 万） | sid 主键对齐；双写同库同事务     |
+| `dg_fapiao`           | 342 万（本地）/ 446 万（生产）                  | 大表；Q3 归本域则按 sid 分片回填 |
+| `v2_send_order_label` | 本地无（生产有）                                | 软删表                           |
+| `dg_airbill`          | 10 万（本地）                                   | 归 logistics，不随本域迁         |
 
 ---
 
@@ -417,13 +423,13 @@ model SendOrder {
 
 其馀模型关键字段表（评审后同批落 schema）：
 
-| 模型 | 关键字段（新名 ← 旧名） | 唯一键 / 索引 |
-|---|---|---|
-| `SendOrderStatusHistory` | sendOrderId；`kind`（state/prostate 两流）；fromStatus/toStatus（Int?）；operatorType/operatorId；reason；createdAt | INDEX (sendOrderId, createdAt) |
-| `SendOrderLabel` | sendOrderId；memberId；`type`（fba_box/fba_item/3pl_box/carrier）；`status`（0/1/2）；filePath/fileName/mime/size；fbaShipmentId；destinationCode；boxes Json；scanResult Json；photoUrls Json；appliedAt/verifiedAt；deletedAt | INDEX (sendOrderId, type)、(status) |
-| `SendOrderInvoiceEvent` | sendOrderId；memberId；`type`（revise_requested/paid_confirmed）；`invoiceVersion`；comment；imageUrls；source；ticketId；createdAt（append-only） | INDEX (sendOrderId, createdAt)、(ticketId) |
-| `SendOrderValueAddedService` | sendOrderId；serviceId；nameSnapshot；fee；isManual | INDEX sendOrderId |
-| `Invoice` | `id == fid`；sendOrderId；orderId（可空）；memberId；货物族（goodsName/goodsPrice/goodsNum/goodsUrl/goodsId/goodsCaizhi）；收件人族；`transport`/`airbill`/`totalweight`/`country`/`teams`/`packages`；`tariff`/`goodsinternational`/`amount`；`goodsTotal`/`subtotal`；`exportName`/`exchangerate`/`salesName`/`salesTel`/`rateType`；`boxnum`/`sendprice`/`goodsImg`/`hyboxnum`/`expcnname`/`packageName`/`packageId`/`bargainprice`/`enName`/`goodsUseful`/`gUsefulMemo` | INDEX (sendOrderId)、(orderId)、(memberId, fapiaotime) |
+| 模型                         | 关键字段（新名 ← 旧名）                                                                                                                                                                                                                                                                                                                                                                                                                                                     | 唯一键 / 索引                                          |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `SendOrderStatusHistory`     | sendOrderId；`kind`（state/prostate 两流）；fromStatus/toStatus（Int?）；operatorType/operatorId；reason；createdAt                                                                                                                                                                                                                                                                                                                                                         | INDEX (sendOrderId, createdAt)                         |
+| `SendOrderLabel`             | sendOrderId；memberId；`type`（fba_box/fba_item/3pl_box/carrier）；`status`（0/1/2）；filePath/fileName/mime/size；fbaShipmentId；destinationCode；boxes Json；scanResult Json；photoUrls Json；appliedAt/verifiedAt；deletedAt                                                                                                                                                                                                                                             | INDEX (sendOrderId, type)、(status)                    |
+| `SendOrderInvoiceEvent`      | sendOrderId；memberId；`type`（revise_requested/paid_confirmed）；`invoiceVersion`；comment；imageUrls；source；ticketId；createdAt（append-only）                                                                                                                                                                                                                                                                                                                          | INDEX (sendOrderId, createdAt)、(ticketId)             |
+| `SendOrderValueAddedService` | sendOrderId；serviceId；nameSnapshot；fee；isManual                                                                                                                                                                                                                                                                                                                                                                                                                         | INDEX sendOrderId                                      |
+| `Invoice`                    | `id == fid`；sendOrderId；orderId（可空）；memberId；货物族（goodsName/goodsPrice/goodsNum/goodsUrl/goodsId/goodsCaizhi）；收件人族；`transport`/`airbill`/`totalweight`/`country`/`teams`/`packages`；`tariff`/`goodsinternational`/`amount`；`goodsTotal`/`subtotal`；`exportName`/`exchangerate`/`salesName`/`salesTel`/`rateType`；`boxnum`/`sendprice`/`goodsImg`/`hyboxnum`/`expcnname`/`packageName`/`packageId`/`bargainprice`/`enName`/`goodsUseful`/`gUsefulMemo` | INDEX (sendOrderId)、(orderId)、(memberId, fapiaotime) |
 
 ---
 
@@ -452,18 +458,18 @@ model SendOrder {
 
 > **2026-10-15 更新**：Q1/Q2/Q3/Q5/Q6/Q7/Q10 已全部收口，依据见 `06-send-order-评审与拍板.md`（本地 taotaro 副本实测）；Q4/Q8/Q9 留待后续。
 
-| # | 问题 | 影响 |
-|---|---|---|
-| Q1 | ~~`xiwgfei` 语义？~~ **已收口**：本地全 0，保留 nullable `damageFee` 审计兜底，禁入公式 | 保留列 |
-| Q2 | ~~`countweight` 实际存什么？~~ **已收口**：十进制千克字符串 → `chargeableWeightGrams`（×1000，不可解析入 legacyExtra）；注意 `dg_fapiao.totalweight` 是另一套口径（含代码值 `A`）→ 字符串列 | 解析规则已定 |
-| Q3 | ~~`dg_fapiao` 归 send-order 还是 order？~~ **已拍板归 send-order**（`06-send-order-评审与拍板.md` §一：sid 是关联枢纽、发票生命周期字段全在运单、order 域无发票字段） | 域边界定 |
-| Q4 | state 5（处理中）/6（待审核）的写入点未定位全 | 新系统迁移表对未核实迁移一律拒（§4.4）；生产灰度前补核实 |
-| Q5 | ~~`mark_flag` 位定义？~~ **已收口**：本地全 NULL 且无位读写点 → `markFlags Int?` 原样列不拆包 | 显式列取消 |
-| Q6 | ~~`passtype`/`did`/`deliveryname` 关系？~~ **已收口**：`deliveryChannel` 存 deliveryname 自由字符串（14 观察值，contract 容错新值）；`did` 不建模；`passType Int?` 可空 | 契约化方案已定 |
-| Q7 | ~~同捆金额语义？~~ **已收口**：51 子运单全部独立计费（totalfee 全 >0），`bundledIntoId` 纯组织关系禁 rollup | 金额语义已定 |
-| Q8 | `v2_send_order_label` / `v2_send_order_invoice_event` 本地无表 | 回填脚本 PREPARE 条件执行本地跳过；生产跑前跳板机只读确认 |
-| Q9 | 评价（comment JSON） schema 键位 | contract 切片时定；`comment Json` 先原样落库 |
-| Q10 | ~~`sn` 生产实际最大长度？~~ **已收口**：本地最长 363（`#` 连接多单号）→ `sn VarChar(64)` 首段 + 全量拆分为 `snExtra Json`，断言 ≤64 全表成立 | 收紧方案已定 |
+| #   | 问题                                                                                                                                                                                        | 影响                                                      |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Q1  | ~~`xiwgfei` 语义？~~ **已收口**：本地全 0，保留 nullable `damageFee` 审计兜底，禁入公式                                                                                                     | 保留列                                                    |
+| Q2  | ~~`countweight` 实际存什么？~~ **已收口**：十进制千克字符串 → `chargeableWeightGrams`（×1000，不可解析入 legacyExtra）；注意 `dg_fapiao.totalweight` 是另一套口径（含代码值 `A`）→ 字符串列 | 解析规则已定                                              |
+| Q3  | ~~`dg_fapiao` 归 send-order 还是 order？~~ **已拍板归 send-order**（`06-send-order-评审与拍板.md` §一：sid 是关联枢纽、发票生命周期字段全在运单、order 域无发票字段）                       | 域边界定                                                  |
+| Q4  | state 5（处理中）/6（待审核）的写入点未定位全                                                                                                                                               | 新系统迁移表对未核实迁移一律拒（§4.4）；生产灰度前补核实  |
+| Q5  | ~~`mark_flag` 位定义？~~ **已收口**：本地全 NULL 且无位读写点 → `markFlags Int?` 原样列不拆包                                                                                               | 显式列取消                                                |
+| Q6  | ~~`passtype`/`did`/`deliveryname` 关系？~~ **已收口**：`deliveryChannel` 存 deliveryname 自由字符串（14 观察值，contract 容错新值）；`did` 不建模；`passType Int?` 可空                     | 契约化方案已定                                            |
+| Q7  | ~~同捆金额语义？~~ **已收口**：51 子运单全部独立计费（totalfee 全 >0），`bundledIntoId` 纯组织关系禁 rollup                                                                                 | 金额语义已定                                              |
+| Q8  | `v2_send_order_label` / `v2_send_order_invoice_event` 本地无表                                                                                                                              | 回填脚本 PREPARE 条件执行本地跳过；生产跑前跳板机只读确认 |
+| Q9  | 评价（comment JSON） schema 键位                                                                                                                                                            | contract 切片时定；`comment Json` 先原样落库              |
+| Q10 | ~~`sn` 生产实际最大长度？~~ **已收口**：本地最长 363（`#` 连接多单号）→ `sn VarChar(64)` 首段 + 全量拆分为 `snExtra Json`，断言 ≤64 全表成立                                                | 收紧方案已定                                              |
 
 ---
 

@@ -17,11 +17,7 @@ import type { ApiConfig } from './config';
 /** 守卫豁免路径：健康检查与文档（外部探活/看文档不该被签名拦住） */
 // ⚠ 文档 JSON 的实际路径是 `/docs/json`：注册 @fastify/swagger-ui 时指定的 routePrefix
 // 会一并决定它（不是 @fastify/swagger 默认的 /documentation/json）—— 由 printRoutes() 实测确认。
-export const GUARD_EXEMPT_PATHS = [
-  '/api/open/v1/health',
-  '/api/webhook/v1/health',
-  '/docs/json',
-];
+export const GUARD_EXEMPT_PATHS = ['/api/open/v1/health', '/api/webhook/v1/health', '/docs/json'];
 
 /**
  * 构建 app（**不监听**）—— 测试可直接注入请求，不需要起端口。
