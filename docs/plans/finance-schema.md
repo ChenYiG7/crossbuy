@@ -267,6 +267,22 @@
 | 14–20, 22, 23 | **OEM 专属**                 | 仅由 `Record::resolveOemAction()` `:112` 按 `paytype` 映射（`:100-110`），入口 `RechargeRecord.php:47-49` | 各 1–2 行（OEM 测试户，正负互现）                                                          |
 | 21            | Stripeチャージ               | PHP 侧**未找到**（推测 Python 网关）                                                                      | 0 行                                                                                       |
 
+**★ OEM 专属 action 全语义（#11f 已于 2026-10-18 读码收口，正本 `app/Models/Record.php:98-115`）**：`resolveOemAction()` 是 `dg_rechargerecord.paytype` → `dg_record.action` 的**固定映射**（`$oemPaytypeActionMap` `:100-110`），方向是「按单据上的费项原因决定账本原因码」：
+
+| paytype（单据费项） | action | 日文标签（`$recordAction` `:57-82`） | flow_type（已落入 `0017` `_t1_flow_type_map`） |
+| ------------------- | ------ | ------------------------------------ | ---------------------------------------------- |
+| 3 商品購入          | 14     | 管理員操作-OEM-商品購入              | `OEM_PURCHASE_DEBIT`                           |
+| 5 国内運賃          | 15     | 管理員操作-OEM-国内運賃              | `OEM_DOMESTIC_FREIGHT`                         |
+| 4 国際運賃          | 16     | 管理員操作-OEM-国際運賃              | `OEM_INTL_FREIGHT`                             |
+| 7 倉庫保管料        | 17     | 管理員操作-OEM-倉庫保管料            | `OEM_WAREHOUSE_FEE`                            |
+| 11 その他           | 18     | 管理員操作-OEM-その他                | `OEM_OTHER_FEE`                                |
+| 8 オプション料金    | 19     | 管理員操作-OEM-オプション料金決済    | `OEM_OPTION_PAYMENT`                           |
+| 12 撮影費用         | 20     | 管理員操作-OEM-撮影費用              | `OEM_PHOTO_FEE`                                |
+| 6 賠償              | 22     | 管理員操作-OEM-賠償                  | `OEM_INDEMNITY_PAYMENT`                        |
+| 10 取引中止         | 23     | 管理員操作-OEM-取引中止              | `OEM_TRADE_STOP`                               |
+
+**三条行为语义**（新系统对账/审计必须知道）：① **角色门**——只有提交/操作后台的管理员带 `oem_business_manager` 角色时才走 OEM 映射，否则一律 `action=0`（管理員操作）；两个写入点都遵守：`Forms/ReviewManualCharge.php:42-46`（人工充值审核通过）与 `Repositories/Finance/RechargeRecord.php:47-49`（后台直接创建充值单）。② **paytype=10（取引中止）带账户副作用**——创建路径（`RechargeRecord.php:59-62`）在入账之外还置 `dg_users.orderenable=0` + `stoptime=now()`（禁止交易），**审核路径没有这个副作用**——两路径行为不对称，R1/R2 收口时要么对齐要么显式登记。③ paytype 未命中映射表时兜底 `action=0`（`:112` `?? RECORD_ACTION_0`）——即 OEM 单据永远有原因码，不会掉进 `LEGACY_UNKNOWN_ACTION`。
+
 ⚠️ 三条排除项：`OrderController.php:3339-3400` 的数字是 **admin_operation_logs.detail_action**，与本表无关；`RecordOld.php:43-58` 是 **0–12+21 的旧词表**（无 13/14–20/22/23）——是词表演化的证据；docs/00 §三 称「Finance 业务文档 0 篇」**不实**：`backend/docs/business/` 实为 67 篇，其中 finance 相关 **4 篇**（`finance-orders-bargain-amount-warning.md`、`stripe-recharge-integration.md`、`worldfirst-quota-accumulation.md`、`ecommerce-order-confirm-balance-check.md`，另 `overdue-order-dingtalk-notification.md`）。
 
 **词表给新模型的直接结论**：① `action` 是**业务原因**（12 个有效值 + 8 个 OEM 专属 + 4 个死值），映射 `flow_type` 一一对应即可；② `action=0` 独占 176M 的进出量且无原因码，**是最大的对账盲区**（§4.4）；③ `type` **是 `money` 符号的派生冗余列**（由 `User.php:490-496` 现算，`money=0` 落 `type=1`）→ 新模型里 `direction` 表达**记账意图**（命令入参）、`signed_amount` 是结果，两者冲突即拒绝入账，**不允许任何一方被独立改写**（旧库 82 行方向违规就是两列各自可写的后果）。
