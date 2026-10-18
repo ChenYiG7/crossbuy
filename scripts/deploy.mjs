@@ -20,15 +20,7 @@
  * 发布目录」为止，远端操作不进脚本（无凭据进仓红线）。
  */
 import { execSync, spawnSync } from 'node:child_process';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync,
-  readdirSync,
-  statSync,
-} from 'node:fs';
+import { cpSync, existsSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');

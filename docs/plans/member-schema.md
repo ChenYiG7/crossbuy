@@ -26,7 +26,7 @@
 | #   | 新实体（Prisma model）  | 目标表名                  | 源表                         | 备注                           |
 | --- | ----------------------- | ------------------------- | ---------------------------- | ------------------------------ |
 | 1   | `Member`                | `member`                  | `dg_users`                   | 会员根实体                     |
-| 2   | `MemberCompany`         | `member_company`          | `dg_users`（com* 组拆分）    | 法人信息，1:1，仅 regtype=1    |
+| 2   | `MemberCompany`         | `member_company`          | `dg_users`（`com*` 组拆分）  | 法人信息，1:1，仅 regtype=1    |
 | 3   | `MemberAddress`         | `member_address`          | `dg_address`                 | type 1收货/2进口商             |
 | 4   | `MemberWebhook`         | `member_webhook`          | `v2_member_webhook`          | uid 唯一                       |
 | 5   | `MemberWebhookDelivery` | `member_webhook_delivery` | `v2_member_webhook_delivery` | event_key 唯一                 |

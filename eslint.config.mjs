@@ -121,6 +121,23 @@ export default tseslint.config(
       ],
     },
   },
+  // ---- Node 脚本全局（scripts/*.mjs）----
+  // 各包 lint 只扫 src，顶层 scripts/ 是 lint 盲区（#6-b 补上：eslint scripts 可直跑）
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        Buffer: 'readonly',
+        URL: 'readonly',
+        clearTimeout: 'readonly',
+        console: 'readonly',
+        fetch: 'readonly',
+        process: 'readonly',
+        setInterval: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],

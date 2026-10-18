@@ -460,7 +460,7 @@ function main() {
   const low = rows.filter((r) => r.conf === 'low' && r.domain !== '❌未归类');
 
   // 守卫：零命中的规则（被遮蔽 / 写错）—— 静默失效比报错更危险
-  const deadRules = RULES.map((r, i) => ({ r, i })).filter(({ r, i }) => hitCount[i] === 0);
+  const deadRules = RULES.map((r, i) => ({ r, i })).filter(({ r: _r, i }) => hitCount[i] === 0);
   if (deadRules.length > 0) {
     console.warn(`\n[warn] ${deadRules.length} 条规则零命中（可能被前面的规则遮蔽）：`);
     for (const { r } of deadRules)

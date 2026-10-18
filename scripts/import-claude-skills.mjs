@@ -15,7 +15,7 @@ import {
   rmSync,
   cpSync,
 } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join } from 'node:path';
 
 const DRY = process.argv.includes('--dry');
 const SRC_ROOT = 'C:/Users/13621/.claude/skills';

@@ -100,7 +100,7 @@ function classify(file, pkgs) {
   if (pkgMatch) {
     // packages/domains/<d> 已在上面截获；这里处理 ui/db/config/auth/utils/notify
     const candidates = [...pkgs.entries()].filter(
-      ([name, v]) => v.dir === `packages/${pkgMatch[1]}`,
+      ([_name, v]) => v.dir === `packages/${pkgMatch[1]}`,
     );
     if (candidates.length === 1) {
       const [pkgName] = candidates[0];

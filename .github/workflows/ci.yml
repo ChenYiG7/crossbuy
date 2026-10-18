@@ -40,12 +40,20 @@ jobs:
       - name: Lint（全 27 包，含 next/react-hooks 规则）
         run: pnpm lint
 
+      # 顶层 scripts/（*.mjs）不在任何包内，turbo lint 覆盖不到——直跑 eslint（#6-b 起纳入门禁）
+      - name: Lint scripts/（Node 工具脚本）
+        run: pnpm exec eslint scripts/
+
       - name: Prettier 格式门禁（#6-a 一次性重排后零欠账）
         run: pnpm format:check
 
       # 边界守卫：DB 仅 repository / 域间禁横向 import / contract 纯净（P1~P4 必须全「被拦」、P5 对照不误杀）
       - name: 域边界探针（破坏验证 5/5）
         run: node scripts/boundary-probe.mjs
+
+      # Markdown 裸星号守卫：防 prettier 把裸文 glob 星号（docs/*、dg_*）静默转成 _（血泪坑 #15）
+      - name: md 裸星号守卫
+        run: node scripts/check-md-stars.mjs
 
       # 零基础设施的契约冒烟（zod 契约 21 断言）
       - name: contract 冒烟

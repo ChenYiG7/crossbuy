@@ -14,6 +14,7 @@
     "test": "turbo run test",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check:md-stars": "node scripts/check-md-stars.mjs",
     "db:generate": "pnpm --filter @crossbuy/db generate",
     "db:migrate": "pnpm --filter @crossbuy/db migrate",
     "db:studio": "pnpm --filter @crossbuy/db studio",

@@ -173,7 +173,7 @@ export class ${pascal(d.name)}ServiceImpl implements ${pascal(d.name)}Service {
 }
 `;
 
-const indexTs = (d) => `export * from './errors';
+const indexTs = () => `export * from './errors';
 export * from './repository';
 export * from './service';
 `;
