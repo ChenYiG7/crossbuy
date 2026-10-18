@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { legacyPrisma, type LegacyPrisma } from '@crossbuy/db';
+import { PurchaseRepository } from '@crossbuy/domain-purchase';
 import { OrderRepository } from '../src/repository';
 import {
   batchProcessLockKey,
@@ -181,9 +182,24 @@ function makeService(tx: Tx, opts: HarnessOptions = {}) {
     { listBriefBySids: async () => new Map(), listSidsByShipmentKeyword: async () => [] },
     { resolve: () => null },
   );
+  // 供应商目录只读端口：真实 DB 适配（v2_supplier_product / v2_supplier_shop 属主 = purchase 域，TODO #17）
+  const purchaseRepo = new PurchaseRepository(tx as never);
+  const supplierCatalog = {
+    listProductsByIds: async (ids: number[]) => {
+      if (ids.length === 0) return new Map();
+      const rows = await purchaseRepo.findSupplierProductsByIds(ids);
+      return new Map(rows.map((r) => [r.id, r]));
+    },
+    listShopsByIds: async (ids: number[]) => {
+      if (ids.length === 0) return new Map();
+      const rows = await purchaseRepo.findSupplierShopsByIds(ids);
+      return new Map(rows.map((r) => [r.id, { title: r.title, nickname: r.nickname }]));
+    },
+  };
   const service = new PlaceOrderService({
     repository,
     runTx: (fn) => fn(tx as never),
+    supplierCatalog,
     goodsPriceRefreshPort,
     skuTranslationPort,
     benefitPort,

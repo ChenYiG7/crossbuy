@@ -106,6 +106,53 @@ export class PurchaseRepository {
     });
     return row ?? { id, title: patch.title ?? '', nickname: patch.nickname ?? null };
   }
+
+  /**
+   * 批量读供应商商品（只读；旧 with(['supplierProduct']) 的 R1 子集列）。
+   * ⚠ 这是 order 域跨域读 purchase 属主表的**唯一**入口（表唯一属主铁律，TODO #17）。
+   */
+  async findSupplierProductsByIds(
+    ids: number[],
+  ): Promise<
+    Array<{
+      id: number;
+      shop_id: number | null;
+      platform: string;
+      goods_id: string;
+      goods_name: string;
+      price_range: unknown;
+      min_order_quantity: number;
+      seller_mix_setting: string | null;
+      one_piece_free_postage: number;
+    }>
+  > {
+    if (ids.length === 0) return [];
+    return this.db.v2_supplier_product.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        shop_id: true,
+        platform: true,
+        goods_id: true,
+        goods_name: true,
+        price_range: true,
+        min_order_quantity: true,
+        seller_mix_setting: true,
+        one_piece_free_postage: true,
+      },
+    });
+  }
+
+  /** 批量读供应商店铺（只读；title/nickname 用于买家名展示） */
+  async findSupplierShopsByIds(
+    ids: number[],
+  ): Promise<Array<{ id: number; title: string; nickname: string | null }>> {
+    if (ids.length === 0) return [];
+    return this.db.v2_supplier_shop.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, title: true, nickname: true },
+    });
+  }
 }
 
 /** 旧 Product::STOCK_STATUS_ON_SALE */

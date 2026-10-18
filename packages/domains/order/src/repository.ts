@@ -353,7 +353,8 @@ export class OrderRepository {
   }
 
   // -----------------------------------------------------------------------
-  // 购物车读路径（旧 listCart / getCartMoney；dg_cart + v2_supplier_product 属主 = order 域）
+  // 购物车读路径（旧 listCart / getCartMoney）：dg_cart 属主 = order 域；v2_supplier_product
+  // 属主 = purchase 域（docs/plans/07 §四），只读经 purchase 域 SupplierCatalogPort（TODO #17）
   // -----------------------------------------------------------------------
 
   /** 购物车行（select 子集：列表 + 金额计算全部所需列） */
@@ -397,22 +398,6 @@ export class OrderRepository {
     return rows;
   }
 
-  /** 供应商商品摘要（旧 with(['supplierProduct']) 的 R1 子集列；按 id 批量） */
-  async listSupplierProducts(db: Db, ids: number[]): Promise<Map<number, {
-    id: number; shop_id: number | null; platform: string; goods_id: string; goods_name: string;
-    price_range: unknown; min_order_quantity: number; seller_mix_setting: string | null; one_piece_free_postage: number;
-  }>> {
-    if (ids.length === 0) return new Map();
-    const rows = await db.v2_supplier_product.findMany({
-      where: { id: { in: ids } },
-      select: {
-        id: true, shop_id: true, platform: true, goods_id: true, goods_name: true,
-        price_range: true, min_order_quantity: true, seller_mix_setting: true, one_piece_free_postage: true,
-      },
-    });
-    return new Map(rows.map((r) => [r.id, r]));
-  }
-
   // -----------------------------------------------------------------------
   // 下单链路（旧 CreateOrderFromCartService + Cart::cartToOrder）
   // -----------------------------------------------------------------------
@@ -450,15 +435,16 @@ export class OrderRepository {
    * 行锁购物车（旧 lockCartsForUpdate：`Cart::with([...])->where(uid)->whereIn(gid)
    * ->orderBy('gid')->lockForUpdate()->get()`）。
    *
-   * ⚠ dg_cart 在 Prisma 里**没有 supplierProduct 关系**（`supplier_product_id` 是裸 int，
-   * 生产无外键约束）→ 店铺名两步查：product.shop_id → shop.title ?: shop.nickname
-   * （旧 cartToOrder 的 `$supplierProduct->supplierShop->title ?: nickname`）。
+   * ⚠ 只锁购物车行（FOR UPDATE）——店铺名（v2_supplier_shop.title/nickname）与商品 shop_id 是
+   * **参考数据**，与购物车行锁**无一致性要求**，已移出事务、改走 purchase 域 `SupplierCatalogPort`
+   * 在调用方（placeOrdersFromCarts）事务外读取（TODO #17，方案①）。旧代码「在 tx 内」只是
+   * Laravel 单连接请求的副产物，非正确性需求。
    */
   async lockCartsForUpdate(
     tx: LegacyPrisma.TransactionClient,
     uid: number,
     gids: number[],
-  ): Promise<Array<CartForOrderRow & { shopId: number | null; shopTitle: string | null; shopNickname: string | null }>> {
+  ): Promise<CartForOrderRow[]> {
     const rows = await tx.dg_cart.findMany({
       where: { uid, gid: { in: gids } },
       select: {
@@ -484,37 +470,7 @@ export class OrderRepository {
     if (rows.length > 0) {
       await tx.$queryRaw`SELECT gid FROM dg_cart WHERE uid = ${uid} AND gid IN (${LegacyPrismaRuntime.join(rows.map((r) => r.gid))}) ORDER BY gid FOR UPDATE`;
     }
-
-    // 店铺名（两步查：product → shop）
-    const productIds = [...new Set(rows.map((r) => r.supplier_product_id).filter((v): v is number => v !== null && v !== 0))];
-    const shopIdByProduct = new Map<number, number>();
-    if (productIds.length > 0) {
-      const products = await tx.v2_supplier_product.findMany({
-        where: { id: { in: productIds } },
-        select: { id: true, shop_id: true },
-      });
-      for (const p of products) shopIdByProduct.set(p.id, p.shop_id);
-    }
-    const shopIds = [...new Set([...shopIdByProduct.values()].filter((v) => v !== 0))];
-    const shopById = new Map<number, { title: string; nickname: string | null }>();
-    if (shopIds.length > 0) {
-      const shops = await tx.v2_supplier_shop.findMany({
-        where: { id: { in: shopIds } },
-        select: { id: true, title: true, nickname: true },
-      });
-      for (const s of shops) shopById.set(s.id, { title: s.title, nickname: s.nickname });
-    }
-
-    return rows.map((cart) => {
-      const shopId = cart.supplier_product_id ? shopIdByProduct.get(cart.supplier_product_id) ?? null : null;
-      const shop = shopId === null ? undefined : shopById.get(shopId);
-      return {
-        ...cart,
-        shopId,
-        shopTitle: shop?.title ?? null,
-        shopNickname: shop?.nickname ?? null,
-      };
-    });
+    return rows;
   }
 
   /** 阶梯价回写购物车（旧 updateTierPricesForCarts 的 `$cart->save()`） */

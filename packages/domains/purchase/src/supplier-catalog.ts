@@ -1,4 +1,5 @@
 import type { PurchaseRepository } from './repository';
+import type { SupplierProductRead, SupplierShopRead } from '@crossbuy/contract';
 
 /**
  * 供应商目录（旧 `Product`（v2_supplier_product）+ `Order\PlatformShop`（v2_supplier_shop））。
@@ -73,6 +74,15 @@ export interface SupplierCatalogService {
 
   /** 旧 `$platformShop->save()`（title/nickname 都可能为空） */
   updateShop(id: number, patch: { title?: string; nickname?: string | null }): Promise<SupplierShop>;
+
+  /**
+   * 批量读供应商商品（只读；旧 with(['supplierProduct']) 的 R1 子集列）。
+   * 跨域（order 域）只读 purchase 属主表的入口（表唯一属主铁律，TODO #17）。
+   */
+  listProductsByIds(ids: number[]): Promise<Map<number, SupplierProductRead>>;
+
+  /** 批量读供应商店铺（只读；title/nickname 用于买家名展示） */
+  listShopsByIds(ids: number[]): Promise<Map<number, SupplierShopRead>>;
 }
 
 /** 店铺映射行（旧 PlatformShop；`title`/`nickname` 均可空） */
@@ -165,6 +175,18 @@ export class SupplierCatalogServiceImpl implements SupplierCatalogService {
   async updateShop(id: number, patch: { title?: string; nickname?: string | null }): Promise<SupplierShop> {
     const row = await this.deps.repository.updateSupplierShop(id, patch);
     return withDisplayName(row);
+  }
+
+  async listProductsByIds(ids: number[]): Promise<Map<number, SupplierProductRead>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.deps.repository.findSupplierProductsByIds(ids);
+    return new Map(rows.map((r) => [r.id, r]));
+  }
+
+  async listShopsByIds(ids: number[]): Promise<Map<number, SupplierShopRead>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.deps.repository.findSupplierShopsByIds(ids);
+    return new Map(rows.map((r) => [r.id, { title: r.title, nickname: r.nickname }]));
   }
 }
 

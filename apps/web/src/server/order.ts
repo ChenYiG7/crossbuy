@@ -42,6 +42,7 @@ import {
   PurchaseRepository,
   SupplierCatalogServiceImpl,
   type CatalogLockPort,
+  type SupplierCatalogService,
 } from '@crossbuy/domain-purchase';
 import { SendOrderRepository, SendOrderServiceImpl } from '@crossbuy/domain-send-order';
 import { getMemberService } from './member';
@@ -62,8 +63,22 @@ export function getOrderService(): OrderService {
 }
 
 // ---------------------------------------------------------------------------
-// cart 读路径组合根（dg_cart/v2_supplier_product 属主 = order 域；跨域端口在此接线）
+// cart 读路径组合根（dg_cart 属主 = order 域；v2_supplier_product / v2_supplier_shop
+// 属主 = purchase 域，只读经 SupplierCatalogService 跨域端口接线，TODO #17）
 // ---------------------------------------------------------------------------
+
+/**
+ * 供应商目录服务（purchase 域）：order 域只读 v2_supplier_product / v2_supplier_shop 的唯一入口。
+ * 单例（stateless，仅持依赖），cart / 下单两条链路共用。
+ */
+let supplierCatalogService: SupplierCatalogService | null = null;
+function getSupplierCatalog(): SupplierCatalogService {
+  supplierCatalogService ??= new SupplierCatalogServiceImpl({
+    repository: new PurchaseRepository(),
+    lockPort: createCatalogLock(),
+  });
+  return supplierCatalogService;
+}
 
 let cartService: CartServiceType | null = null;
 
@@ -91,6 +106,8 @@ export function getCartService(): CartServiceType {
       memberFactorsPort,
       benefitPort,
       currencyPort,
+      // 供应商目录只读（v2_supplier_product / v2_supplier_shop 属主 = purchase 域）
+      supplierCatalog: getSupplierCatalog(),
       // 旧 config('benefit.fee_deduct_preview_switch') !== null
       feeDeductPreviewEnabled: process.env.FEE_DEDUCT_PREVIEW_SWITCH != null,
       // 旧 User::UTYPE_CHARGED（付费会员）
@@ -374,6 +391,7 @@ export function getPlaceOrderService(): PlaceOrderService {
     return new PlaceOrderService({
       repository,
       runTx: runInOrderTransaction,
+      supplierCatalog: getSupplierCatalog(),
       goodsPriceRefreshPort,
       skuTranslationPort,
       benefitPort,

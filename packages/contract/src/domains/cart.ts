@@ -25,6 +25,32 @@ export const supplierProductSummarySchema = z.object({
 });
 export type SupplierProductSummary = z.infer<typeof supplierProductSummarySchema>;
 
+/**
+ * 供应商商品**只读子集**（旧 CartType.supplierProduct 的 DB 列；跨域经 SupplierCatalogPort 暴露）。
+ * 与 SupplierProductSummary（契约输出，camelCase）区分：本类型是域间数据搬运的**原始列形状**
+ * （snake_case），避免 order 域价格计算改动（S30 阶梯价/混批逻辑直接读 shop_id/price_range 等）。
+ * v2_supplier_product 属主 = purchase 域（docs/plans/07 §四）。
+ */
+export interface SupplierProductRead {
+  id: number;
+  shop_id: number | null;
+  platform: string;
+  goods_id: string;
+  goods_name: string;
+  /** 阶梯价 JSON（[{startQuantity, price}] 或 null） */
+  price_range: unknown;
+  min_order_quantity: number;
+  /** 混批规则 JSON（{mixAmount?, mixNumber?}）或 null */
+  seller_mix_setting: string | null;
+  one_piece_free_postage: number;
+}
+
+/** 供应商店铺只读子集（v2_supplier_shop；title/nickname 用于买家名展示） */
+export interface SupplierShopRead {
+  title: string;
+  nickname: string | null;
+}
+
 /** 购物车行（旧 Member/CartType 输出 1:1；var1..var12 = ①〜⑫検品オプション） */
 export const cartRowSchema = z.object({
   gid: z.number().int().positive(),

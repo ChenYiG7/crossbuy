@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { legacyPrisma, type LegacyPrisma } from '@crossbuy/db';
+import { PurchaseRepository } from '@crossbuy/domain-purchase';
 import { OrderRepository } from '../src/repository';
 import {
   calculateTierPrices,
@@ -9,6 +10,7 @@ import {
   type BenefitPort,
   type CurrencyPort,
   type MemberFactorsPort,
+  type SupplierCatalogPort,
 } from '../src/cart';
 import { withRollback } from './helpers/rollback';
 
@@ -86,11 +88,26 @@ const benefitPort: BenefitPort = { previewFeeDeduct: async () => null };
 const currencyPort: CurrencyPort = { cnyToJpy: async () => 21.5 };
 
 function makeService(tx: unknown, user: { dfflag: number; dffee: number; utype: number }, overrides: Record<string, unknown> = {}) {
+  // 供应商目录只读端口：用真实 DB 适配（v2_supplier_product / v2_supplier_shop 属主 = purchase 域，TODO #17）
+  const purchaseRepo = new PurchaseRepository(tx as never);
+  const supplierCatalog: SupplierCatalogPort = {
+    listProductsByIds: async (ids) => {
+      if (ids.length === 0) return new Map();
+      const rows = await purchaseRepo.findSupplierProductsByIds(ids);
+      return new Map(rows.map((r) => [r.id, r]));
+    },
+    listShopsByIds: async (ids) => {
+      if (ids.length === 0) return new Map();
+      const rows = await purchaseRepo.findSupplierShopsByIds(ids);
+      return new Map(rows.map((r) => [r.id, { title: r.title, nickname: r.nickname }]));
+    },
+  };
   return new CartService({
     repository: new OrderRepository(tx as never),
     memberFactorsPort: makeFactorsPort(user),
     benefitPort: (overrides.benefitPort as BenefitPort) ?? benefitPort,
     currencyPort,
+    supplierCatalog,
     feeDeductPreviewEnabled: (overrides.feeDeductPreviewEnabled as boolean) ?? false,
     utypeCharged: 1,
   });
@@ -222,9 +239,12 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
       await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid3, goodsprice: 100, goodsnum: 10 });
 
       const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [1, 2] });
-      const products = await new OrderRepository(tx as never).listSupplierProducts(
-        tx,
-        rows.map((r) => r.supplier_product_id!).filter(Boolean),
+      const products = new Map(
+        (
+          await new PurchaseRepository(tx as never).findSupplierProductsByIds(
+            rows.map((r) => r.supplier_product_id!).filter(Boolean),
+          )
+        ).map((r) => [r.id, r]),
       );
       const tier = calculateTierPrices(rows, products);
       const values = [...tier.values()];
@@ -251,9 +271,12 @@ describe('金额计算（countMoney + 阶梯价 1:1）', () => {
       await seedCart(tx, { uid: user.uid, type: 1, supplier_product_id: pid, goodsprice: 100, goodsnum: 2 });
 
       const rows = await new OrderRepository(tx as never).listCarts(tx, { uid: user.uid, types: [1, 2] });
-      const products = await new OrderRepository(tx as never).listSupplierProducts(
-        tx,
-        rows.map((r) => r.supplier_product_id!).filter(Boolean),
+      const products = new Map(
+        (
+          await new PurchaseRepository(tx as never).findSupplierProductsByIds(
+            rows.map((r) => r.supplier_product_id!).filter(Boolean),
+          )
+        ).map((r) => [r.id, r]),
       );
       const tier = calculateTierPrices(rows, products);
       // 目标商品 gid 的单价 = 100（混批原价），不是阶梯 80

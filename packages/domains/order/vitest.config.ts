@@ -17,6 +17,7 @@ export default defineConfig({
     // 无扩展名 import → 直接 alias 到源码（走 Vite 转译链）
     alias: {
       '@crossbuy/domain-member': fileURLToPath(new URL('../member/src/index.ts', import.meta.url)),
+      '@crossbuy/domain-purchase': fileURLToPath(new URL('../purchase/src/index.ts', import.meta.url)),
       '@crossbuy/domain-send-order': fileURLToPath(new URL('../send-order/src/index.ts', import.meta.url)),
     },
   },

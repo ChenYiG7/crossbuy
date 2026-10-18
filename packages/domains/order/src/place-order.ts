@@ -6,12 +6,13 @@ import {
   placeOrderSchema,
   type PlaceOrderInput,
   type PlaceOrderResult,
+  type SupplierProductRead,
 } from '@crossbuy/contract';
 
 import type { OrderError } from './errors';
 import { orderError } from './errors';
 import { DF_CONFIGS, DF_FLAG_1, ORDER_FLAGS, ORDER_TYPE, RECORD, UTYPE } from './legacy-constants';
-import { calculateTierPrices, countMoneyWithDeductions, type CartMoneyBreakdown } from './cart';
+import { calculateTierPrices, countMoneyWithDeductions, type CartMoneyBreakdown, type SupplierCatalogPort } from './cart';
 import { parseSkuName } from './list-helpers';
 import type { CartForOrderRow, CreateOrderData, OrderRepository, Tx } from './repository';
 
@@ -117,6 +118,8 @@ export interface DaifaSendOrderPort {
 export interface PlaceOrderDeps {
   repository: OrderRepository;
   runTx: <T>(fn: (tx: Tx) => Promise<T>) => Promise<T>;
+  /** 供应商目录只读（v2_supplier_product / v2_supplier_shop 属主 = purchase 域；跨域经端口，TODO #17） */
+  supplierCatalog: SupplierCatalogPort;
   /** 阶梯价/金额需要的供应商商品（products 由调用方一次性取，事务内复用） */
   goodsPriceRefreshPort: GoodsPriceRefreshPort;
   skuTranslationPort: SkuTranslationPort;
@@ -249,6 +252,10 @@ interface CartToOrderContext {
   /** 本行抵扣的服务费（旧 countMoney 写进 cart.extend 的内存态值） */
   deductedServiceFee: number | null;
   addtimeSec: number;
+  /** 供应商商品读模型（事务外经 purchase 端口取，TODO #17 方案①） */
+  products: Map<number, SupplierProductRead>;
+  /** 供应商店铺读模型（title/nickname；事务外经端口取） */
+  shopMap: Map<number, { title: string; nickname: string | null }>;
 }
 
 export class PlaceOrderService {
@@ -352,10 +359,20 @@ export class PlaceOrderService {
     mail: { uid: number; flag: number | null; total: number };
   }> {
     const db = this.deps.repository.db;
-    const products = await this.deps.repository.listSupplierProducts(
-      db,
+    // 供应商商品（阶梯价/混批/金额所需）经 purchase 域端口读取，事务外一次性取（TODO #17 方案①）
+    const products = await this.deps.supplierCatalog.listProductsByIds(
       carts.map((c) => c.supplier_product_id).filter((v): v is number => v !== null),
     );
+    // 卖家名（v2_supplier_shop.title/nickname）同样事务外经端口读取——参考数据，与购物车行锁无一致性要求。
+    // shop_id 已在 products 内（旧事务内的 supplier_product 读被消除：下单路径 355 已取过，冗余）。
+    const shopIds = [
+      ...new Set(
+        [...products.values()]
+          .map((p) => p.shop_id)
+          .filter((v): v is number => v !== null && v !== 0),
+      ),
+    ];
+    const shopMap = await this.deps.supplierCatalog.listShopsByIds(shopIds);
 
     // ⑤ 实时价刷新（旧 RefreshOrderGoodsPricesService；R1 SDK 未迁移 → no-op）
     await this.deps.goodsPriceRefreshPort.refresh(carts);
@@ -461,6 +478,8 @@ export class PlaceOrderService {
           user: { memberid: user.memberid, belongCompany: belongCompanyOf(user.belong_company) },
           deductedServiceFee: deductedByGid.get(cart.gid) ?? null,
           addtimeSec,
+          products,
+          shopMap,
         });
         const order = await this.deps.repository.createOrder(tx, data);
 
@@ -514,7 +533,10 @@ export class PlaceOrderService {
     ctx: CartToOrderContext,
   ): Promise<CreateOrderData> {
     const type = cart.type ?? 0;
-    const goodsSeller = cart.shopTitle || cart.shopNickname || cart.goodsseller || '';
+    // 卖家名：事务外经 purchase 端口取的店铺 title ?: nickname，回退购物车原 goodsseller（TODO #17 方案①）
+    const shopId = cart.supplier_product_id ? (ctx.products.get(cart.supplier_product_id)?.shop_id ?? null) : null;
+    const shop = shopId !== null ? ctx.shopMap.get(shopId) : undefined;
+    const goodsSeller = (shop?.title || shop?.nickname || cart.goodsseller) ?? '';
 
     // 旧砍价判定：goodsid 非空 → goodstype = 1688 ? 1 : 0
     let agobgflag: number | undefined;
@@ -552,7 +574,7 @@ export class PlaceOrderService {
       goodssize: cart.goodssize,
       goodscolor: cart.goodscolor,
       goodsseller: charCv(goodsSeller),
-      supplier_shop_id: cart.shopId ?? undefined,
+      supplier_shop_id: shopId ?? undefined,
       supplier_product_id: cart.supplier_product_id ?? undefined,
       sellerurl: cart.sellerurl,
       goodssite: cart.goodssite,

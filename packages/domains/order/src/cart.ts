@@ -4,7 +4,9 @@ import {
   type CartGroup,
   type CartMoney,
   type CartRow,
+  type SupplierProductRead,
   type SupplierProductSummary,
+  type SupplierShopRead,
 } from '@crossbuy/contract';
 import type { Principal } from '@crossbuy/auth';
 import { err, ok, type Result } from '@crossbuy/utils';
@@ -15,8 +17,9 @@ import type { OrderRepository } from './repository';
 /**
  * cart 读路径（旧 ListCartQuery + GetCartMoneyQuery + Cart::countMoney 族 1:1）。
  * dg_cart 属主 = order 域（docs/plans/07 §四）——service 落本域。
- * ⚠ 本文件**直读**的 `v2_supplier_product` / `v2_supplier_shop` 属主其实是 **purchase**
- *   （同上 §四 high 置信）——属主违规的历史包袱，已登记 TODO(#17)，收口前不动结构。
+ * ⚠ 历史上本文件**直读** `v2_supplier_product` / `v2_supplier_shop`（属主实为 purchase 域，
+ *   docs/plans/07 §四 high 置信）——已于 #17 收口：经 `SupplierCatalogPort` 跨域只读，
+ *   order 域不再直连这两张表（表唯一属主铁律）。
  *
  * 语义锚点：
  * - 旧 Cart::countMoney 会把 `deducted_service_fee` 写回 $cart->extend——**纯内存态**
@@ -26,8 +29,8 @@ import type { OrderRepository } from './repository';
 
 /** 购物车行（repository select 子集） */
 export type CartEntity = Awaited<ReturnType<OrderRepository['listCarts']>>[number];
-/** 供应商商品行（repository select 子集） */
-export type SupplierProductEntity = NonNullable<Awaited<ReturnType<OrderRepository['listSupplierProducts']>> extends Map<number, infer V> ? V : never>;
+/** 供应商商品读模型（purchase 域 v2_supplier_product 经 SupplierCatalogPort 暴露；跨域只读，表唯一属主） */
+export type SupplierProductEntity = SupplierProductRead;
 
 /** 权益预览端口（旧 UserBenefitService::previewFeeDeduct——member 域属主；null = 无可用权益） */
 export interface BenefitPort {
@@ -38,6 +41,19 @@ export interface BenefitPort {
 /** 汇率端口（旧 Currency::convert CNY→JPY，缓存语义在端口内） */
 export interface CurrencyPort {
   cnyToJpy(): Promise<number>;
+}
+
+/**
+ * 供应商目录只读端口（v2_supplier_product / v2_supplier_shop 属主 = purchase 域；
+ * 跨域只读经此，表唯一属主铁律，TODO #17）。order 域不得直连这两张表——旧 ①/②/③ 三处
+ * 直读已收口到此端口（listProductsByIds 覆盖购物车列表/金额 + 下单金额；listShopsByIds
+ * 覆盖卖家名展示）。实现由组合根用 purchase 域 SupplierCatalogService 装配。
+ */
+export interface SupplierCatalogPort {
+  /** 旧 with(['supplierProduct']) 的 R1 子集列（阶梯价/混批所需） */
+  listProductsByIds(ids: number[]): Promise<Map<number, SupplierProductRead>>;
+  /** 旧 v2_supplier_shop 的 title/nickname（买家名展示：title ?: nickname） */
+  listShopsByIds(ids: number[]): Promise<Map<number, SupplierShopRead>>;
 }
 
 /**
@@ -379,6 +395,8 @@ export interface CartServiceDeps {
   memberFactorsPort: MemberFactorsPort;
   benefitPort: BenefitPort;
   currencyPort: CurrencyPort;
+  /** 供应商目录只读（v2_supplier_product / v2_supplier_shop 属主 = purchase 域） */
+  supplierCatalog: SupplierCatalogPort;
   /** 旧 config('benefit.fee_deduct_preview_switch') !== null（组合根读 env，域内禁直读） */
   feeDeductPreviewEnabled: boolean;
   /** UTYPE_CHARGED 值（旧 User::UTYPE_CHARGED） */
@@ -415,8 +433,7 @@ export class CartService {
     const types = isDf ? [ORDER_TYPE_DAIFA] : [ORDER_TYPE_DAIGOU, ORDER_TYPE_ZHUANYUN];
     const carts = await this.deps.repository.listCarts(db, { uid, gids, types });
 
-    const products = await this.deps.repository.listSupplierProducts(
-      db,
+    const products = await this.deps.supplierCatalog.listProductsByIds(
       carts.map((c) => c.supplier_product_id).filter((v): v is number => v !== null),
     );
 
@@ -471,8 +488,7 @@ export class CartService {
     const gids = parsed.ids.split(',').map(Number).filter(Number.isInteger);
     const type = isDf ? ORDER_TYPE_DAIFA : ORDER_TYPE_DAIGOU;
     const carts = await this.deps.repository.listCarts(db, { uid, gids, types: [type] });
-    const products = await this.deps.repository.listSupplierProducts(
-      db,
+    const products = await this.deps.supplierCatalog.listProductsByIds(
       carts.map((c) => c.supplier_product_id).filter((v): v is number => v !== null),
     );
 
