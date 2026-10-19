@@ -29,7 +29,9 @@ import type { TtlCache } from '@crossbuy/cache';
  *   Cache::remember（R1 不复现缓存层，每次直查表；差异登记：查询频率可承受、语义等价）；
  *   未命中 → getOauthAccount → 失败再 addSubAccount → `Arr::first($result['data'])['accessToken']`
  *   / `$result['data'][0]['accessToken']` 取 token → updateOrCreate 回表。
- *   ⚠ addSubAccount 兜底已含；createOrder/markMemo 等建单面方法属 TODO(#18)③，不提前实现。
+ *   ⚠ addSubAccount 兜底已含；createOrder 已实现（见下）；memoAdd（Alibaba.php:1166，
+ *   后台订单标记/备忘，旧调用点 = Admin/Controllers/Order/OrderController.php:2897）
+ *   属后台采购面（M3），不提前实现。
  * - `getItemDetailFromFenxiaoApi`（Alibaba.php:316-376）：分销商品详情，入参
  *   `offerDetailParam: {offerId:(int)$itemId, country:'ja'}`；**无 PEMISSION_ERROR 轮换**
  *   （旧该方法内不换 token）；缓存 = Laravel Cache 1h（key 含 sdkInitParam 的 md5，
@@ -503,6 +505,77 @@ export class AlibabaSdkClient {
   }
 
   // -----------------------------------------------------------------------
+  // createOrder（旧 Alibaba.php:934-1003 1:1）
+  // -----------------------------------------------------------------------
+
+  /**
+   * 旧 `Alibaba::createOrder($addressInfo, $itemInfo, $extra)`（:934-1003）。
+   *
+   * 1688 跨境建单（chrome 插件 CREATE_1688_ORDER(8) 的 SDK 面）：
+   * - 默认参数 `flow=general`（旧 `self::GENERAL` :34）/ `tradeType=fxassure` /
+   *   `anonymousBuyer='true'`（**字符串**，1:1）；`array_merge($paramArr, $extra)`
+   *   ⇒ extra 键可覆盖默认键。
+   * - `pre_create`（下划线，旧 :937 `Arr::get($extra,'pre_create')`）为真值 ⇒
+   *   API 切 `alibaba.createOrder.preview`（预览接口）；返回取 `orderPreviewResuslt`
+   *   ——**旧代码拼写少一个 e，1:1 保留**（真实键名以 1688 网关为准）。
+   * - 数组参数由 execute 的 toFormValue 统一 JSON.stringify / null 剔除
+   *   （旧 createOrder :951-959 与 execute :1409-1417 各做一遍，第二遍对已编码
+   *   字符串是 no-op ⇒ 合并为一遍，语义等价）。
+   * - ⚠ PHP truthy：pre_create='false'（字符串）在旧代码是 **truthy**（走预览），
+   *   与 JS `Boolean('false')` 恰好一致，但 '0'/'' 为假 —— phpTruthy 复刻。
+   * - 旧 SDK 内 `Log::channel('daily_1688')` 成功日志（params+result，:982）未在 SDK
+   *   层复刻（协议层不打日志）；等价留痕在组合根 monthly_create_order（success
+   *   项含完整 result，**不含 params**）——差异登记 TODO(#19)。
+   *
+   * @returns 200 = `data.result`（预览态 = `data.orderPreviewResuslt`）；
+   *   40000 = 授权失效 / 网关错误信封（msg 兜底链 message→errorMsg→error_message）。
+   */
+  async createOrder(
+    addressInfo: unknown,
+    itemInfo: unknown,
+    extra: Record<string, unknown> = {},
+    credentials: AlibabaSdkCredentials,
+  ): Promise<AlibabaSdkResult<unknown>> {
+    const preCreate = phpTruthy(phpArrayGet(extra, 'pre_create')); // 旧 :937（merge 前取）
+    const paramArr: Record<string, unknown> = {
+      flow: 'general', // 旧 self::GENERAL
+      addressParam: addressInfo,
+      cargoParamList: itemInfo,
+      tradeType: 'fxassure',
+      anonymousBuyer: 'true',
+      ...extra, // 旧 array_merge：extra 覆盖默认键
+    };
+    const api = preCreate
+      ? 'com.alibaba.trade/alibaba.createOrder.preview' // 旧 :964
+      : 'com.alibaba.trade/alibaba.trade.createCrossOrder'; // 旧 :961
+
+    const raw = await this.execute(api, paramArr, credentials);
+    const data = raw.resp; // 旧 $data = $this->execute(...)['data']['resp']（:974）
+
+    // 旧 $item = Arr::get($data, 'success'); !empty($item)（:976/979）
+    if (!phpEmpty(phpArrayGet(data, 'success'))) {
+      return {
+        code: 200,
+        data: preCreate
+          ? phpArrayGet(data, 'orderPreviewResuslt') // 旧拼写 typo，1:1 保留（:986）
+          : phpArrayGet(data, 'result'),
+      };
+    }
+
+    // 旧 :990 授权失效专项分支（注意是 error_message 蛇形键）
+    const errorMessage = phpArrayGet(data, 'error_message');
+    if (
+      !phpEmpty(errorMessage) &&
+      phpStringOrEmpty(errorMessage) === 'Request need user authorized'
+    ) {
+      return { code: 40000, msg: '采购账号授权失效，需要刷新授权', resp: data ?? undefined };
+    }
+
+    // 旧 :1000 兜底链 message → errorMsg → error_message（Arr::get 默认值语义：key 存在优先）
+    return { code: 40000, msg: createOrderErrorMessage(data), resp: data ?? undefined };
+  }
+
+  // -----------------------------------------------------------------------
   // 内部工具
   // -----------------------------------------------------------------------
 
@@ -567,6 +640,37 @@ function extractReturnValue(resp: Record<string, unknown> | null): SubAccountAut
 }
 
 /** 旧 `Arr::get($data,'message',Arr::get($data,'errorMsg'))` */
+/**
+ * PHP `empty()`：null/undefined/false/''/'0'/0/空数组 均算空。
+ * ⚠ 空对象 `{}` **不算**空（PHP json_decode 成关联数组后才判，stdClass 不空）。
+ */
+function phpEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (value === false) return true;
+  if (value === '' || value === '0') return true;
+  if (value === 0) return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  return false;
+}
+
+/** PHP truthy：empty 的补集；注意字符串 `'false'` 在 PHP 是 **truthy**（1:1） */
+function phpTruthy(value: unknown): boolean {
+  return !phpEmpty(value);
+}
+
+/** 旧 createOrder 兜底链 `Arr::get($data,'message', Arr::get($data,'errorMsg', Arr::get($data,'error_message')))` */
+function createOrderErrorMessage(data: Record<string, unknown> | null): string | undefined {
+  if (data === null || typeof data !== 'object') return undefined;
+  for (const key of ['message', 'errorMsg', 'error_message']) {
+    if (key in data) {
+      const v = data[key];
+      if (v === null || v === undefined) return undefined; // Arr::get 存在即返回（null → 信封 msg 缺省）
+      return typeof v === 'string' ? v : String(v);
+    }
+  }
+  return undefined;
+}
+
 function errorMessageOf(resp: Record<string, unknown> | null): string {
   const v =
     resp !== null && typeof resp === 'object' ? (resp['message'] ?? resp['errorMsg'] ?? '') : '';

@@ -663,6 +663,16 @@ export const chromeWebhookSchema = z.object({
   skip_price_check: z
     .union([z.boolean(), z.literal(0), z.literal(1), z.enum(['0', '1', 'true', 'false'])])
     .nullish(),
+  /**
+   * CREATE_1688_ORDER(8) 建单入参（旧 `create1688Order` 从 `$request->all()` 直取的
+   * 顶层字段，**字段名 camelCase 是旧插件契约**——与上面 snake_case 的回传字段
+   * 不同源，1:1 不改名）。均宽类型收：空判在域层按 PHP empty() 语义做。
+   */
+  accountName: z.unknown().nullish(),
+  addressInfo: z.unknown().nullish(),
+  itemInfo: z.unknown().nullish(),
+  /** 订单留言（旧 `!empty($data['message'])` 才进 extra） */
+  message: z.unknown().nullish(),
 });
 export type ChromeWebhookInput = z.infer<typeof chromeWebhookSchema>;
 
@@ -681,10 +691,14 @@ export const chromeProductItemSchema = z
   })
   .passthrough();
 
-/** 校验结果 + 保存结果（旧控制器直接回数组：code 200 / 40000 两种形态） */
+/**
+ * 校验结果 + 保存结果（旧控制器直接回数组：code 200 / 40000 两种形态）。
+ * ⚠ 第三个 code=400 是旧 `create1688Order` 的**参数错误信封**（与 40000 的
+ * 「业务失败」不同源，插件按 code 分支——200 继续 / 400 弹参数错误 / 40000 弹 msg）。
+ */
 export const chromeResultSchema = z
   .object({
-    code: z.union([z.literal(200), z.literal(40000)]),
+    code: z.union([z.literal(200), z.literal(400), z.literal(40000)]),
     msg: z.string().nullish(),
     oids: z.array(z.string()).optional(),
     data: z.unknown().optional(),

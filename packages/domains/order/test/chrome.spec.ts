@@ -16,6 +16,7 @@ import {
   removeTags,
   searchSkuDetail,
   type ChromeAdminIdentity,
+  type ChromeDeps,
   type ChromeWebhookInput,
   type PlatformProductItem,
 } from '../src/chrome';
@@ -607,3 +608,77 @@ async function rollbackRun(fn: (tx: Tx) => Promise<void>): Promise<void> {
 }
 
 void legacyPrisma;
+
+// ---------------------------------------------------------------------------
+// ACTION_CREATE_1688_ORDER(8) 路由（旧第一个 switch :294-296 提前 return；不触 DB）
+// ---------------------------------------------------------------------------
+
+describe('chrome CREATE_1688_ORDER 路由（旧 OrderController:294-296）', () => {
+  /** 建单 case 在第一个 switch 提前 return，不触 DB ⇒ repository 给 null */
+  function serviceWithCreate(impl: ChromeDeps['create1688Order']): ChromeService {
+    return new ChromeService({
+      repository: null as never,
+      alibaba: { getOrderDetail: async () => null },
+      create1688Order: impl,
+      runTx: async (fn) => fn(null as never),
+      now: () => new Date(),
+    });
+  }
+
+  it('未接线 → 40000 留痕（TODO(#18)），不透传任何入参', async () => {
+    const svc = serviceWithCreate(undefined);
+    const res = await svc.handle(
+      inputOf({
+        action: CHROME_ACTION.CREATE_1688_ORDER,
+        accountName: 'acc1',
+        addressInfo: { fullName: 'x' },
+        itemInfo: [{ shopId: 1, items: [] }],
+      }),
+      ADMIN,
+    );
+    expect(res).toEqual({ code: 40000, msg: 'chrome 1688 建单未迁移（TODO(#18)）' });
+  });
+
+  it('接线 → 四参 + adminUsername 透传，端口结果原样返回（含 400 信封）', async () => {
+    let captured: Record<string, unknown> | null = null;
+    const svc = serviceWithCreate(async (input) => {
+      captured = input;
+      // 旧 create1688Order 的 code:400 参数错误信封
+      return { code: 400, msg: '参数错误，请检查下单账号' };
+    });
+    const res = await svc.handle(
+      inputOf({
+        action: CHROME_ACTION.CREATE_1688_ORDER,
+        accountName: 'acc1',
+        addressInfo: { fullName: '张三', mobile: '138' },
+        itemInfo: [{ shopId: 1, shopName: '店铺一', items: [{ offerId: 42 }] }],
+        message: '请尽快发货',
+      }),
+      ADMIN,
+    );
+    expect(res).toEqual({ code: 400, msg: '参数错误，请检查下单账号' });
+    expect(captured).toEqual({
+      accountName: 'acc1',
+      addressInfo: { fullName: '张三', mobile: '138' },
+      itemInfo: [{ shopId: 1, shopName: '店铺一', items: [{ offerId: 42 }] }],
+      message: '请尽快发货',
+      adminUsername: 'buyer01', // 旧 Admin::user()->username
+    });
+  });
+
+  it('接线 → 200 信封（部分失败在 data.errors，旧语义：仍 200）', async () => {
+    const svc = serviceWithCreate(async () => ({
+      code: 200,
+      data: {
+        success: [{ shopId: 1, shopName: '店铺一', result: { code: 200, data: { orderId: 'A' } } }],
+        errors: [{ shopId: 2, shopName: '店铺二', msg: '库存不足' }],
+      },
+    }));
+    const res = await svc.handle(
+      inputOf({ action: CHROME_ACTION.CREATE_1688_ORDER, accountName: 'acc1' }),
+      ADMIN,
+    );
+    expect(res.code).toBe(200);
+    expect(res.code === 200 && (res.data as { errors: unknown[] }).errors).toHaveLength(1);
+  });
+});

@@ -12,12 +12,13 @@ import type { ChromeOrderRow, Db, OrderRepository } from './repository';
 /**
  * chrome 插件回传（旧 `OrderController::webhookForChrome` 的校验/保存主体 1:1）。
  *
- * 旧代码是一个 2756 行控制器，本文件只复现**回传四动作**里的三个：
+ * 旧代码是一个 2756 行控制器，本文件复现回传/建单动作：
  *   ACTION_VALIDATE(1)      → validateOrderByOidAndTradeId
  *   ACTION_SAVE(2)          → validateAndSave
  *   ACTION_MODIFY_ORDER(5)  → validateAndSave（拼凑版订单详情）
- * 其余动作：SAVE_EXPRESS(4) 在 shipment.ts（已完成）；GET(3)/GET_STATE_PAID(7)/
- * CREATE_1688_ORDER(8) 属后台采购面，登记 TODO(#18) 未迁移。
+ *   ACTION_CREATE_1688_ORDER(8) → create1688Order（1688 建单，编排在 purchase 域端口）
+ * 其余动作：SAVE_EXPRESS(4) 在 shipment.ts（已完成）；GET(3)/GET_STATE_PAID(7)
+ * 属后台采购面，登记 TODO(#18) 未迁移。
  *
  * 1:1 纪律（每条都对应旧代码的**异常**行为，禁"顺手修"）：
  * - `order_detail.action` 才是分支判据（`Arr::get($extra,'order_detail.action')`），
@@ -60,9 +61,37 @@ const PURCHASE_TYPE_MANUAL = 1;
 /** 旧 `$defaultSpecId = 'default_key'` */
 const DEFAULT_SPEC_ID = 'default_key';
 
-/** 结果信封（旧控制器直接回数组：code 200 / 40000） */
+/**
+ * 结果信封（旧控制器直接回数组）。
+ * - 200 = 回传成功；40000 = 回传业务失败（msg）；
+ * - **400 = 旧 create1688Order 的参数错误信封**（与 40000 不同源：插件对 400 弹
+ *   「参数错误」类提示，对 40000 弹 msg——两者不可合并）。
+ */
 export type ChromeResult =
-  | { code: 200; data?: ChromeValidateData }
+  | { code: 200; data?: ChromeValidateData | ChromeCreate1688OrderData }
+  | { code: 400; msg: string }
+  | { code: 40000; msg: string | null; oids?: string[]; order?: unknown; data?: unknown };
+
+/** 旧 create1688Order 的 200 data（元素结构见 purchase 域端口，这里宽形状收敛） */
+export interface ChromeCreate1688OrderData {
+  success: unknown[];
+  errors: unknown[];
+}
+
+/**
+ * 旧 create1688Order 返回信封（ACTION_CREATE_1688_ORDER(8)；组合根经 purchase 域
+ * 端口原样透传）。400 = 参数/权限错误（旧控制器 code 400，不是 40000）。
+ */
+export type ChromeCreate1688OrderOutcome =
+  { code: 200; data: ChromeCreate1688OrderData } | { code: 400; msg: string };
+
+/**
+ * 校验路径的精确返回（`validateByOidAndTradeId` / `saveOrderInfo` 用）——
+ * ChromeResult 的子集：200 data 恒为 ChromeValidateData（不含建单 400/建单 data），
+ * 供回读 `post_fee`/`real_pay`/`coupon_fee` 时保持窄型。
+ */
+export type ChromeValidateResult =
+  | { code: 200; data: ChromeValidateData }
   | { code: 40000; msg: string | null; oids?: string[]; order?: unknown; data?: unknown };
 
 /** 旧 `validateOrderByOidAndTradeId` 成功返回的 data（字段名 1:1，金额为字符串） */
@@ -429,6 +458,15 @@ export interface ChromeWebhookInput {
   tradeType: number;
   orderDetail: ChromeOrderDetail | null;
   skipPriceCheck: boolean;
+  /**
+   * ACTION_CREATE_1688_ORDER(8) 建单入参（旧 create1688Order 从 `$request->all()`
+   * 直取的顶层字段；**camelCase 是旧插件契约**，与回传面 snake_case 不同源）。
+   * 均为宽类型（空判/遍历在端口实现按 PHP empty() 语义做）。
+   */
+  accountName?: unknown;
+  addressInfo?: unknown;
+  itemInfo?: unknown;
+  message?: unknown;
 }
 
 export interface ChromeDeps {
@@ -447,6 +485,20 @@ export interface ChromeDeps {
   };
   /** 审计日志端口（旧 Log::channel('order_update') + admin_operation_log；R1 默认 no-op） */
   auditLog?: (info: { change: Record<string, unknown>; oids: number[] }) => void;
+  /**
+   * 1688 建单端口（旧 `create1688Order`，ACTION_CREATE_1688_ORDER(8)）。
+   * 编排（token 解析→换凭证→逐 shop 建单→累计）在 purchase 域；adminUsername
+   * 给组合根的 monthly_create_order 留痕用（旧 `Admin::user()->username`）。
+   * 未接线（env 未配 SDK）⇒ case 落 40000 留痕（同旧：env 缺失时旧控制器能进到
+   * createOrder 才失败，R1 收敛为入口即失败信封）。
+   */
+  create1688Order?: (input: {
+    accountName: unknown;
+    addressInfo: unknown;
+    itemInfo: unknown;
+    message?: unknown;
+    adminUsername: string;
+  }) => Promise<ChromeCreate1688OrderOutcome>;
   /** 风控日志端口（旧 Log::channel('webhook_1688')->warning） */
   riskLog?: (info: Record<string, unknown>) => void;
   runTx: <T>(fn: (tx: Db) => Promise<T>) => Promise<T>;
@@ -495,8 +547,19 @@ export class ChromeService {
         return { code: 40000, msg: 'chrome 订单详情展示未迁移（TODO(#18)）' };
       case CHROME_ACTION.GET_STATE_PAID:
         return { code: 40000, msg: 'chrome 已付款订单查询未迁移（TODO(#18)）' };
-      case CHROME_ACTION.CREATE_1688_ORDER:
-        return { code: 40000, msg: 'chrome 1688 建单未迁移（TODO(#18)）' };
+      case CHROME_ACTION.CREATE_1688_ORDER: {
+        // 旧第一个 switch 的提前 return（路由 :294-296）；入参从 request 顶层取
+        if (!this.deps.create1688Order) {
+          return { code: 40000, msg: 'chrome 1688 建单未迁移（TODO(#18)）' };
+        }
+        return this.deps.create1688Order({
+          accountName: input.accountName,
+          addressInfo: input.addressInfo,
+          itemInfo: input.itemInfo,
+          message: input.message,
+          adminUsername: ctx.admin.username,
+        });
+      }
       default:
         break;
     }
@@ -543,7 +606,7 @@ export class ChromeService {
   /** 旧 validateOrderByOidAndTradeId 的 `switch ($type)`（淘宝两分支 + 1688 SDK 分支） */
   private async loadPlatformOrder(
     ctx: ChromeContext,
-  ): Promise<NormalizedPlatformOrder | ChromeResult> {
+  ): Promise<NormalizedPlatformOrder | ChromeValidateResult> {
     const { input, orderDetail, detailAction } = ctx;
     const tradeId = input.tradeId;
 
@@ -628,7 +691,7 @@ export class ChromeService {
   // 旧 validateOrderByOidAndTradeId
   // -------------------------------------------------------------------------
 
-  async validateByOidAndTradeId(ctx: ChromeContext): Promise<ChromeResult> {
+  async validateByOidAndTradeId(ctx: ChromeContext): Promise<ChromeValidateResult> {
     const orders = await this.repo.listOrdersForChrome(this.db, ctx.oids);
     if (orders.length === 0) {
       return { code: 40000, oids: ctx.input.oids.split(','), msg: '获取订单信息失败。' };
@@ -883,7 +946,7 @@ export class ChromeService {
   // 旧 saveOrderInfo（+ BatchUpdateOrder 有效子集）
   // -------------------------------------------------------------------------
 
-  async saveOrderInfo(ctx: ChromeContext, validated?: ChromeResult): Promise<ChromeResult> {
+  async saveOrderInfo(ctx: ChromeContext, validated?: ChromeValidateResult): Promise<ChromeResult> {
     const validateResult = validated ?? (await this.validateByOidAndTradeId(ctx));
     if (validateResult.code !== 200) return validateResult;
 

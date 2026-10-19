@@ -765,3 +765,173 @@ describe('decryptWangwangNick（旧 :582-602，无缓存 + 异常吞掉返空）
     expect(calls).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// createOrder（旧 Alibaba.php:934-1003 1:1，chrome ACTION_CREATE_1688_ORDER(8) SDK 面）
+// ---------------------------------------------------------------------------
+
+describe('createOrder（旧 :934-1003）', () => {
+  function fakeHttp(
+    handler: (url: string, form: Record<string, string>) => Promise<{ ok: boolean; body: string }>,
+  ): AlibabaHttpPort {
+    return { postForm: (url, form) => handler(url, form) };
+  }
+
+  it('默认参数形态：flow=general / tradeType=fxassure / anonymousBuyer(串) + 数组 JSON 化', async () => {
+    let captured: { url: string; form: Record<string, string> } | null = null;
+    const client = new AlibabaSdkClient({
+      http: fakeHttp(async (url, form) => {
+        captured = { url, form };
+        return {
+          ok: true,
+          body: JSON.stringify({ success: { orderId: '99' }, result: { orderId: '99' } }),
+        };
+      }),
+      now: FIXED_NOW,
+    });
+
+    await client.createOrder(
+      { fullName: '张三', mobile: '138' },
+      [{ offerId: 42, quantity: 2 }],
+      { useRedEnvelope: 'n' },
+      CREDENTIALS,
+    );
+
+    expect(captured!.url).toContain('/com.alibaba.trade/alibaba.trade.createCrossOrder/');
+    expect(captured!.form['flow']).toBe('general'); // 旧 self::GENERAL
+    expect(captured!.form['tradeType']).toBe('fxassure');
+    expect(captured!.form['anonymousBuyer']).toBe('true'); // 字符串非 bool
+    expect(captured!.form['useRedEnvelope']).toBe('n');
+    expect(JSON.parse(captured!.form['addressParam']!)).toEqual({
+      fullName: '张三',
+      mobile: '138',
+    });
+    expect(captured!.form['cargoParamList']).toBe('[{"offerId":42,"quantity":2}]');
+  });
+
+  it('extra 覆盖默认键（旧 array_merge 语义）', async () => {
+    let form: Record<string, string> | null = null;
+    const client = new AlibabaSdkClient({
+      http: fakeHttp(async (_url, f) => {
+        form = f;
+        return { ok: true, body: JSON.stringify({ success: 1, result: {} }) };
+      }),
+      now: FIXED_NOW,
+    });
+    await client.createOrder(
+      {},
+      [],
+      { tradeType: 'fxassure2', message: '请尽快发货' },
+      CREDENTIALS,
+    );
+    expect(form!['tradeType']).toBe('fxassure2');
+    expect(form!['message']).toBe('请尽快发货');
+  });
+
+  it("pre_create 真值切预览 API；PHP truthy——'false' 字符串也算真", async () => {
+    const urls: string[] = [];
+    const client = new AlibabaSdkClient({
+      http: fakeHttp(async (url) => {
+        urls.push(url);
+        return {
+          ok: true,
+          body: JSON.stringify({ success: 1, orderPreviewResuslt: { preview: true } }),
+        };
+      }),
+      now: FIXED_NOW,
+    });
+    await client.createOrder({}, [], { pre_create: 'true' }, CREDENTIALS);
+    await client.createOrder({}, [], { pre_create: 'false' }, CREDENTIALS);
+    await client.createOrder({}, [], { pre_create: '0' }, CREDENTIALS); // PHP falsy
+
+    expect(urls[0]).toContain('/com.alibaba.trade/alibaba.createOrder.preview/');
+    expect(urls[1]).toContain('/com.alibaba.trade/alibaba.createOrder.preview/'); // 'false' PHP truthy
+    expect(urls[2]).toContain('/com.alibaba.trade/alibaba.trade.createCrossOrder/');
+  });
+
+  it('成功信封：200 → data.result；预览 → orderPreviewResuslt（旧拼写 typo 1:1）', async () => {
+    const okClient = new AlibabaSdkClient({
+      http: fakeHttp(async () => ({
+        ok: true,
+        body: JSON.stringify({ success: { orderId: '77' }, result: { orderId: '77' } }),
+      })),
+      now: FIXED_NOW,
+    });
+    const res = await okClient.createOrder({}, [], {}, CREDENTIALS);
+    expect(res).toEqual({ code: 200, data: { orderId: '77' } });
+
+    const previewClient = new AlibabaSdkClient({
+      http: fakeHttp(async () => ({
+        ok: true,
+        body: JSON.stringify({ success: 1, orderPreviewResuslt: { preview: 'x' } }),
+      })),
+      now: FIXED_NOW,
+    });
+    const pre = await previewClient.createOrder({}, [], { pre_create: 1 }, CREDENTIALS);
+    expect(pre).toEqual({ code: 200, data: { preview: 'x' } });
+  });
+
+  it("success 非空判定（PHP empty）：'0'/[]/0 不算成功，走错误分支", async () => {
+    for (const successValue of ['0', 0, [], '']) {
+      const client = new AlibabaSdkClient({
+        http: fakeHttp(async () => ({
+          ok: true,
+          body: JSON.stringify({ success: successValue, message: 'boom' }),
+        })),
+        now: FIXED_NOW,
+      });
+      const res = await client.createOrder({}, [], {}, CREDENTIALS);
+      expect(res.code).toBe(40000);
+      expect(res.code === 40000 && res.msg).toBe('boom');
+    }
+  });
+
+  it("授权失效专项：error_message == 'Request need user authorized'", async () => {
+    const client = new AlibabaSdkClient({
+      http: fakeHttp(async () => ({
+        ok: true,
+        body: JSON.stringify({ error_message: 'Request need user authorized', message: 'other' }),
+      })),
+      now: FIXED_NOW,
+    });
+    const res = await client.createOrder({}, [], {}, CREDENTIALS);
+    expect(res).toEqual({
+      code: 40000,
+      msg: '采购账号授权失效，需要刷新授权',
+      resp: { error_message: 'Request need user authorized', message: 'other' },
+    });
+  });
+
+  it('msg 兜底链：message → errorMsg → error_message（Arr::get 默认值语义）', async () => {
+    const bodies = [
+      { message: 'm1' },
+      { errorMsg: 'm2' },
+      { error_message: 'm3' },
+      { message: null }, // key 存在但 null → 信封 msg 缺省（旧 Arr::get 存在即返回）
+      {},
+    ];
+    const expects = ['m1', 'm2', 'm3', undefined, undefined];
+    for (let i = 0; i < bodies.length; i += 1) {
+      const body = bodies[i]!;
+      const client = new AlibabaSdkClient({
+        http: fakeHttp(async () => ({ ok: true, body: JSON.stringify(body) })),
+        now: FIXED_NOW,
+      });
+      const res = await client.createOrder({}, [], {}, CREDENTIALS);
+      expect(res.code).toBe(40000);
+      expect(res.code === 40000 ? res.msg : 'x').toBe(expects[i]);
+    }
+  });
+
+  it('网络异常 → execute 超时信封 → msg = 接口超时文案', async () => {
+    const client = new AlibabaSdkClient({
+      http: fakeHttp(async () => {
+        throw new Error('ECONNRESET');
+      }),
+      now: FIXED_NOW,
+    });
+    const res = await client.createOrder({}, [], {}, CREDENTIALS);
+    expect(res.code).toBe(40000);
+    expect(res.code === 40000 && res.msg).toBe('接口超时，请稍后重试！');
+  });
+});

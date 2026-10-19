@@ -16,9 +16,9 @@
 - 本机 MySQL/Redis 默认没起；MySQL 会**中途自己停**。MySQL 启动：`"D:/Program Files/FlyEnv-Data/app/mysql-9.7.2/mysql-9.7.2-winx64/bin/mysqld.exe" --defaults-file="D:/Program Files/FlyEnv-Data/server/mysql/my-9.7.cnf" --console`；Redis：`"D:/Program Files/FlyEnv-Data/app/redis-8.10.2/Redis-8.10.2-Windows-x64-msys2/redis-server.exe" redis.conf`。库就绪前跑 smoke 会挂到超时不报错。
 - MySQL 9.7.2 坑：无 `MD5()`；`AUTO_INCREMENT=(子查询)` 要 `PREPARE`；mb3 套 mb4 collation 先 `CONVERT(... USING utf8mb4)`。
 
-## 进度指针（2026-10-18；细节写当日日志，勿改此段）
-- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 129 单测）。#6/#7/#16①/#16②/#17/#11f/**1688 详情 SDK 迁移（#18 半阻塞解除）**/**S35 规格翻译**/**S39 URL 解析器三件套**/**S41 店铺反解** 均已收口（详见 2026-10-18 日志）。
-- **下一步**：① #18 剩余四块——③1688 建单随后台采购面（M3）；④ 淘宝全球购改单需 **taobao SDK**（唯一真实技术阻塞）；② #16③ 剩 S34（实时价——ContentParser 已迁，只差淘宝侧 `getFormatGoodsInfo`）与另三个副作用投递（翻译/商品补全/MNS）；③ M1 双跑 diff（staging）；④ git push（**30+ 提交待推，用户手动**）。
+## 进度指针（2026-10-19；细节写当日日志，勿改此段）
+- M0 基本完成（剩 vendor 冷备）；M1 member 完成（剩 PHP↔TS 双跑 diff + nginx 灰度，依赖 staging）；M2 交易链路已闭环（order 域 132 单测）。#6/#7/#16①/#16②/#17/#11f/1688 详情 SDK/**S35 规格翻译**/**S39 URL 解析器三件套**/**S41 店铺反解**/**#18③ 1688 建单（ACTION 8，2026-10-19：SDK createOrder + 编排 createCrossOrderByAccount + chrome 路由 + api 组合根，purchase 97/order 132）** 均已收口（详见 2026-10-18/19 日志）。
+- **下一步**：① #18 剩余——④ 淘宝全球购改单需 **taobao SDK**（唯一真实技术阻塞，S34/S35 同依赖）；①GET(3)/②GET_STATE_PAID(7) 随后台采购面（M3）；② #16③ 剩 S34（实时价——ContentParser 已迁，只差淘宝侧 `getFormatGoodsInfo`）与另三个副作用投递（翻译/商品补全/MNS）；③ M1 双跑 diff（staging）；④ git push（**30+ 提交待推，用户手动**）；⑤ TODO(#19) daily_1688 建单参数留痕缺失，随日志基建。
 
 ## 血泪坑（浓缩；原文全在 2026-10-15~18 日志）
 1. ODKU 只适用「撞键=同一实体」；业务属性唯一键（username）撞键=两实体 ⇒ fail-fast `SIGNAL`；唯一性按**目标列 collation** 判。

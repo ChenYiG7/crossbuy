@@ -61,5 +61,11 @@ function toChromeInput(body: z.infer<typeof chromeWebhookSchema>): ChromeWebhook
       body.skip_price_check === 1 ||
       body.skip_price_check === '1' ||
       body.skip_price_check === 'true',
+    // ACTION_CREATE_1688_ORDER(8) 建单入参（旧 create1688Order 从 $request->all() 取；
+    // camelCase 是旧插件契约）。空判/遍历在 purchase 域端口按 PHP empty() 语义做。
+    accountName: body.accountName,
+    addressInfo: body.addressInfo,
+    itemInfo: body.itemInfo,
+    message: body.message,
   };
 }

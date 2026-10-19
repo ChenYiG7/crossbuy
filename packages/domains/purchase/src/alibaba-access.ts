@@ -115,7 +115,49 @@ export interface AlibabaAccessService {
    * 调用点：店铺 nickname 为空时解密旺旺昵称补全）。恒主组、无缓存、异常吞掉返空。
    */
   decryptWangwangNick(openid: string): Promise<string | null>;
+
+  /**
+   * 旧 `OrderController::create1688Order`（Http/Controllers/Api/OrderController.php:363-445，
+   * chrome 插件 CREATE_1688_ORDER(8) 的编排面）。
+   *
+   * 流程 1:1：accountName/addressInfo 校验 → getOauthTokenByAccount 解析子账号 token →
+   * **把 token 覆写进主组凭证**（旧 `$sdk->sdkInitParam['token'] = $token`，`$sdk` 是
+   * `getAlibabaSdk()` 主组默认实例）→ itemInfo 校验 → 逐 shop 调 createOrder，
+   * 成功/失败分别累计（shopId/shopName 透传，失败 msg 取信封 msg ?? '未知错误'），
+   * SDK 抛错统一 '下单异常：' + message 进 errors（**不中断其余 shop**）。
+   *
+   * ⚠ 返回信封是旧控制器的 `{code: 400|200}`：400 = 参数/权限错误（与 chrome 回传面
+   *   的 40000 不同源）；200 = 全部 shop 处理完（部分失败在 data.errors，**仍然 200**）。
+   */
+  createCrossOrderByAccount(input: {
+    accountName: unknown;
+    addressInfo: unknown;
+    itemInfo: unknown;
+    message?: unknown;
+  }): Promise<Create1688OrderOutcome>;
 }
+
+/** 旧 create1688Order 成功项（shopId/shopName 原样透传，result = SDK 完整信封） */
+export interface Create1688OrderSuccessItem {
+  shopId: unknown;
+  shopName: unknown;
+  result: AlibabaSdkResult<unknown>;
+}
+
+/** 旧 create1688Order 失败项（msg = 信封 msg ?? '未知错误' / '下单异常：…'） */
+export interface Create1688OrderErrorItem {
+  shopId: unknown;
+  shopName: unknown;
+  msg: string;
+}
+
+/** 旧 create1688Order 返回信封（code 400 参数错误 / 200 完成（含部分失败）） */
+export type Create1688OrderOutcome =
+  | {
+      code: 200;
+      data: { success: Create1688OrderSuccessItem[]; errors: Create1688OrderErrorItem[] };
+    }
+  | { code: 400; msg: string };
 
 export class AlibabaAccessServiceImpl implements AlibabaAccessService {
   readonly domain = 'purchase' as const;
@@ -281,6 +323,65 @@ export class AlibabaAccessServiceImpl implements AlibabaAccessService {
     const value = await this.client.decryptWangwangNick(openid, credentials);
     return value === '' ? null : value;
   }
+
+  async createCrossOrderByAccount(input: {
+    accountName: unknown;
+    addressInfo: unknown;
+    itemInfo: unknown;
+    message?: unknown;
+  }): Promise<Create1688OrderOutcome> {
+    // 旧 :368-380 参数校验（顺序 1:1：accountName → addressInfo → **token → itemInfo**）
+    if (phpEmpty(input.accountName)) return { code: 400, msg: '参数错误，请检查下单账号' };
+    if (phpEmpty(input.addressInfo)) {
+      return { code: 400, msg: '参数错误，请检查收件人地址信息' };
+    }
+    // 旧 :382-388：token 解析在 itemInfo 校验之前（顺序是旧代码原样）
+    const tokenRes = await this.getOauthTokenByAccount(String(input.accountName));
+    if (tokenRes.code !== 200) {
+      return { code: 400, msg: '您指定的子账号没有下单权限，请联系管理员处理。' };
+    }
+    const mainCredentials = this.credentialOf(AlibabaAccessServiceImpl.mainKeys());
+    if (mainCredentials === null) {
+      // 不可达（token 成功 ⇒ fallback 非空）；防御性保持旧 400 文案
+      return { code: 400, msg: '您指定的子账号没有下单权限，请联系管理员处理。' };
+    }
+    // 旧 :389 `$sdk->sdkInitParam['token'] = $token['data']['token']`
+    const credentials: AlibabaSdkCredentials = { ...mainCredentials, token: tokenRes.data.token };
+    if (phpEmpty(input.itemInfo)) return { code: 400, msg: '参数错误，未获取到商品信息' };
+
+    const success: Create1688OrderSuccessItem[] = [];
+    const errors: Create1688OrderErrorItem[] = [];
+    // 旧 :401 foreach：非数组（PHP warning 后不迭代）按空列表处理
+    const shops = Array.isArray(input.itemInfo) ? input.itemInfo : [];
+    for (const info of shops) {
+      const row =
+        info !== null && typeof info === 'object' ? (info as Record<string, unknown>) : {};
+      const items = row['items'];
+      // 旧 :403 extra 每 loop 新建；useRedEnvelope='n' 固定（暂不支持现金红包）
+      const extra: Record<string, unknown> = { useRedEnvelope: 'n' };
+      if (!phpEmpty(input.message)) extra['message'] = input.message; // 旧 :404-406
+      try {
+        const result = await this.client.createOrder(input.addressInfo, items, extra, credentials);
+        if (result.code !== 200) {
+          errors.push({
+            shopId: row['shopId'],
+            shopName: row['shopName'],
+            msg: result.msg ?? '未知错误',
+          });
+        } else {
+          success.push({ shopId: row['shopId'], shopName: row['shopName'], result });
+        }
+      } catch (e) {
+        // 旧 :422-427 catch (\Throwable) → errors 累计，**不中断其余 shop**
+        errors.push({
+          shopId: row['shopId'],
+          shopName: row['shopName'],
+          msg: `下单异常：${e instanceof Error ? e.message : String(e)}`,
+        });
+      }
+    }
+    return { code: 200, data: { success, errors } };
+  }
 }
 
 /** 旧 `$subAccount->token` cast array：JSON 串 → `{accessToken}`；坏 JSON = null */
@@ -295,4 +396,18 @@ function parseAccessToken(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * PHP `empty()`（SDK 协议面有同款 `phpEmpty`——alibaba-sdk.ts 模块私有；
+ * 编排面独立一份，1:1 语义：null/undefined/false/''/'0'/0/空数组 均算空）。
+ * 用于旧 create1688Order 的 `empty($accountName)` 等四个入参校验（:368-397）。
+ */
+function phpEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (value === false) return true;
+  if (value === '' || value === '0') return true;
+  if (value === 0) return true;
+  if (Array.isArray(value) && value.length === 0) return true;
+  return false;
 }

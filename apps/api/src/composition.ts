@@ -170,6 +170,8 @@ export function getAdminService(): AdminService {
 /** 最小日志端口（Fastify 的 pino 实例即满足；域层不感知 pino 类型） */
 export interface RiskLogger {
   warn(obj: Record<string, unknown>, msg: string): void;
+  /** info 级留痕（旧 `Log::channel('monthly_create_order')->info`；pino 实例即满足） */
+  info?(obj: Record<string, unknown>, msg: string): void;
 }
 
 /** chrome 回传的 1688 详情端口：真实 SDK（S48 收口；fetch 失败/env 缺失 = null ⇒ 旧 !isSuccess 分支） */
@@ -195,6 +197,9 @@ let chromeService: ChromeService | null = null;
  * - `recordSnapshot` = 平台金额快照（旧 PlatformOrderAmountSnapshotService::record1688）
  * - `riskLog` = 旧 `Log::channel('webhook_1688')->warning`（风控阻断留痕）
  * - `auditLog` = 旧 `Log::channel('order_update')` + admin_operation_log（R1 只留痕不落表）
+ * - `create1688Order` = 旧 `create1688Order`（ACTION_CREATE_1688_ORDER(8)，1688 建单；
+ *   编排在 purchase 域 access 服务）+ 旧 `Log::channel('monthly_create_order')->info`
+ *   留痕（400 参数错误分支旧代码提前 return 不打日志，1:1 不打）
  */
 export function getChromeService(log: RiskLogger): ChromeService {
   chromeService ??= (() => {
@@ -225,6 +230,25 @@ export function getChromeService(log: RiskLogger): ChromeService {
       },
       auditLog: (info) => {
         log.warn({ channel: 'order_update', ...info }, 'chrome order update');
+      },
+      create1688Order: async (input) => {
+        const result = await getAlibabaAccess().createCrossOrderByAccount(input);
+        // 旧 :431-436 Log::channel('monthly_create_order')->info（字段名 1:1）。
+        // ⚠ 旧代码日志在 return 之前**无条件**打——但三个 400 参数错误分支都是
+        //   提前 return（不经日志），所以 200 分支才打 = 旧行为 1:1。
+        if (result.code === 200) {
+          log.info?.(
+            {
+              channel: 'monthly_create_order',
+              accountName: input.accountName,
+              adminUser: input.adminUsername,
+              success: result.data.success,
+              errors: result.data.errors,
+            },
+            '1688 create order settled',
+          );
+        }
+        return result;
       },
       runTx: runInOrderTransaction,
       now: () => new Date(),
