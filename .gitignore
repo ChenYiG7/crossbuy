@@ -41,13 +41,4 @@ packages/db/src/generated/
 # 边界守卫破坏验证探针（scripts/boundary-probe.mjs 临时生成，用完即删）
 **/__probe_*.ts
 
-# ---- WorkBuddy 工作目录 ----
-# 会话产物（.genie 应用文件、临时脚本、会话快照等）一律不入库。
-# 例外：「项目记忆」与「项目技能」是团队资产，必须入库 —— 这两处路径是
-# WorkBuddy 工具链固定的（记忆写在 .workbuddy/memory/YYYY-MM-DD.md，
-# 项目级技能读 .workbuddy/skills/），不能为了躲 .gitignore 而搬家。
-# 约定见 README.md §仓库卫生。
-.workbuddy/*
-!.workbuddy/memory/
-!.workbuddy/skills/
-*.genie
+.workbuddy
