@@ -95,7 +95,13 @@ async function waitReady(child: ChildProcess, timeoutMs = 90_000): Promise<boole
 
 interface Res {
   status: number;
-  body: { code: number; message: string; data: Record<string, unknown> | null; traceId: string };
+  body: {
+    code: number;
+    message: string;
+    data: Record<string, unknown> | null;
+    traceId: string;
+    errCode?: string;
+  };
   setCookie: string | null;
 }
 
@@ -170,6 +176,12 @@ async function main(): Promise<void> {
       '错密码 → 401 MEMBER_LOGIN_FAILED',
       wrongPwd.status === 401 && wrongPwd.body.code === 401,
       wrongPwd.body,
+    );
+    // errCode 出域（i18n 链路）：稳定错误码随 Envelope 下传，前端按码翻词典
+    check(
+      '错密码 → 响应带 errCode=MEMBER_LOGIN_FAILED',
+      wrongPwd.body.errCode === 'MEMBER_LOGIN_FAILED',
+      wrongPwd.body.errCode,
     );
 
     const noUser = await call('POST', '/api/customer/v1/auth/login', {

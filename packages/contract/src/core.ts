@@ -41,14 +41,22 @@ export interface Envelope<T> {
   message: string;
   data: T | null;
   traceId: string;
+  /** 稳定业务错误码（如 MEMBER_LOGIN_FAILED，词表见各域 errors.ts）；
+   *  前端按码查 i18n 词典翻译，未命中回退展示 message。契约校验类失败无稳定码，不传。 */
+  errCode?: string;
 }
 
 export function envelopeOk<T>(data: T, traceId: string): Envelope<T> {
   return { code: 0, message: 'ok', data, traceId };
 }
 
-export function envelopeFail(code: number, message: string, traceId: string): Envelope<null> {
-  return { code, message, data: null, traceId };
+export function envelopeFail(
+  code: number,
+  message: string,
+  traceId: string,
+  errCode?: string,
+): Envelope<null> {
+  return { code, message, data: null, traceId, errCode };
 }
 
 /** 开放 API 业务码（旧系统 ApiResponse 约定，各域共用；成功为 200） */

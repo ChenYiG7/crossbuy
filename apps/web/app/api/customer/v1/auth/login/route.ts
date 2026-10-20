@@ -47,7 +47,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const result = await getMemberService().login(parsed.data);
   if (!result.ok) {
     const status = httpStatusForMemberError(result.error.code);
-    return NextResponse.json(envelopeFail(status, result.error.message, traceId), { status });
+    // errCode（稳定错误码词表见 member 域 errors.ts）随 Envelope 下传，前端按码翻 i18n
+    return NextResponse.json(
+      envelopeFail(status, result.error.message, traceId, result.error.code),
+      { status },
+    );
   }
 
   const { uid, isDf, profile } = result.value;

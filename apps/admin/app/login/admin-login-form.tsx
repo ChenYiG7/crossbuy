@@ -2,12 +2,15 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button, Input, Label } from '@crossbuy/ui';
 
 /** 后台登录表单（client component；机制同 web 会员端 LoginForm） */
 export function AdminLoginForm() {
   const router = useRouter();
-  const [error, setError] = useState<string | null>(null);
+  const t = useTranslations('common');
+  const te = useTranslations('errors');
+  const [error, setError] = useState<{ message?: string; code?: string } | null>(null);
   const [pending, setPending] = useState(false);
 
   async function onSubmit(formData: FormData) {
@@ -22,27 +25,29 @@ export function AdminLoginForm() {
           password: String(formData.get('password') ?? ''),
         }),
       });
-      const json: { code: number; message: string } = await res.json();
+      const json: { code: number; message: string; errCode?: string } = await res.json();
       if (!res.ok || json.code !== 0) {
-        setError(json.message || '登录失败，请稍后重试');
+        setError({ message: json.message || t('登录失败，请稍后重试'), code: json.errCode });
         setPending(false);
         return;
       }
       router.refresh();
     } catch {
-      setError('网络异常，请稍后重试');
+      setError({ message: t('网络异常，请稍后重试') });
       setPending(false);
     }
   }
 
+  const shownError = error && error.code && te.has(error.code) ? te(error.code) : error?.message;
+
   return (
     <form action={onSubmit} className="grid gap-4">
       <div className="grid gap-2">
-        <Label htmlFor="username">用户名</Label>
+        <Label htmlFor="username">{t('用户名')}</Label>
         <Input id="username" name="username" autoComplete="username" required />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="password">密码</Label>
+        <Label htmlFor="password">{t('密码')}</Label>
         <Input
           id="password"
           name="password"
@@ -51,9 +56,9 @@ export function AdminLoginForm() {
           required
         />
       </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {shownError ? <p className="text-sm text-destructive">{shownError}</p> : null}
       <Button type="submit" disabled={pending}>
-        {pending ? '登录中…' : '登录'}
+        {pending ? t('登录中…') : t('登录')}
       </Button>
     </form>
   );

@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { getTranslations } from 'next-intl/server';
 import { getMemberService, getMemberVerifier } from '@/server/member';
 import { SESSION_COOKIE_NAME } from '@/auth/cookies';
 import { LoginForm } from './login-form';
@@ -11,8 +12,12 @@ import { FavoritesSection } from './favorites-section';
  * 未登录/会话失效 → 登录表单；登录成功 → 资料视图 + 收藏列表（默认页签 =
  * 旧 ListFavoriteQuery 二值语义的「非代发含 NULL」，fid 倒序第一页）。
  * 页面读 cookie ⇒ 天然动态渲染（禁静态化）。
+ *
+ * 错误展示：message（中文兜底）+ errorCode 一起传给表单，由 client 端
+ * 按 errors.<code> 查 i18n 词典，未命中回退展示 message。
  */
 export default async function MemberPage() {
+  const t = await getTranslations('member');
   const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
   const verified = token ? await getMemberVerifier().verify(token) : null;
 
@@ -20,10 +25,13 @@ export default async function MemberPage() {
     return (
       <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
         <header className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t('会员中心')}</h1>
         </header>
-        <p className="text-sm text-muted-foreground">登录后查看会员资料与余额。</p>
-        <LoginForm message={verified && !verified.ok ? verified.error.message : undefined} />
+        <p className="text-sm text-muted-foreground">{t('登录后查看会员资料与余额。')}</p>
+        <LoginForm
+          message={verified && !verified.ok ? verified.error.message : undefined}
+          errorCode={verified && !verified.ok ? verified.error.code : undefined}
+        />
       </main>
     );
   }
@@ -34,9 +42,9 @@ export default async function MemberPage() {
     return (
       <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
         <header className="flex items-center gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">{t('会员中心')}</h1>
         </header>
-        <LoginForm message={result.error.message} />
+        <LoginForm message={result.error.message} errorCode={result.error.code} />
       </main>
     );
   }
@@ -47,7 +55,7 @@ export default async function MemberPage() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
       <header className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">会员中心</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{t('会员中心')}</h1>
       </header>
       <ProfileSection profile={result.value} />
       {favorites.ok ? (

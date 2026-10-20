@@ -1,0 +1,13 @@
+{
+  "common": {
+    "淘太郎 · 代发端": "Taotaro · Dropshipping",
+    "代发用户工作台（mzk.yiwutaro.com）": "Dropshipper workspace (mzk.yiwutaro.com)",
+    "代发端（mzk）": "Dropshipping (mzk)",
+    "代发用户工作台骨架（dfFlag 用户 302 到此）。以下为共享组件演示，代发业务接入后替换。": "Workspace skeleton for dropshippers (dfFlag users 302 here). The cards below are shared-component demos, to be replaced once dropshipping lands.",
+    "今日的代行发注": "Today's proxy orders",
+    "从供应商获取后自动更新（演示）。": "Auto-updates once fetched from suppliers (demo).",
+    "更新": "Refresh",
+    "历史": "History"
+  },
+  "home": {}
+}

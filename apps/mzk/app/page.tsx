@@ -1,3 +1,4 @@
+import { getTranslations } from 'next-intl/server';
 import {
   Badge,
   Button,
@@ -9,21 +10,26 @@ import {
   Separator,
   Skeleton,
 } from '@crossbuy/ui';
+import { LocaleSwitcher } from './locale-switcher';
 
-export default function Home() {
+export default async function Home() {
+  const t = await getTranslations('common');
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-3xl flex-col gap-6 p-8">
-      <header className="flex items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">淘太郎 · 代发端（mzk）</h1>
-        <Badge variant="secondary">shared UI</Badge>
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">淘太郎 · {t('代发端（mzk）')}</h1>
+          <Badge variant="secondary">shared UI</Badge>
+        </div>
+        <LocaleSwitcher />
       </header>
       <p className="text-sm text-muted-foreground">
-        代发用户工作台骨架（dfFlag 用户 302 到此）。以下为共享组件演示，代发业务接入后替换。
+        {t('代发用户工作台骨架（dfFlag 用户 302 到此）。以下为共享组件演示，代发业务接入后替换。')}
       </p>
       <Card>
         <CardHeader>
-          <CardTitle>本日の代行発注</CardTitle>
-          <CardDescription>仕入先から取得後に自動更新されます（デモ）。</CardDescription>
+          <CardTitle>{t('今日的代行发注')}</CardTitle>
+          <CardDescription>{t('从供应商获取后自动更新（演示）。')}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3">
           <div className="flex items-center gap-3">
@@ -44,9 +50,9 @@ export default function Home() {
         </CardContent>
       </Card>
       <div className="flex gap-2">
-        <Button size="sm">更新</Button>
+        <Button size="sm">{t('更新')}</Button>
         <Button size="sm" variant="outline">
-          履歴
+          {t('历史')}
         </Button>
       </div>
     </main>

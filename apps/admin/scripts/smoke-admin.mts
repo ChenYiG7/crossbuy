@@ -180,6 +180,9 @@ async function call(
 async function main(): Promise<void> {
   await setupScratch();
   const server = startServer();
+  const serverLog: string[] = [];
+  server.stdout?.on('data', (d: Buffer) => serverLog.push(d.toString()));
+  server.stderr?.on('data', (d: Buffer) => serverLog.push(d.toString()));
   try {
     console.log(`[1] 服务就绪`);
     check('next start 就绪', await waitReady(server));
@@ -210,7 +213,11 @@ async function main(): Promise<void> {
     check('/users → 200', users1.status === 200, users1.status);
     check('渲染出 G 分组客户', users1.text.includes(MEMBER_G));
     check('不渲染 H 分组客户', !users1.text.includes(MEMBER_H));
-    check('范围徽标显示分组', users1.text.includes('仅分组 G'));
+    check(
+      '范围徽标显示分组',
+      users1.text.includes('仅分组 G'),
+      /仅分组.{0,60}/u.exec(users1.text)?.[0] ?? '页面无「仅分组」字样',
+    );
     const search = await call('GET', `/users?q=${MEMBER_G}`, { cookie: session1 });
     check('q 搜索命中 G 客户', search.status === 200 && search.text.includes(MEMBER_G));
 
@@ -255,7 +262,12 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n${passed} PASS / ${failed} FAIL`);
-  if (failed > 0) process.exitCode = 1;
+  if (failed > 0) {
+    // 失败时带出服务日志尾部，便于定位服务端异常（如 i18n messages 加载问题）
+    console.log('--- server log tail ---');
+    console.log(serverLog.join('').slice(-2000));
+    process.exitCode = 1;
+  }
 }
 
 main()

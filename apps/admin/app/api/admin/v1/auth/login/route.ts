@@ -40,7 +40,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const result = await getAdminService().login(parsed.data);
   if (!result.ok) {
     const status = httpStatusForAdminError(result.error.code);
-    return NextResponse.json(envelopeFail(status, result.error.message, traceId), { status });
+    // errCode（稳定错误码）随 Envelope 下传，前端按码翻 i18n
+    return NextResponse.json(
+      envelopeFail(status, result.error.message, traceId, result.error.code),
+      { status },
+    );
   }
 
   const ttl = getAdminConfig().AUTH_SESSION_TTL_SEC;

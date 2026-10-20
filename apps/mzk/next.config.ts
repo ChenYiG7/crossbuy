@@ -1,5 +1,12 @@
 import path from 'node:path';
 import type { NextConfig } from 'next';
+import createNextIntlPlugin from 'next-intl/plugin';
+
+/**
+ * i18n 接线（机制说明见 apps/web/next.config.ts 同段注释）：
+ * 函数式配置自行组合插件，保留 phase 入参语义。mzk 无 src → request.ts 在根 i18n/。
+ */
+const withNextIntl = createNextIntlPlugin('./i18n/request.ts');
 
 /**
  * Windows + monorepo + Prisma 组合坑两件套（从 apps/web/next.config.ts 复制，
@@ -28,4 +35,4 @@ const nextConfig = (phase: string): NextConfig => {
   };
 };
 
-export default nextConfig;
+export default (phase: string) => withNextIntl(nextConfig(phase));

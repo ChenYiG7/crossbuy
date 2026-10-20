@@ -1,16 +1,24 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getTranslations } from 'next-intl/server';
 import './globals.css';
 
-export const metadata: Metadata = {
-  title: '淘太郎 · 运营后台',
-  description: '运营管理后台（替代旧 dcat-admin）',
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('common');
+  return {
+    title: t('淘太郎 · 运营后台'),
+    description: t('运营管理后台（替代旧 dcat-admin）'),
+  };
+}
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  const locale = await getLocale();
   return (
-    <html lang="zh">
-      <body>{children}</body>
+    <html lang={locale}>
+      <body>
+        <NextIntlClientProvider>{children}</NextIntlClientProvider>
+      </body>
     </html>
   );
 }

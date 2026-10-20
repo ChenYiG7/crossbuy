@@ -21,6 +21,7 @@
     "@crossbuy/utils": "workspace:*",
     "jose": "catalog:",
     "next": "catalog:",
+    "next-intl": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "catalog:"

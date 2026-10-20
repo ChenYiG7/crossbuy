@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "echo \"(no tests yet)\"",
-    "smoke": "tsx scripts/smoke-member.mts"
+    "smoke": "tsx scripts/smoke-member.mts",
+    "smoke:i18n": "tsx scripts/smoke-i18n.mts"
   },
   "dependencies": {
     "@crossbuy/auth": "workspace:*",
@@ -27,6 +28,7 @@
     "bullmq": "catalog:",
     "jose": "catalog:",
     "next": "catalog:",
+    "next-intl": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "zod": "catalog:"

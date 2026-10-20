@@ -17,6 +17,7 @@
     "@crossbuy/ui": "workspace:*",
     "@crossbuy/utils": "workspace:*",
     "next": "catalog:",
+    "next-intl": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

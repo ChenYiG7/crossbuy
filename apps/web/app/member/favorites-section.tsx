@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@crossbuy/ui';
 import { FAVORITE_TYPE, type Favorite } from '@crossbuy/contract';
 
@@ -25,6 +26,7 @@ export function FavoritesSection({
   initialTotal: number;
 }) {
   const router = useRouter();
+  const t = useTranslations('member');
   const [tab, setTab] = useState<Tab>('daigou');
   const [items, setItems] = useState<Favorite[]>(initialItems);
   const [total, setTotal] = useState(initialTotal);
@@ -62,9 +64,9 @@ export function FavoritesSection({
     <Card>
       <CardHeader className="flex-row items-start justify-between gap-4 space-y-0">
         <div className="grid gap-1.5">
-          <CardTitle>我的收藏</CardTitle>
+          <CardTitle>{t('我的收藏')}</CardTitle>
           <CardDescription>
-            共 {total} 条（当前页签 {items.length} 条）
+            {t('共 {total} 条（当前页签 {count} 条）', { total, count: items.length })}
           </CardDescription>
         </div>
         <div className="flex items-center gap-1">
@@ -74,7 +76,7 @@ export function FavoritesSection({
             size="sm"
             onClick={() => onSwitchTab('daigou')}
           >
-            代购
+            {t('代购')}
           </Button>
           <Button
             type="button"
@@ -82,13 +84,13 @@ export function FavoritesSection({
             size="sm"
             onClick={() => onSwitchTab('daifa')}
           >
-            代发
+            {t('代发')}
           </Button>
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
         {items.length === 0 ? (
-          <p className="text-sm text-muted-foreground">还没有收藏商品。</p>
+          <p className="text-sm text-muted-foreground">{t('还没有收藏商品。')}</p>
         ) : (
           <ul className="grid gap-2">
             {items.map((f) => (
@@ -106,8 +108,9 @@ export function FavoritesSection({
                     {f.goodsName}
                   </a>
                   <p className="text-xs text-muted-foreground">
-                    ¥ {f.goodsPrice} · {f.goodsSeller ?? '未知商家'} · {f.goodsSite ?? '未知平台'}
-                    {f.type === FAVORITE_TYPE.DAIFA ? ' · 代发' : ''}
+                    ¥ {f.goodsPrice} · {f.goodsSeller ?? t('未知商家')} ·{' '}
+                    {f.goodsSite ?? t('未知平台')}
+                    {f.type === FAVORITE_TYPE.DAIFA ? ` · ${t('代发')}` : ''}
                   </p>
                 </div>
                 <Button
@@ -117,7 +120,7 @@ export function FavoritesSection({
                   disabled={pendingFid === f.fid}
                   onClick={() => onDelete(f.fid)}
                 >
-                  {pendingFid === f.fid ? '删除中…' : '删除'}
+                  {pendingFid === f.fid ? t('删除中…') : t('删除')}
                 </Button>
               </li>
             ))}

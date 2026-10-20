@@ -1,5 +1,13 @@
 import path from 'node:path';
 import type { NextConfig } from 'next';
+import createNextIntlPlugin from 'next-intl/plugin';
+
+/**
+ * i18n 接线：显式指到 request.ts（读 NEXT_LOCALE cookie，缺省 ja）。
+ * ⚠ 本配置是**函数式**（phase 入参驱动下面的 Windows trace 修法），插件只对
+ * 对象做展开——因此这里自行组合保留 phase 语义，不把函数直接丢给插件。
+ */
+const withNextIntl = createNextIntlPlugin('./src/i18n/request.ts');
 
 /**
  * ★ Windows + monorepo + Prisma 组合坑的修法（2026-10-17 两轮实锤，M1 member 页把
@@ -63,4 +71,4 @@ const nextConfig = (phase: string): NextConfig => {
   };
 };
 
-export default nextConfig;
+export default (phase: string) => withNextIntl(nextConfig(phase));

@@ -1,0 +1,8 @@
+{
+  "common": {},
+  "home": {},
+  "member": {
+    "共 {total} 条（当前页签 {count} 条）": "共 {total} 条（当前页签 {count} 条）"
+  },
+  "errors": {}
+}

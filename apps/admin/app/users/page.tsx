@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { getTranslations } from 'next-intl/server';
 import type { AdminScope } from '@crossbuy/contract';
 import { ADMIN_SESSION_COOKIE_NAME } from '@/auth/cookies';
 import { verifyAdminPrincipal } from '@/server/authenticate';
@@ -18,6 +19,8 @@ export default async function UsersPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
+  const t = await getTranslations('users');
+  const tc = await getTranslations('common');
   const cookieStore = await cookies();
   const verified = await verifyAdminPrincipal(cookieStore.get(ADMIN_SESSION_COOKIE_NAME)?.value);
   if (!verified.ok) {
@@ -44,17 +47,17 @@ export default async function UsersPage({
 
   const scopeLabel =
     scope.kind === 'all'
-      ? '全部客户'
+      ? t('全部客户')
       : scope.kind === 'flags'
-        ? `仅分组 ${scope.flags.join('/')}（含未分组）`
-        : '无可见范围';
+        ? t('仅分组 {flags}（含未分组）', { flags: scope.flags.join('/') })
+        : t('无可见范围');
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-6xl flex-col gap-6 p-8">
       <header className="grid gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-tight">淘太郎 · 运营后台</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{tc('淘太郎 · 运营后台')}</h1>
         <p className="text-sm text-muted-foreground">
-          M1 只读切片：会员列表（新老并行，员工可培训）
+          {t('M1 只读切片：会员列表（新老并行，员工可培训）')}
         </p>
       </header>
       <UsersPanel scopeLabel={scopeLabel} scope={scope.kind} initial={list.value} />
