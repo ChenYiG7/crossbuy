@@ -5,3 +5,4 @@ export * from './domains/favorite';
 export * from './domains/order';
 export * from './domains/send-order';
 export * from './domains/cart';
+export * from './domains/wms-gateway';

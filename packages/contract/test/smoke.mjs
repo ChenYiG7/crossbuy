@@ -28,6 +28,10 @@ import {
   canTransitionOrderStatus,
   SEND_ORDER_STATUS_TRANSITIONS,
   canTransitionSendOrderStatus,
+  WMS_FACT_KIND,
+  WMS_COMMAND_KIND,
+  wmsFactSchema,
+  wmsCommandSchema,
 } from '../dist/index.js';
 
 let passed = 0,
@@ -284,6 +288,59 @@ check('send order transitions: dead state 6 & invoice', () => {
   assert(canTransitionSendOrderStatus(2, 7) === false, '2→7 forbidden（旧禁已邮寄）');
   assert(canTransitionSendOrderStatus(7, 5) === true, '7→5 发票修改退回');
   assert(canTransitionSendOrderStatus(1, 1) === false, '1→1 无自环');
+});
+
+// ---------------------------------------------------------------------------
+// wms-gateway（黑舟适配层，2026-10-20 骨架；归一化中间模型 + 事件族/指令族词表）
+// ---------------------------------------------------------------------------
+check('wms fact kinds vocab', () => {
+  assert(Object.keys(WMS_FACT_KIND).length === 5, '5 fact kinds');
+  assert(WMS_FACT_KIND.ARRIVAL === 'arrival', 'arrival');
+  assert(WMS_FACT_KIND.STORAGE_FEE === 'storage_fee', 'storage_fee');
+  assert(Object.keys(WMS_COMMAND_KIND).length === 3, '3 command kinds');
+});
+check('wms fact schema', () => {
+  const f = wmsFactSchema.parse({
+    eventId: 'evt-1',
+    kind: 'arrival',
+    oid: 101,
+    wmsStatus: 'IN_WMS',
+    occurredAt: '2026-10-20T12:00:00+08:00',
+    raw: { x: 1 },
+  });
+  assert(f.oid === 101, 'oid kept');
+  assert(
+    wmsFactSchema.safeParse({ eventId: '', kind: 'arrival', wmsStatus: 'S', occurredAt: 't' })
+      .success === false,
+    'reject empty eventId',
+  );
+  assert(
+    wmsFactSchema.safeParse({ eventId: 'e', kind: 'unknown', wmsStatus: 'S', occurredAt: 't' })
+      .success === false,
+    'reject unknown kind',
+  );
+  assert(
+    wmsFactSchema.safeParse({
+      eventId: 'e',
+      kind: 'arrival',
+      wmsStatus: 'S',
+      occurredAt: 't',
+      oid: 0,
+    }).success === false,
+    'reject oid 0',
+  );
+});
+check('wms command schema', () => {
+  const c = wmsCommandSchema.parse({ kind: 'outbound', oid: 101 });
+  assert(c.oid === 101, 'oid');
+  assert(
+    wmsCommandSchema.safeParse({ kind: 'unknown', oid: 1 }).success === false,
+    'reject unknown kind',
+  );
+  assert(
+    wmsCommandSchema.safeParse({ kind: 'cancel', oid: 1, note: 'x'.repeat(501) }).success === false,
+    'reject >500 note',
+  );
 });
 
 console.log(`\nsmoke: ${passed} passed, ${failed} failed`);
