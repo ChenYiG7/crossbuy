@@ -13,12 +13,22 @@
  * 其余裸文中的单星号一律报错——glob/通配符写法必须进 code span。
  *
  * 用法：`node scripts/check-md-stars.mjs`（CI 门禁一环；rc=1 有裸星号）。
- * 扫描范围：仓库全部 .md（node_modules/.git/.next/.turbo/.workbuddy 除外）。
+ * 扫描范围：仓库全部 .md（node_modules/.git/.next/.turbo/.workbuddy/skills/memory 除外——
+ * 后两者为上游生成物/项目记忆，已进 .prettierignore 不受 prettier 改写，无本守卫针对的风险）。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const SKIP_DIRS = new Set(['node_modules', '.git', '.next', '.turbo', '.workbuddy', 'dist']);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.next',
+  '.turbo',
+  '.workbuddy',
+  'dist',
+  'skills',
+  'memory',
+]);
 
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

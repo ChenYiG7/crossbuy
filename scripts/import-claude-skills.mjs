@@ -19,7 +19,7 @@ import { join } from 'node:path';
 
 const DRY = process.argv.includes('--dry');
 const SRC_ROOT = 'C:/Users/13621/.claude/skills';
-const DST_ROOT = 'D:/Work/project/own/crossbuy/.workbuddy/skills';
+const DST_ROOT = 'D:/Work/project/own/crossbuy/skills';
 
 // ---- 引入清单：只选与 R1 复现期纪律互补的，其余不引入（理由见函数下方注释）----
 const IMPORT = [
@@ -42,7 +42,7 @@ const IMPORT = [
 
 // 项目侧专属内容（上游没有，且是全仓覆写的高危丢失项）。
 //
-// 教训（2026-10-17 首次引入实测）：本仓 .workbuddy/skills/ 里已有 3 个技能，
+// 教训（2026-10-17 首次引入实测）：本仓 skills/ 里已有 3 个技能，
 // 其中 test-driven-development 带一段项目裁定「生成器优先 vs TDD 只约束手写业务
 // 规则」（对应 docs/07 铁律 8）。首版脚本整目录 rm + 复制，把这段**静默冲掉了**，
 // 而通用适配头还在 —— 典型的「文档说有、实际没了」。
@@ -70,7 +70,7 @@ const ADAPT_NOTE = `
 >
 > 本技能源自 Claude Code 的 superpowers 生态（\`~/.claude/skills/\`），引入时按本仓实况改写：
 >
-> - \`superpowers:*\` 前缀已剥除 —— 本仓无该生态，跨技能引用直接指向 \`.workbuddy/skills/\` 下同名技能
+> - \`superpowers:*\` 前缀已剥除 —— 本仓无该生态，跨技能引用直接指向 \`skills/\` 下同名技能
 > - \`TodoWrite\` → 本环境的任务工具（\`TaskCreate\` / \`TaskUpdate\`）
 > - **删去 \`using-git-worktrees\` 依赖与「禁止在 main 上开工」条款** —— 本仓是 main 单主干直推（用户已授权），不设 worktree
 > - \`brainstorming\` 环节 → 本项目用 \`docs/04-重写架构方案.md\` + \`docs/06-开发计划.md\` 计划体系

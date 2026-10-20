@@ -42,7 +42,7 @@ export const CONTRACT_DOMAIN_ALIASES = {
 export const CONTRACT_SHARED_FILES = ['src/core.ts', 'src/index.ts'];
 
 /** 这些路径改动 = 纯文档/工具链，无需发版 */
-export const NO_DEPLOY_PREFIXES = ['docs/', 'deploy/', 'scripts/', '.workbuddy/'];
+export const NO_DEPLOY_PREFIXES = ['docs/', 'deploy/', 'scripts/', 'skills/', 'memory/'];
 
 /**
  * packages 白名单外的通用包 → 反向依赖由 package.json 实时算；

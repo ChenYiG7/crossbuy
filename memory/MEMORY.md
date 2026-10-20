@@ -1,6 +1,6 @@
 # 项目长期记忆 — crossbuy（淘太郎平台重写）
 
-> 只留**跨会话必带**的结论与红线；细节在 `docs/plans/*`（含 `08-R2优化清单.md` = 怪癖 S1~S56 正本）、`TODO.md`、`.workbuddy/memory/YYYY-MM-DD.md`。**进度细节勿写回本文件**——记当日日志即可。
+> 只留**跨会话必带**的结论与红线；细节在 `docs/plans/*`（含 `08-R2优化清单.md` = 怪癖 S1~S56 正本）、`TODO.md`。**进度细节勿写回本文件**——写 TODO.md 对应条目（每日会话日志自 2026-10-20 起不入库）。
 
 ## 总纲（docs/04 现行）
 日本市场中国商品代购平台 `yiwutaro.com` 全栈重写（`D:/Work/project/own/crossbuy`）。旧系统 `D:/Work/project/haiou/`（Laravel12+dcat-admin+GraphQL、Astro/Deno/Vue、mzk-frontend）**生产运行中、只读参考、绝不改不提交**；过渡期新旧共用同一 MySQL。
@@ -36,8 +36,8 @@
 ## 工具链红线
 - Prisma 产物 `src/generated/**` 在源码树 ⇒ `generate` 必须进依赖图且 `cache:false`（`packages/db/turbo.json`）；**db build 过 ≠ typecheck 过**。
 - `package.json` 严格 JSON 禁注释（turbo.json/tsconfig 支持注释是特例）。
-- `.gitignore` 忽略 `.workbuddy/*` 但**放行 `memory/` 与 `skills/`**（工具链固定路径不可搬）。
-- 技能（6 个）在 `.workbuddy/skills/`；**项目专属补丁正本 = `scripts/import-claude-skills.mjs` 的 `PROJECT_PATCHES`**，绝不直接改 skills 目录。
+- `.gitignore` 整体忽略 `.workbuddy/`（AI 工作目录不入库）；**根目录 `skills/` 与 `memory/` 才是入库正本**（2026-10-20 随历史重写迁出，旧 `.workbuddy/` 下的路径全部作废）。
+- 技能（6 个）在根目录 `skills/`；**项目专属补丁正本 = `scripts/import-claude-skills.mjs` 的 `PROJECT_PATCHES`**，绝不直接改 skills 目录。
 
 ## 旧系统继承结论（重写必须规避）
 - 零对账：`Σ流水=余额` 无校验，`dg_record` 链断 7.3%/55% 会员 ⇒ 新系统逐环校验。WorldFirst 五表生产实测全 0 行（空壳死表）。

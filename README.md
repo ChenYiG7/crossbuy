@@ -36,26 +36,26 @@ crossbuy/
 │   └── utils/      # 通用工具（金额、日期、格式化）
 └── docs/           # 设计文档（见下）
 
-.workbuddy/         # AI 工作目录 —— 仅 memory/ 与 skills/ 入库，其余全部忽略
+skills/             # 项目技能（6 个外部引入 + 项目补丁，用法见 AGENTS.md「技能」）
+memory/             # 项目记忆（MEMORY.md 血泪坑正本；每日日志不入库）
 ```
 
-## 仓库卫生：`.workbuddy/` 只保留人类资产
+## 仓库卫生：`.workbuddy/` 不入库，人类资产在根目录
 
-`.workbuddy/` 是 AI 工作目录，会不断产生会话产物（`.genie` 应用文件、临时脚本、会话快照等）。
-本仓库约定：**整个目录忽略，只放行两个子目录**。
+`.workbuddy/` 是 AI 工作目录，会不断产生会话产物（临时脚本、会话快照等）——**整体忽略，一律不入库**。
 
-| 路径                                   | 入库 | 说明                                                                                                                    |
-| -------------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------- |
-| `.workbuddy/memory/`                   | ✅   | **项目记忆**——长期结论 `MEMORY.md` + 每日日志 `YYYY-MM-DD.md`。跨会话可复用的项目知识与血泪坑，是本仓库知识资产的一部分 |
-| `.workbuddy/skills/`                   | ✅   | **项目技能**——6 个外部引入技能 + 项目专属补丁（用法见 [AGENTS.md](./AGENTS.md) 的「技能」小节）                         |
-| 其余（`.genie`、临时脚本、会话快照……） | ❌   | 一律不入库                                                                                                              |
+| 路径                   | 入库 | 说明                                                                                            |
+| ---------------------- | ---- | ----------------------------------------------------------------------------------------------- |
+| `skills/`              | ✅   | **项目技能**——6 个外部引入技能 + 项目专属补丁（用法见 [AGENTS.md](./AGENTS.md) 的「技能」小节） |
+| `memory/MEMORY.md`     | ✅   | **项目记忆**——跨会话可复用的项目知识与血泪坑正本，本仓库知识资产的一部分                        |
+| `memory/YYYY-MM-DD.md` | ❌   | 每日会话日志 = 会话产物，不入库（2026-10-20 起连同历史一并清除）                                |
+| `.workbuddy/` 其余     | ❌   | 一律不入库                                                                                      |
 
-这两个路径是**工具链固定**的（记忆写在 `.workbuddy/memory/YYYY-MM-DD.md`、项目级技能读
-`.workbuddy/skills/`），所以不能为了躲 `.gitignore` 把它们搬到别处——搬家等于让工具找不到。
-规则实现见 `.gitignore` 的 `---- WorkBuddy 工作目录 ----` 段。
+2026-10-20 重组：技能与记忆正本迁根目录、`.workbuddy/` 整体忽略；历史中旧路径（`.workbuddy/skills/`、
+`.workbuddy/memory/` 每日日志）已随 git-filter-repo 重写（skills 改路径保留、日志清除、空提交 prune）。
 
 改技能的**正确入口**是 `scripts/import-claude-skills.mjs` 里的 `PROJECT_PATCHES`，
-不要直接改 `.workbuddy/skills/` 下的文件——下次重跑脚本会整目录覆写，改动会静默丢失。
+不要直接改 `skills/` 下的文件——下次重跑脚本会整目录覆写，改动会静默丢失。
 
 ## 前端 UI 基座（packages/ui，M0.6）
 
@@ -74,7 +74,7 @@ app 接入三件套（每个 app 都已就位）：`postcss.config.mjs`（`@tail
 
 **新增组件**：`cd apps/<app> && npx shadcn@latest add X`——各 app 的 `components.json` 已把 aliases 指向 `@crossbuy/ui`（组件直接落进共享包）；组件运行时依赖装到 `packages/ui`（catalog 已收编 tailwind/shadcn 依赖族）。
 
-其他：dark 模式 = 给 `html` 加 `.dark` class（`@custom-variant` 已配置）；`--brand` 是语义主色正本（shadcn `primary` 指向它）；涨跌配色按 A 股惯例在图表处显式给，不用 chart token 隐含。`.prettierignore` 豁免 `.workbuddy`（记忆日志/上游技能不参与格式化门禁；全仓 format:check 历史欠账见 TODO #6）。
+其他：dark 模式 = 给 `html` 加 `.dark` class（`@custom-variant` 已配置）；`--brand` 是语义主色正本（shadcn `primary` 指向它）；涨跌配色按 A 股惯例在图表处显式给，不用 chart token 隐含。`.prettierignore` 豁免 `skills/` 与 `memory/`（上游生成技能/项目记忆不参与格式化门禁；全仓 format:check 历史欠账见 TODO #6）。
 
 ## 设计文档
 

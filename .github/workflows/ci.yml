@@ -5,7 +5,7 @@ name: CI
 #   DB/Redis 依赖的测试套件**不进 CI**：域测试连真实 MySQL 且需要 legacy dump 库
 #   （dg_users/dg_cart 等 160+ 张旧表结构与存量数据，产物只在本机/staging，
 #   公司冷备存储见 TODO #1）；cache/worker 套件另需真 Redis。这些在本地按
-#   `.workbuddy/memory/MEMORY.md`「环境」段起服务后跑，或随 staging 就位后另行接入。
+#   `memory/MEMORY.md`「环境」段起服务后跑，或随 staging 就位后另行接入。
 on:
   push:
     branches: [main]

@@ -7,7 +7,7 @@ description: Use when implementation is complete, all tests pass, and you need t
 >
 > 本技能源自 Claude Code 的 superpowers 生态（`~/.claude/skills/`），引入时按本仓实况改写：
 >
-> - `superpowers:*` 前缀已剥除 —— 本仓无该生态，跨技能引用直接指向 `.workbuddy/skills/` 下同名技能
+> - `superpowers:*` 前缀已剥除 —— 本仓无该生态，跨技能引用直接指向 `skills/` 下同名技能
 > - `TodoWrite` → 本环境的任务工具（`TaskCreate` / `TaskUpdate`）
 > - **删去 `using-git-worktrees` 依赖与「禁止在 main 上开工」条款** —— 本仓是 main 单主干直推（用户已授权），不设 worktree
 > - `brainstorming` 环节 → 本项目用 `docs/04-重写架构方案.md` + `docs/06-开发计划.md` 计划体系
